@@ -1,0 +1,10 @@
+*.dll
+*.d
+*.a
+*.o
+*.exe
+
+build_*/*
+
+tracy_traces/*
+*.tracy

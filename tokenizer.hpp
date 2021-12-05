@@ -1,0 +1,361 @@
+#pragma once
+#include "common.hpp"
+#include "inttypes.h"
+
+namespace parse {
+	//// Check char class
+
+	constexpr inline bool is_decimal_c (char c) {
+		return c >= '0' && c <= '9';
+	}
+	constexpr inline bool is_hex_c (char c) {
+		return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f');
+	}
+	constexpr inline bool is_alpha_c (char c) {
+		return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+	}
+	constexpr inline bool is_ident_start_c (char c) {
+		return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+	}
+	constexpr inline bool is_ident_c (char c) {
+		return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || (c >= '0' && c <= '9');
+	}
+	constexpr inline bool is_whitespace_c (char c) {
+		return c == ' ' || c == '\t';
+	}
+
+	inline bool is_newline (char const* c) {
+		return *c == '\n' || *c == '\r';
+	}
+
+	// skips "\n" or "\r" or "\r\n" or "\n\r"
+	inline bool newline (char const*& c) {
+		if (!is_newline(c))
+			return false;
+
+		char ch = *c;
+		c++;
+
+		// "\n" "\r" "\n\r" "\r\n" each count as one newline whilte "\n\n" "\r\r" count as two
+		// ie. this code should even handle files with inconsistent newlines somewhat reasonably
+		if (is_newline(c) && ch != *c)
+			c++;
+		return true;
+	}
+
+	// skips "-012345"
+	// returns int in <out_int>
+	inline bool integer (const char*& c, int* out_int) {
+		const char* cur = c;
+
+		bool neg = false;
+		if (*cur == '-') {
+			neg = true;
+			cur++;
+		} else if (*cur == '+') {
+			cur++;
+		}
+
+		if (*cur < '0' || *cur > '9')
+			return false;
+
+		unsigned int out = 0;
+		while (*cur >= '0' && *cur <= '9') {
+			out *= 10;
+			out += *cur++ - '0';
+		}
+
+		*out_int = neg ? -(int)out : (int)out;
+		c = cur;
+		return true;
+	}
+
+	inline bool parse_double (const char*& c, double* out) {
+		char const* cur = c;
+		double val = strtod(c, (char**)&cur); // need to cast away const for strtod api
+
+		if (cur > c) {
+			*out = val;
+			c = cur;
+			return true;
+		}
+		return false; // parsing error
+	}
+}
+
+enum TokenType {
+	T_EOF=0, // end of file
+
+	T_PLUS,        // +
+	T_MINUS,       // -
+	T_MULTIPLY,    // *
+	T_DIVIDE,      // /
+	T_POWER,       // ^
+	T_PAREN_OPEN,  // (
+	T_PAREN_CLOSE, // )
+	T_COMMA,       // ,
+	T_EQUALS,      // =
+
+	T_LITERAL_INT,
+	// starts with [0-9], then anything that strtod() accepts
+	// note: no sign is ever parsed, '+' or '-' are greedily tokenizes as T_PLUS and T_MINUS
+	// is parsed for its float value, which gets stored in the Token struct
+	T_LITERAL_FLOAT,
+
+	// starts with  '_' or [a-Z]  and then any number of  '_' or [a-Z] or [0-9]
+	T_IDENTIFIER,
+};
+inline constexpr const char* TokenType_str[] = {
+	"T_EOF",
+	
+	"T_PLUS",
+	"T_MINUS",
+	"T_MULTIPLY",
+	"T_DIVIDE",
+	"T_POWER",
+	"T_PAREN_OPEN",
+	"T_PAREN_CLOSE",
+	"T_COMMA",
+	"T_EQUALS",
+	
+	"T_LITERAL_INT",
+	"T_LITERAL_FLOAT",
+	
+	"T_IDENTIFIER",
+};
+
+typedef std::basic_string_view<const char> strview;
+
+struct Token {
+	TokenType  type;
+	strview    text;
+	size_t     lineno, charno;
+
+	union {
+		uint64_t  value_int; // T_LITERAL_INT
+		double    value_flt; // T_LITERAL_FLOAT
+	};
+};
+
+struct Tokenizer {
+	const char*          cur;
+	const char*          cur_line;
+
+	Token                buf[2];
+
+	const char*          filename;
+	std::vector<strview> lines;
+
+	//std::string last_error;
+
+	struct Exception : public std::exception {
+		const char* errstr;
+		const char* start;
+		const char* cur;
+		size_t      lineno;
+
+		Exception (const char* errstr, const char* start, const char* cur, size_t lineno): errstr{errstr}, start{start}, cur{cur}, lineno{lineno} {}
+
+		virtual const char * what () const throw () {
+			return errstr;
+		}
+
+		void print (Tokenizer& tok) {
+			assert(lineno < tok.lines.size());
+			auto& line = tok.lines[lineno];
+
+			size_t charno = start - line.data();
+
+			if (ansi_color_supported) fputs(ANSI_COLOR_RED, stderr);
+			fprintf(stderr, "%s:%" PRIuMAX ":%" PRIuMAX ": error: %s\n", tok.filename, lineno+1, charno+1, errstr);
+
+			if (ansi_color_supported) fputs(ANSI_COLOR_RESET, stderr);
+			fwrite(line.data(), 1, line.size(), stderr);
+			fputc('\n', stderr);
+
+			if (ansi_color_supported) fputs(ANSI_COLOR_RED, stderr);
+
+			assert(start >= line.data());
+			assert(cur > start);
+			size_t begin = start - line.data();
+			size_t len   = cur - start;
+
+			for (size_t i=0; i<begin; ++i)
+				fputc(' ', stderr);
+
+			fputs("^", stderr);
+			for (size_t i=1; i<len; ++i)
+				fputc('~', stderr);
+
+			fputs("\n", stderr);
+
+			if (ansi_color_supported) fputs(ANSI_COLOR_RESET, stderr);
+
+			fflush(stderr);
+		}
+	};
+	void throw_error (const char* errstr, const char* start, const char* cur, size_t lineno) {
+		throw Exception(errstr, start, cur, lineno);
+	}
+
+	void init_source (const char* src, const char* filename) {
+		cur = src;
+		cur_line = src;
+
+		prescan_line();
+
+		this->filename = filename;
+
+		//last_error = "";
+
+		parse_next_token(&buf[0]);
+		parse_next_token(&buf[1]);
+	}
+
+	void prescan_line () {
+		const char* c = cur;
+		while (*c != '\n' && *c != '\r' && *c != '\0')
+			c++; // skip anything until newline or EOF
+		lines.emplace_back(strview(cur_line, c - cur_line));
+	}
+	bool newline () {
+		if (parse::newline(cur)) {
+
+			cur_line = cur;
+			prescan_line();
+
+			return true;
+		}
+		return false;
+	}
+
+	bool parse_next_token (Token* tok) {
+		using namespace parse;
+
+		for (;;) {
+			if (is_whitespace_c(*cur)) {
+				cur++;
+				continue;
+			}
+
+			if (cur[0] == '/' && cur[1] == '/') {
+				cur += 2; // skip "//"
+
+				while (*cur != '\n' && *cur != '\r' && *cur != '\0')
+					cur++; // skip anything until newline or EOF
+
+				// fallthrough to newline
+			}
+			else if (cur[0] == '/' && cur[1] == '*') {
+				cur += 2; // skip "/*"
+				
+				size_t block_comment_depth = 1;
+				while (block_comment_depth > 0) {
+					if (*cur == '\0') {
+						// TODO: also add note about block comment open location to error
+						throw_error("end of file in block comment", cur, cur+1, lines.size()-1);
+					}
+					else if (newline()) {
+						
+					}
+					else if (cur[0] == '/' && cur[1] == '*') {
+						cur += 2; // skip "/*"
+						block_comment_depth++;
+					}
+					else if (cur[0] == '*' && cur[1] == '/') {
+						cur += 2; // skip "*/"
+						block_comment_depth--;
+					}
+					else {
+						cur++;
+					}
+				}
+				continue;
+			}
+			else if (cur[0] == '*' && cur[1] == '/') {
+				throw_error("unexpected block comment close", cur, cur+2, lines.size()-1);
+			}
+
+			if (newline())
+				continue;
+
+			// non-whitespace character outside of comment -> start of a token
+			break;
+		}
+
+		if (*cur == '\0') {
+			*tok = { T_EOF, {cur, 1} };
+			return true;
+		}
+
+		const char* start = cur;
+		tok->lineno = lines.size()-1;
+
+		switch (*cur) {
+			case '+': tok->type = T_PLUS;          break;
+			case '-': tok->type = T_MINUS;         break;
+			case '*': tok->type = T_MULTIPLY;      break;
+			case '/': tok->type = T_DIVIDE;        break;
+			case '^': tok->type = T_POWER;         break;
+
+			case '(': tok->type = T_PAREN_OPEN;    break;
+			case ')': tok->type = T_PAREN_CLOSE;   break;
+			case ',': tok->type = T_COMMA;         break;
+
+			case '=': tok->type = T_EQUALS;        break;
+
+			case '0': case '1': case '2': case '3': case '4':
+			case '5': case '6': case '7': case '8': case '9': {
+				
+				if (!parse_double(cur, &tok->value_flt)) {
+					throw_error("number parse error", start, start+1, tok->lineno);
+				}
+
+				tok->type = T_LITERAL_FLOAT;
+				tok->text = strview(start, cur - start);
+				return true;
+			}
+
+			default: {
+				if (is_ident_start_c(*cur)) {
+
+					while (is_ident_c(*cur))
+						cur++; // find end of identifier
+
+					tok->type = T_IDENTIFIER;
+					tok->text = strview(start, cur - start);
+
+					throw_error("unknown token", start, cur, tok->lineno);
+
+					return true;
+				}
+				else {
+					throw_error("unknown token", start, start+1, tok->lineno);
+				}
+			}
+		}
+
+		cur++; // single-char token
+		tok->text = strview(start, cur - start);
+		return true;
+	}
+
+	TokenType peek (int lookahead=0) {
+		assert(lookahead >= 0 && lookahead < ARRLEN(buf));
+		return buf[lookahead].type;
+	}
+
+	Token get (int lookahead=0) {
+		Token tok;
+		tok    = std::move(buf[0]);
+		buf[0] = std::move(buf[1]);
+
+		parse_next_token(&buf[1]);
+
+		printf("%-18s : ", TokenType_str[tok.type]);
+		fwrite(tok.text.data(), 1, (int)tok.text.size(), stdout);
+		printf("\n");
+
+		return tok;
+	}
+};

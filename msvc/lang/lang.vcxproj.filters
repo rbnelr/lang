@@ -30,6 +30,8 @@
     <ClInclude Include="..\..\..\common\tracy\Tracy.hpp">
       <Filter>tracy</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\errors.hpp" />
+    <ClInclude Include="..\..\interpreter.hpp" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="util">

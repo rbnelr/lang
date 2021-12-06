@@ -1,5 +1,7 @@
 #include "common.hpp"
+#include "errors.hpp"
 #include "tokenizer.hpp"
+#include "interpreter.hpp"
 
 int main (char** argv, int argc) {
 	enable_console_ansi_color_codes();
@@ -12,24 +14,23 @@ int main (char** argv, int argc) {
 		return 1;
 	}
 
-	Tokenizer tok;
+	Interpreter interp;
 	try {
 		{
 			ZoneScopedN("tok.init_source");
-			tok.init_source(source.c_str(), filename.c_str());
+			interp.tok.init_source(source.c_str());
 		}
 
-		ZoneScopedN("tokenize");
+		ZoneScopedN("interpret");
 
-		printf("Tokenizer:\n");
-		while (tok.peek() != T_EOF) {
-			tok.get();
-		}
-		
-	} catch (Tokenizer::Exception& ex) {
-		ex.print(tok);
-	} catch (std::exception& ex) {
-		fprintf(stderr, "Unknown exception: %s", ex.what());
+		auto val = interp.statement();
+		printf("%g\n", val.val);
+	}
+	catch (Exception& ex) {
+		ex.print(filename.c_str(), interp.tok.lines);
+	}
+	catch (...) {
+		fprintf(stderr, "Unknown exception!");
 	}
 
 	return 0;

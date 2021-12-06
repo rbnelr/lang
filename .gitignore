@@ -4,6 +4,11 @@
 *.o
 *.exe
 
+*.pdb
+*.iobj
+*.ipdb
+*.ilk
+
 build_*/*
 
 tracy_traces/*

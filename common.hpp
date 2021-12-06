@@ -14,19 +14,13 @@
 
 #include <exception>
 
+#include "inttypes.h" // for PRIuMAX for size_t printf'ing
+
 #include "tracy.hpp"
 
-using namespace kiss;
 #define ARRLEN(arr) (sizeof(arr) / sizeof((arr)[0]))
 
-#if   BUILD_DEBUG
+using namespace kiss;
 
-#elif BUILD_TRACY
+typedef std::basic_string_view<const char> strview;
 
-	//#define NDEBUG // no asserts
-
-#elif BUILD_RELEASE
-
-	//#define NDEBUG // no asserts
-
-#endif

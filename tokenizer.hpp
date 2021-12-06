@@ -112,7 +112,6 @@ inline constexpr const char* TokenType_str[] = {
 	"T_MINUS",
 	"T_MULTIPLY",
 	"T_DIVIDE",
-	"T_POWER",
 	"T_PAREN_OPEN",
 	"T_PAREN_CLOSE",
 	"T_COMMA",
@@ -122,6 +121,23 @@ inline constexpr const char* TokenType_str[] = {
 	"T_LITERAL_FLOAT",
 	
 	"T_IDENTIFIER",
+};
+inline constexpr const char* TokenType_char[] = {
+		"\\0",
+
+		"+",
+		"-",
+		"*",
+		"/",
+		"(",
+		")",
+		",",
+		"=",
+
+		"int",
+		"float",
+
+		"identifier",
 };
 
 struct Token {
@@ -141,7 +157,7 @@ struct Tokenizer {
 	const char*          cur;
 	const char*          cur_line;
 
-	Token                buf[2]; // need 2 tokens pre-tokenized to allow for peek() with 1 token lookahead
+	Token                buf[3]; // need 2 tokens pre-tokenized to allow for peek() with 1 token lookahead
 
 	std::vector<strview> lines;
 
@@ -159,21 +175,26 @@ struct Tokenizer {
 
 		//last_error = "";
 
-		buf[0] = parse_next_token();
+		buf[0] = {};
 		buf[1] = parse_next_token();
+		buf[2] = parse_next_token();
 	}
 
+	Token prev () {
+		return buf[0];
+	}
 	TokenType peek (int lookahead=0) {
 		assert(lookahead >= 0 && lookahead < ARRLEN(buf));
-		return buf[lookahead].type;
+		return buf[lookahead+1].type;
 	}
 
 	Token get () {
-		Token tok;
-		tok    = buf[0];
 		buf[0] = buf[1];
+		buf[1] = buf[2];
 
-		buf[1] = parse_next_token();
+		buf[2] = parse_next_token();
+
+		Token tok = buf[0];
 
 		//printf("%-18s : ", TokenType_str[tok.type]);
 		//fwrite(tok.text.data(), 1, (int)tok.text.size(), stdout);
@@ -183,7 +204,7 @@ struct Tokenizer {
 	}
 
 	bool eat (TokenType type) {
-		if (buf[0].type != type)
+		if (buf[1].type != type)
 			return false;
 		get();
 		return true;

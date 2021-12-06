@@ -25,13 +25,13 @@ struct Exception {
 		assert(start >= line.data());
 		assert(cur > start);
 		size_t begin = start - line.data();
-		size_t len   = cur - start;
+		size_t end   = std::min(cur, line.data() + line.size()) - line.data();
 
 		for (size_t i=0; i<begin; ++i)
 			fputc(' ', stderr);
 
 		fputs("^", stderr);
-		for (size_t i=1; i<len; ++i)
+		for (size_t i=begin+1; i<end; ++i)
 			fputc('~', stderr);
 
 		fputs("\n", stderr);

@@ -39,14 +39,32 @@ struct Value {
 	float val;
 };
 
+void println (Value& arg) {
+
+	printf("%g\n", arg.val);
+}
+
 struct Interpreter {
 	Tokenizer tok;
 
-	void throw_error (const char* errstr, Token& tok) {
-		throw Exception{ errstr, tok.text.data(), tok.text.data()+1, tok.lineno };
+	void throw_error (const char* errstr, Token const& after_tok) {
+		const char* pos = after_tok.text.data() + after_tok.text.size();
+		throw Exception{ errstr, pos, pos+1, after_tok.lineno };
+	}
+	void throw_error (const char* errstr, strview const& range, size_t lineno) {
+		throw Exception{ errstr, range.data(), range.data() + range.size(), lineno };
 	}
 
-	int depth = 0;
+	Value call_function (strview const& name, Value* arg, size_t argc, strview const& range, size_t lineno) {
+		if (name == "println") {
+			if (argc != 1) throw_error("println takes 1 argument", range, lineno);
+			println(arg[0]);
+		}
+		else {
+			throw_error("unknown function", range, lineno);
+		}
+		return {};
+	}
 
 	Value atom () {
 		Value result;
@@ -55,41 +73,27 @@ struct Interpreter {
 			result = expression();
 
 			if (!tok.eat(T_PAREN_CLOSE)) {
-				throw_error("syntax error, ')' expected", tok.buf[0]);
+				throw_error("syntax error, ')' expected", tok.prev());
 			}
 		}
 		else if (tok.peek(0) == T_IDENTIFIER && tok.peek(1) == T_PAREN_OPEN) {
-			//// function call
-			//result = ast_node(OP_FUNCCALL, tok.get());
-			//tok.get(); // T_PAREN_OPEN
-			//
-			//ast_ptr* arg_ptr = &result->child;
-			//
-			//int argc = 0;
-			//
-			//if (tok.eat(T_PAREN_CLOSE)) {
-			//	// 0 args
-			//} else {
-			//	for (;;) {
-			//		*arg_ptr = expression();
-			//		if (!*arg_ptr) return nullptr;
-			//
-			//		argc++;
-			//		arg_ptr = &(*arg_ptr)->next;
-			//
-			//		if (tok.eat(T_COMMA)) {
-			//			continue;
-			//		} else if (tok.eat(T_PAREN_CLOSE)) {
-			//			break;
-			//		} else {
-			//			last_err = "syntax error, ',' or ')' expected!";
-			//			return nullptr;
-			//		}
-			//	}
-			//}
-			//
-			//result->op.argc = argc;
-			assert(false);
+			Token funcname = tok.get();
+			tok.get(); // T_PAREN_OPEN
+			
+			std::vector<Value> args;
+			args.reserve(16);
+			
+			while (!tok.eat(T_PAREN_CLOSE)) {
+				args.emplace_back( expression() );
+			
+				if (!tok.eat(T_COMMA) && tok.peek() != T_PAREN_CLOSE) {
+					throw_error("syntax error, ',' or ')' expected!", tok.prev());
+				}
+			}
+			auto paren_close = tok.prev().text;
+
+			strview range = strview(funcname.text.data(), paren_close.data() + paren_close.size() - funcname.text.data());
+			result = call_function(funcname.text, args.data(), args.size(), range, funcname.lineno);
 		}
 		else if (tok.peek() == T_LITERAL_FLOAT) {
 			result = { (float)tok.get().value_flt };
@@ -131,12 +135,14 @@ struct Interpreter {
 				break;
 
 			if (unary_minus && unary_prec >= prec) {
-				lhs.val = -lhs.val;
+				Value result = { -lhs.val };
+
+				lhs = result;
 				unary_minus = false;
 			}
 
 			tok.get(); // eat operator
-			
+
 			Value rhs = expression(assoc == LEFT_ASSOC ? prec+1 : prec);
 
 			switch (op_type) {
@@ -154,20 +160,18 @@ struct Interpreter {
 		return lhs;
 	}
 	
-	Value statement () {
-		Value result = expression();
+	void statements () {
+		
+		while (tok.peek() != T_EOF) {
+			Value result = expression();
 
-		if (!tok.eat(T_SEMICOLON)) {
-			throw_error("syntax error, ';' expected", tok.buf[0]);
+			if (!tok.eat(T_SEMICOLON)) {
+				throw_error("syntax error, ';' expected", tok.buf[0]);
+			}
 		}
 
-		//if (tok.peek() == T_PAREN_CLOSE) {
-		//	throw_error("syntax error, ')' without matching '('", tok.buf[0]);
+		//if (tok.peek() != T_EOF) {
+		//	throw_error("syntax error, end of input expected", tok.buf[0]);
 		//}
-		if (tok.peek() != T_EOF) {
-			throw_error("syntax error, end of input expected", tok.buf[0]);
-		}
-
-		return result;
 	}
 };

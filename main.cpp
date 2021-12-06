@@ -23,8 +23,7 @@ int main (char** argv, int argc) {
 
 		ZoneScopedN("interpret");
 
-		auto val = interp.statement();
-		printf("%g\n", val.val);
+		interp.statements();
 	}
 	catch (Exception& ex) {
 		ex.print(filename.c_str(), interp.tok.lines);

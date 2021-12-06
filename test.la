@@ -1,4 +1,15 @@
 
-println(1 * 5 - 2);
+c = 1;
+a = 4 + c;
+
+println(c);
+-c;
+c = -c;
+println(c);
+
+println(a);
+
+println(1 * a - 2);
+
 println(1 * 5 * 2);
 println(1 - 5 * 2);

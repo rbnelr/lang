@@ -47,9 +47,13 @@ void println (Value& arg) {
 struct Interpreter {
 	Tokenizer tok;
 
-	void throw_error (const char* errstr, Token const& after_tok) {
-		const char* pos = after_tok.text.data() + after_tok.text.size();
-		throw Exception{ errstr, pos, pos+1, after_tok.lineno };
+	void throw_error_after (const char* errstr, Token const& after_tok) {
+		const char* end = after_tok.text.data() + after_tok.text.size();
+		throw Exception{ errstr, end, end+1, after_tok.lineno };
+	}
+	void throw_error (const char* errstr, Token const& tok) {
+		const char* end = tok.text.data() + tok.text.size();
+		throw Exception{ errstr, tok.text.data(), end, tok.lineno };
 	}
 	void throw_error (const char* errstr, strview const& range, size_t lineno) {
 		throw Exception{ errstr, range.data(), range.data() + range.size(), lineno };
@@ -66,6 +70,8 @@ struct Interpreter {
 		return {};
 	}
 
+	std::unordered_map<strview, Value> variables;
+
 	Value atom () {
 		Value result;
 
@@ -73,7 +79,7 @@ struct Interpreter {
 			result = expression();
 
 			if (!tok.eat(T_PAREN_CLOSE)) {
-				throw_error("syntax error, ')' expected", tok.prev());
+				throw_error_after("syntax error, ')' expected", tok.prev());
 			}
 		}
 		else if (tok.peek(0) == T_IDENTIFIER && tok.peek(1) == T_PAREN_OPEN) {
@@ -87,7 +93,7 @@ struct Interpreter {
 				args.emplace_back( expression() );
 			
 				if (!tok.eat(T_COMMA) && tok.peek() != T_PAREN_CLOSE) {
-					throw_error("syntax error, ',' or ')' expected!", tok.prev());
+					throw_error_after("syntax error, ',' or ')' expected!", tok.prev());
 				}
 			}
 			auto paren_close = tok.prev().text;
@@ -99,11 +105,16 @@ struct Interpreter {
 			result = { (float)tok.get().value_flt };
 		}
 		else if (tok.peek() == T_IDENTIFIER) {
-			//type = OP_VARIABLE;
-			assert(false);
+			Token varname = tok.get();
+
+			auto it = variables.find(varname.text);
+			if (it == variables.end())
+				throw_error("unknown variable", varname);
+
+			result = it->second;
 		}
 		else {
-			throw_error("syntax error, number or variable expected", tok.buf[0]);
+			throw_error_after("syntax error, number or variable expected", tok.prev());
 		}
 
 		return result;
@@ -161,12 +172,24 @@ struct Interpreter {
 	}
 	
 	void statements () {
-		
+
 		while (tok.peek() != T_EOF) {
+
+			Value* lhs = nullptr;
+
+			if (tok.peek(0) == T_IDENTIFIER && tok.peek(1) == T_EQUALS) {
+				Token variable = tok.get();
+				tok.get(); // T_EQUALS
+
+				lhs = &variables[variable.text];
+			}
+
 			Value result = expression();
+			if (lhs)
+				*lhs = result;
 
 			if (!tok.eat(T_SEMICOLON)) {
-				throw_error("syntax error, ';' expected", tok.buf[0]);
+				throw_error_after("syntax error, ';' expected", tok.prev());
 			}
 		}
 

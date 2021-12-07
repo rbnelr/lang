@@ -97,10 +97,8 @@ enum TokenType {
 	T_SEMICOLON,   // ;
 
 	T_LITERAL_INT,
-	// starts with [0-9], then anything that strtod() accepts
-	// note: no sign is ever parsed, '+' or '-' are greedily tokenizes as T_PLUS and T_MINUS
-	// is parsed for its float value, which gets stored in the Token struct
 	T_LITERAL_FLOAT,
+	T_LITERAL_STRING,
 
 	// starts with  '_' or [a-Z]  and then any number of  '_' or [a-Z] or [0-9]
 	T_IDENTIFIER,
@@ -119,6 +117,7 @@ inline constexpr const char* TokenType_str[] = {
 	
 	"T_LITERAL_INT",
 	"T_LITERAL_FLOAT",
+	"T_LITERAL_STRING",
 	
 	"T_IDENTIFIER",
 };
@@ -135,7 +134,8 @@ inline constexpr const char* TokenType_char[] = {
 		"=",
 
 		"int",
-		"float",
+		"flt",
+		"str",
 
 		"identifier",
 };
@@ -146,150 +146,113 @@ struct Token {
 	size_t     lineno;
 
 	union {
-		uint64_t  value_int; // T_LITERAL_INT
+		int64_t   value_int; // T_LITERAL_INT
 		double    value_flt; // T_LITERAL_FLOAT
+		strview   value_str;
 	};
 
 	Token () {}
 };
 
-struct Tokenizer {
-	const char*          cur;
-	const char*          cur_line;
-
-	Token                buf[3]; // need 2 tokens pre-tokenized to allow for peek() with 1 token lookahead
-
+struct Tokenized {
+	std::vector<Token>   tokens;
 	std::vector<strview> lines;
+};
+Tokenized tokenize (const char* src) {
+	ZoneScoped;
 
-	//std::string last_error;
-	void throw_error (const char* errstr, const char* start, const char* cur, size_t lineno) {
-		throw Exception{ errstr, start, cur, lineno };
-	}
+	Tokenized res;
 
-	void init_source (const char* src) {
-		cur = src;
-		cur_line = src;
+	res.tokens.reserve(4096);
+	res.lines.reserve(4096);
 
-		lines.reserve(1024);
-		prescan_line();
+	const char* cur = src;
+	const char* cur_line = src;
 
-		//last_error = "";
 
-		buf[0] = {};
-		buf[1] = parse_next_token();
-		buf[2] = parse_next_token();
-	}
-
-	Token prev () {
-		return buf[0];
-	}
-	TokenType peek (int lookahead=0) {
-		assert(lookahead >= 0 && lookahead < ARRLEN(buf));
-		return buf[lookahead+1].type;
-	}
-
-	Token get () {
-		buf[0] = buf[1];
-		buf[1] = buf[2];
-
-		buf[2] = parse_next_token();
-
-		Token tok = buf[0];
-
-		//printf("%-18s : ", TokenType_str[tok.type]);
-		//fwrite(tok.text.data(), 1, (int)tok.text.size(), stdout);
-		//printf("\n");
-
-		return tok;
-	}
-
-	bool eat (TokenType type) {
-		if (buf[1].type != type)
-			return false;
-		get();
-		return true;
-	}
-
-	// need to know the end of the current line while processing tokens in it to allow printing the whole line on syntax errors
-	void prescan_line () {
+	// need to know the end of the current line after EOF or on error
+	auto finish_line = [&] () {
 		const char* c = cur;
 		while (*c != '\n' && *c != '\r' && *c != '\0')
 			c++; // skip anything until newline or EOF
 
-		lines.emplace_back(strview(cur_line, c - cur_line));
-	}
-	bool newline () {
+		res.lines.emplace_back(strview(cur_line, c - cur_line));
+	};
+	auto newline = [&] () -> bool {
+		const char* before_newline = cur;
 		if (parse::newline(cur)) {
-
+			res.lines.emplace_back(strview(cur_line, before_newline - cur_line));
 			cur_line = cur;
-			prescan_line();
-
 			return true;
 		}
 		return false;
-	}
+	};
 
-	Token parse_next_token () {
-		using namespace parse;
+	auto throw_error = [&] (const char* errstr, const char* start, const char* cur) {
+		finish_line();
+		throw Exception{ errstr, start, cur, res.lines.size() };
+	};
 
-		for (;;) {
-			if (is_whitespace_c(*cur)) {
-				cur++;
-				continue;
-			}
+	using namespace parse;
 
-			if (cur[0] == '/' && cur[1] == '/') {
-				cur += 2; // skip "//"
-
-				while (*cur != '\n' && *cur != '\r' && *cur != '\0')
-					cur++; // skip anything until newline or EOF
-
-				// fallthrough to newline
-			}
-			else if (cur[0] == '/' && cur[1] == '*') {
-				cur += 2; // skip "/*"
-				
-				size_t depth = 1;
-				while (depth > 0) {
-					if (*cur == '\0') {
-						// TODO: also add note about block comment open location to error
-						throw_error("end of file in block comment", cur, cur+1, lines.size()-1);
-					}
-					else if (newline()) {
-						
-					}
-					else if (cur[0] == '/' && cur[1] == '*') {
-						cur += 2; // skip "/*"
-						depth++;
-					}
-					else if (cur[0] == '*' && cur[1] == '/') {
-						cur += 2; // skip "*/"
-						depth--;
-					}
-					else {
-						cur++;
-					}
-				}
-				continue;
-			}
-			else if (cur[0] == '*' && cur[1] == '/') {
-				throw_error("unexpected block comment close", cur, cur+2, lines.size()-1);
-			}
-
-			if (newline())
-				continue;
-
-			// non-whitespace character outside of comment -> start of a token
-			break;
+	for (;;) {
+		// skip whitespace
+		if (is_whitespace_c(*cur)) {
+			cur++;
+			continue;
 		}
 
-		Token tok;
-		tok.lineno = lines.size()-1;
+		// if line comment begin, skip until newline or EOF
+		if (cur[0] == '/' && cur[1] == '/') {
+			cur += 2; // skip "//"
+
+			while (*cur != '\n' && *cur != '\r' && *cur != '\0')
+				cur++; // skip anything until newline or EOF
+
+			// fallthrough to newline()
+		}
+		// if block comment begin, skip until end of block comment while keeping track of nested block comments
+		else if (cur[0] == '/' && cur[1] == '*') {
+			cur += 2; // skip "/*"
+
+			size_t depth = 1;
+			while (depth > 0) {
+				if (*cur == '\0') {
+					// TODO: also add note about block comment open location to error
+					throw_error("end of file in block comment", cur, cur+1);
+				}
+				else if (newline()) {}
+				else if (cur[0] == '/' && cur[1] == '*') {
+					cur += 2; // skip "/*"
+					depth++;
+				}
+				else if (cur[0] == '*' && cur[1] == '/') {
+					cur += 2; // skip "*/"
+					depth--;
+				}
+				else {
+					cur++;
+				}
+			}
+			continue;
+		}
+		else if (cur[0] == '*' && cur[1] == '/') {
+			throw_error("unexpected block comment close", cur, cur+2);
+		}
+
+		if (newline())
+			continue;
+
+		// non-whitespace character outside of comment -> start of a token
+
+		Token& tok = res.tokens.emplace_back();
+
+		tok.lineno = res.lines.size();
 
 		if (*cur == '\0') {
 			tok.type = T_EOF;
 			tok.text = strview(cur, 1);
-			return tok;
+			break;
 		}
 
 		const char* start = cur;
@@ -308,14 +271,38 @@ struct Tokenizer {
 
 			case '0': case '1': case '2': case '3': case '4':
 			case '5': case '6': case '7': case '8': case '9': {
-				
+
 				if (!parse_double(cur, &tok.value_flt)) {
-					throw_error("number parse error", start, start+1, tok.lineno);
+					throw_error("number parse error", start, start+1);
 				}
 
 				tok.type = T_LITERAL_FLOAT;
 				tok.text = strview(start, cur - start);
-				return tok;
+				continue;
+			}
+
+			case '"': {
+				cur++; // skip '"'
+
+				char const* strstart = cur;
+
+				while (*cur != '"') {
+					if (*cur == '\0') {
+						throw_error("end of file in string literal", cur, cur+1);
+					}
+					else if (newline()) {}
+					else {
+						*cur++;
+					}
+				}
+
+				tok.type = T_LITERAL_STRING;
+				tok.value_str = strview(strstart, cur - strstart);
+
+				cur++; // skip '"'
+
+				tok.text = strview(start, cur - start);
+				continue;
 			}
 
 			default: {
@@ -326,17 +313,19 @@ struct Tokenizer {
 
 					tok.type = T_IDENTIFIER;
 					tok.text = strview(start, cur - start);
-
-					return tok;
+					continue;
 				}
 				else {
-					throw_error("unknown token", start, start+1, tok.lineno);
+					throw_error("unknown token", start, start+1);
 				}
 			}
 		}
 
 		cur++; // single-char token
 		tok.text = strview(start, cur - start);
-		return tok;
 	}
-};
+
+	// after EOF
+	finish_line();
+	return res;
+}

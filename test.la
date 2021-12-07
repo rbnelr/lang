@@ -1,13 +1,16 @@
 
+s = "blah";
+println(s);
+
 c = 1;
 a = 4 + c;
 
-println(c);
+printf("c: % %%\n", c);
 -c;
 c = -c;
-println(c);
+printf("c: %\n", c);
 
-println(a);
+printf("a: %  c: %\n", a, c);
 
 println(1 * a - 2);
 

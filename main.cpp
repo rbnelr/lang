@@ -14,23 +14,30 @@ int main (char** argv, int argc) {
 		return 1;
 	}
 
+#if TRACY_ENABLE
+	for (int profi=0; profi<1000; ++profi) {
+#endif
+
+	Tokenized   tokens;
 	Interpreter interp;
 	try {
-		{
-			ZoneScopedN("tok.init_source");
-			interp.tok.init_source(source.c_str());
-		}
+		tokens = tokenize(source.c_str());
 
 		ZoneScopedN("interpret");
 
+		interp.tok = &tokens.tokens[0];
 		interp.statements();
 	}
 	catch (Exception& ex) {
-		ex.print(filename.c_str(), interp.tok.lines);
+		ex.print(filename.c_str(), tokens.lines);
 	}
 	catch (...) {
 		fprintf(stderr, "Unknown exception!");
 	}
+
+#if TRACY_ENABLE
+	}
+#endif
 
 	return 0;
 }

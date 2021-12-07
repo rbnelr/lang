@@ -26,11 +26,11 @@ inline constexpr Associativity BINARY_OP_ASSOCIATIVITY[] = { // 0 = left (left t
 	RIGHT_ASSOC, // T_POWER,
 };
 
-inline int get_binary_op_precedence (TokenType tok) {
+inline unsigned get_binary_op_precedence (TokenType tok) {
 	assert(is_binary_op(tok));
 	return BINARY_OP_PRECEDENCE[tok - T_PLUS];
 }
-inline int get_binary_op_associativity (TokenType tok) {
+inline unsigned get_binary_op_associativity (TokenType tok) {
 	assert(is_binary_op(tok));
 	return (bool)BINARY_OP_ASSOCIATIVITY[tok - T_PLUS];
 }
@@ -43,26 +43,80 @@ enum Type {
 	FLT,
 	STR,
 };
+struct Value {
+	Type type;
+	union {
+		int64_t     i;
+		double      f;
+		std::string str;
+	};
 
-#include <variant>
-using _void = std::monostate;
-typedef std::variant<_void, int64_t, double, std::string> Value;
+	~Value () {
+		if (type == STR)
+			str.~basic_string();
+	}
 
-#define NULLVAL Value{}
+	static void _copy (Value& l, Value const& r) {
+		if (l.type == STR)
+			l.str.~basic_string();
+		l.type = NULL;
+
+		if (r.type != STR) {
+			memcpy(&l, &r, sizeof(Value));
+		} else {
+			l.type = r.type;
+
+			new (&l.str) decltype(l.str) ();
+			l.str = r.str;
+		}
+	}
+	Value& operator= (Value const& v) {
+		_copy(*this, v);
+		return *this;
+	}
+	Value (Value const& v) {
+		memset(this, 0, sizeof(Value));
+		_copy(*this, v);
+	}
+
+	static void _move (Value& l, Value& r) {
+		if (l.type == STR)
+			l.str.~basic_string();
+		l.type = NULL;
+
+		memcpy(&l, &r, sizeof(Value));
+		memset(&r, 0, sizeof(Value));
+	}
+	Value& operator= (Value&& v) {
+		_move(*this, v);
+		return *this;
+	}
+	Value (Value&& v) {
+		memset(this, 0, sizeof(Value));
+		_move(*this, v);
+	}
+
+	Value ()  {
+		memset(this, 0, sizeof(Value));
+	}
+	Value (int64_t         i): type{INT},   i{i} {}
+	Value (double          f): type{FLT},   f{f} {}
+	Value (std::string&& str): type{STR}, str{std::move(str)} { }
+};
 
 void print_val (Value const& arg) {
-	switch ((Type)arg.index()) {
+	switch (arg.type) {
 		case NULL:
 			printf("null");
 			break;
 		case INT:
-			printf("%" PRIi64, std::get<int64_t>(arg));
+			printf("%" PRIi64, arg.i);
 			break;
 		case FLT:
-			printf("%f", std::get<double>(arg));
+			printf("%f", arg.f);
 			break;
 		case STR:
-			printf("%s", std::get<std::string>(arg).c_str());
+			printf("%s", arg.str.c_str());
 			break;
 		default:
 			assert(false);
@@ -73,15 +127,17 @@ void println (Value& val) {
 	printf("\n");
 }
 
-void my_printf (Value& format, Value* args, size_t argc) {
-	const char* cur = std::get<std::string>(format).c_str();
+void my_printf (Value& format, Value const* args, size_t argc) {
+	const char* cur = format.str.c_str();
 
 	size_t i = 0;
 	while (*cur != '\0') {
 		if (*cur == '%') {
 			cur++;
-			if (*cur != '%')
-				print_val(i >= argc ? NULLVAL : args[i++]);
+			if (*cur != '%') {
+				if (i >= argc) print_val(Value{});
+				else           print_val(args[i++]);
+			}
 		}
 		putc(*cur++, stdout);
 	}
@@ -132,26 +188,25 @@ struct Interpreter {
 	}
 
 	Value binop (Value& lhs, Value& rhs, Token& op) {
-		if (lhs.index() != rhs.index()) {
+		if (lhs.type != rhs.type) {
 			throw_error("types do not match", op);
 			return {};
 		}
-		switch ((Type)lhs.index()) {
-
+		switch (lhs.type) {
 			case INT:
 				switch (op.type) {
-					case T_PLUS     : return std::get<int64_t>(lhs) + std::get<int64_t>(rhs);
-					case T_MINUS    : return std::get<int64_t>(lhs) - std::get<int64_t>(rhs);
-					case T_MULTIPLY : return std::get<int64_t>(lhs) * std::get<int64_t>(rhs);
-					case T_DIVIDE   : return std::get<int64_t>(lhs) / std::get<int64_t>(rhs);
+					case T_PLUS     : return { lhs.i + rhs.i };
+					case T_MINUS    : return { lhs.i - rhs.i };
+					case T_MULTIPLY : return { lhs.i * rhs.i };
+					case T_DIVIDE   : return { lhs.i / rhs.i };
 					default: assert(false); return {};
 				}
 			case FLT:
 				switch (op.type) {
-					case T_PLUS     : return std::get<double>(lhs) + std::get<double>(rhs);
-					case T_MINUS    : return std::get<double>(lhs) - std::get<double>(rhs);
-					case T_MULTIPLY : return std::get<double>(lhs) * std::get<double>(rhs);
-					case T_DIVIDE   : return std::get<double>(lhs) / std::get<double>(rhs);
+					case T_PLUS     : return { lhs.f + rhs.f };
+					case T_MINUS    : return { lhs.f - rhs.f };
+					case T_MULTIPLY : return { lhs.f * rhs.f };
+					case T_DIVIDE   : return { lhs.f / rhs.f };
 					default: assert(false); return {};
 				}
 
@@ -162,10 +217,10 @@ struct Interpreter {
 	}
 
 	Value negate (Value& rhs, Token& op) {
-		switch ((Type)rhs.index()) {
+		switch (rhs.type) {
 			case NULL: throw_error("can't do math with null", op);
-			case INT:  return -std::get<int64_t>(rhs);
-			case FLT:  return -std::get<double >(rhs);
+			case INT:  return -rhs.i;
+			case FLT:  return -rhs.f;
 			case STR:  throw_error("can't do math with str", op);
 			default: assert(false); return {};
 		}
@@ -179,7 +234,7 @@ struct Interpreter {
 				if (argc != types.size()) return false;
 			}
 			for (size_t i=0; i<types.size(); ++i) {
-				if ((Type)args[i].index() != *(types.begin() + i)) return false;
+				if (args[i].type != *(types.begin() + i)) return false;
 			}
 			return true;
 		};
@@ -200,7 +255,7 @@ struct Interpreter {
 			throw_error("unknown function", range, lineno);
 		}
 
-		return NULLVAL;
+		return {};
 
 	mismatch:
 		throw_error("no matching function overload", range, lineno);
@@ -216,7 +271,7 @@ struct Interpreter {
 				// expression in parentheses
 				tok++;
 
-				Value result = expression();
+				Value result = expression(0);
 
 				if (tok->type != T_PAREN_CLOSE) {
 					throw_error_after("syntax error, ')' expected", *tok);
@@ -237,7 +292,7 @@ struct Interpreter {
 					args.reserve(16);
 
 					while (tok->type != T_PAREN_CLOSE) {
-						args.emplace_back( expression() );
+						args.emplace_back( expression(0) );
 
 						if (tok->type == T_COMMA) {
 							tok++;
@@ -275,19 +330,25 @@ struct Interpreter {
 	// ex. -x^(y+3) + 5
 	// note that the (y+3) is an atom, which happens to be a sub-expression
 	// expression calls itself recursively with increasing min_precedences to generate operators in the correct order (precedence climbing algorithm)
-	Value expression (int min_prec = 0) {
+	Value expression (unsigned min_prec) {
 
 		Token* unary_minus = nullptr;
-		int unary_prec = 0;
+		unsigned unary_prec = 1;
 
 		if      (tok->type == T_MINUS) {
 			unary_minus = tok++;
+			min_prec = std::min(min_prec, unary_prec);
 		}
 		else if (tok->type == T_PLUS) {
 			tok++; // unary plus is no-op
 		}
 
 		Value lhs = atom();
+
+		if (unary_minus && is_binary_op(tok->type) && unary_prec >= get_binary_op_associativity(tok->type)) {
+			lhs = negate(lhs, *unary_minus);
+			unary_minus = nullptr;
+		}
 
 		for (;;) {
 			TokenType op_type = tok->type;
@@ -299,11 +360,6 @@ struct Interpreter {
 
 			if (prec < min_prec)
 				break;
-
-			if (unary_minus && unary_prec >= prec) {
-				lhs = negate(lhs, *unary_minus);
-				unary_minus = nullptr;
-			}
 
 			Token& op = *tok++; // eat operator
 
@@ -330,9 +386,9 @@ struct Interpreter {
 				lhs = &variables[variable.text];
 			}
 
-			Value result = expression();
+			Value result = expression(0);
 			if (lhs)
-				*lhs = result;
+				*lhs = std::move(result);
 
 			if (tok->type != T_SEMICOLON) {
 				throw_error_after("syntax error, ';' expected", *tok);

@@ -2,6 +2,9 @@
 s = "blah";
 println(s);
 
+s = "foo";
+println(s);
+
 c = 1;
 a = 4 + c;
 

@@ -41,4 +41,7 @@
       <UniqueIdentifier>{03b26709-89a4-4de1-a908-4a65cd98dc18}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
+  <ItemGroup>
+    <None Include="..\..\test.la" />
+  </ItemGroup>
 </Project>

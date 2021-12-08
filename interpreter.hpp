@@ -151,8 +151,10 @@ struct Interpreter {
 		throw Exception{ errstr, end, end+1, after_tok.lineno };
 	}
 	void throw_error (const char* errstr, Token const& tok) {
-		const char* end = tok.text.data() + tok.text.size();
-		throw Exception{ errstr, tok.text.data(), end, tok.lineno };
+		throw Exception{ errstr, tok.text.data(), tok.text.data() + tok.text.size(), tok.lineno };
+	}
+	void throw_error (const char* errstr, Token const& first, Token const& last) {
+		throw Exception{ errstr, first.text.data(), last.text.data() + last.text.size(), first.lineno };
 	}
 	void throw_error (const char* errstr, strview const& range, size_t lineno) {
 		throw Exception{ errstr, range.data(), range.data() + range.size(), lineno };
@@ -215,7 +217,6 @@ struct Interpreter {
 			default: assert(false); return {};
 		}
 	}
-
 	Value negate (Value& rhs, Token& op) {
 		switch (rhs.type) {
 			case NULL: throw_error("can't do math with null", op);
@@ -226,7 +227,7 @@ struct Interpreter {
 		}
 	}
 
-	Value call_function (strview const& name, Value* args, size_t argc, strview const& range, size_t lineno) {
+	Value call_function (strview const& name, Value* args, size_t argc, Token const& first, Token const& last) {
 		auto match = [] (Value* args, size_t argc, std::initializer_list<Type> types, bool follow_vararg=false) {
 			if (follow_vararg) {
 				if (argc < types.size()) return false;
@@ -252,17 +253,19 @@ struct Interpreter {
 			my_printf(args[0], args+1, argc-1);
 		}
 		else {
-			throw_error("unknown function", range, lineno);
+			throw_error("unknown function", first, last);
 		}
 
 		return {};
 
 	mismatch:
-		throw_error("no matching function overload", range, lineno);
+		throw_error("no matching function overload", first, last);
 		return {};
 	}
 
-	std::unordered_map<strview, Value> variables;
+
+	typedef std::unordered_map<strview, Value> Vars;
+	Vars vars;
 
 	Value atom () {
 		switch (tok->type) {
@@ -273,9 +276,8 @@ struct Interpreter {
 
 				Value result = expression(0);
 
-				if (tok->type != T_PAREN_CLOSE) {
-					throw_error_after("syntax error, ')' expected", *tok);
-				}
+				if (tok->type != T_PAREN_CLOSE)
+					throw_error_after("syntax error, parenthesis '(' not closed", tok[-1]);
 				tok++;
 
 				return result;
@@ -298,17 +300,16 @@ struct Interpreter {
 							tok++;
 						}
 						else if (tok->type != T_PAREN_CLOSE) {
-							throw_error_after("syntax error, ',' or ')' expected!", *tok);
+							throw_error_after("syntax error, ',' or ')' expected!", tok[-1]);
 						}
 					}
 					Token& paren_close = *tok++;
 
-					strview range = strview(ident.text.data(), paren_close.text.data() + paren_close.text.size() - ident.text.data());
-					return call_function(ident.text, args.data(), args.size(), range, ident.lineno);
+					return call_function(ident.text, args.data(), args.size(), ident, paren_close);
 				} else {
 					// variable
-					auto it = variables.find(ident.text);
-					if (it == variables.end())
+					auto it = vars.find(ident.text);
+					if (it == vars.end())
 						throw_error("unknown variable", ident);
 
 					return it->second;
@@ -320,7 +321,7 @@ struct Interpreter {
 			case T_LITERAL_STRING: return parse_escaped_string(*tok++);
 
 			default: {
-				throw_error_after("syntax error, number or variable expected", *tok);
+				throw_error("syntax error, number or variable expected", *tok);
 				return {};
 			}
 		}
@@ -355,8 +356,8 @@ struct Interpreter {
 			if (!is_binary_op(op_type))
 				break;
 
-			int prec  = get_binary_op_precedence(   op_type);
-			int assoc = get_binary_op_associativity(op_type);
+			unsigned prec  = get_binary_op_precedence(   op_type);
+			unsigned assoc = get_binary_op_associativity(op_type);
 
 			if (prec < min_prec)
 				break;
@@ -372,32 +373,86 @@ struct Interpreter {
 			lhs = negate(lhs, *unary_minus);
 		return lhs;
 	}
-	
-	void statements () {
 
-		while (tok->type != T_EOF) {
+	void block () {
+		if (tok->type != T_BLOCK_OPEN)
+			throw_error("syntax error, '{' expected", *tok);
+		tok++;
 
-			Value* lhs = nullptr;
+		scope_statements();
 
-			if (tok[0].type == T_IDENTIFIER && tok[1].type == T_EQUALS) {
-				Token& variable = *tok++;
-				tok++; // T_EQUALS
+		if (tok->type != T_BLOCK_CLOSE)
+			throw_error("syntax error, '}' expected", *tok);
+		tok++;
+	}
 
-				lhs = &variables[variable.text];
-			}
+	void statement () {
+		
+		switch (tok[0].type) {
 
-			Value result = expression(0);
-			if (lhs)
-				*lhs = std::move(result);
+			// block
+			case T_BLOCK_OPEN: {
+				block();
+			} break;
 
-			if (tok->type != T_SEMICOLON) {
-				throw_error_after("syntax error, ';' expected", *tok);
-			}
-			tok++;
+			// for loop
+			case T_FOR: {
+				
+				Token& fortok = *tok++;
+
+				Value count = expression(0);
+
+				if (count.type != INT)
+					throw_error_after("syntax error, int expected", fortok);
+
+				Token* loop_start = tok;
+				for (int64_t i=0; i<count.i; ++i) {
+					tok = loop_start;
+					block();
+				}
+			} break;
+
+			// allow empty statements
+			case T_SEMICOLON: {
+				// no-op
+				tok++;
+			} break;
+
+			default: {
+				// assignment
+				if (tok[0].type == T_IDENTIFIER && tok[1].type == T_EQUALS) {
+					Token& variable = *tok++;
+					tok++; // T_EQUALS
+
+					Value* lhs = &vars[variable.text];
+					*lhs = expression(0);
+				}
+				// expression (not being assigned)
+				else {
+					Value result = expression(0);
+				}
+
+				if (tok->type != T_SEMICOLON)
+					throw_error("syntax error, ';' expected", *tok);
+				tok++;
+			} break;
+		}
+	}
+
+	void scope_statements () {
+		while (tok->type != T_EOF && tok->type != T_BLOCK_CLOSE) {
+			statement();
 		}
 
 		//if (tok.peek() != T_EOF) {
 		//	throw_error("syntax error, end of input expected", tok.buf[0]);
 		//}
+	}
+
+	void file () {
+		scope_statements();
+
+		if (tok->type != T_EOF)
+			throw_error("syntax error, end of input expected", *tok);
 	}
 };

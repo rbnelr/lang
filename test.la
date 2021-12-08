@@ -19,3 +19,43 @@ println(1 * a - 2);
 
 println(1 * 5 * 2);
 println(1 - 5 * 2);
+
+;
+;;
+
+println("");
+
+////
+printf("-------\n");
+
+p = -4;
+printf("outter: %\n", p);
+{
+	printf("inner: %\n", p);
+	p = -3;
+}
+printf("outter: %\n", p);
+
+printf("-------\n");
+{
+	p = -4;
+	printf("inner: %\n", p);
+	p = -3;
+}
+printf("outter: %\n", p);
+
+////
+printf("-------\n");
+{}
+{;}
+
+//for 10  error: '{' expected
+
+//for "hello World" {}  error: int expected
+
+for 10 {
+	
+}
+for 5*2 {
+	printf("foo ");
+}

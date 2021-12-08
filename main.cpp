@@ -26,7 +26,7 @@ int main (char** argv, int argc) {
 		ZoneScopedN("interpret");
 
 		interp.tok = &tokens.tokens[0];
-		interp.statements();
+		interp.file();
 	}
 	catch (Exception& ex) {
 		ex.print(filename.c_str(), tokens.lines);

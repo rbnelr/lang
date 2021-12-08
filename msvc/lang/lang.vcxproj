@@ -147,6 +147,9 @@
     <ClInclude Include="..\..\util\file_io.hpp" />
     <ClInclude Include="..\..\util\string.hpp" />
   </ItemGroup>
+  <ItemGroup>
+    <None Include="..\..\test.la" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>

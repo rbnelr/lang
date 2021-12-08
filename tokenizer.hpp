@@ -45,27 +45,18 @@ namespace parse {
 
 	// skips "-012345"
 	// returns int in <out_int>
-	inline bool integer (const char*& c, int* out_int) {
+	inline bool parse_integer (const char*& c, int64_t* out_int) {
 		const char* cur = c;
-
-		bool neg = false;
-		if (*cur == '-') {
-			neg = true;
-			cur++;
-		} else if (*cur == '+') {
-			cur++;
-		}
-
 		if (*cur < '0' || *cur > '9')
 			return false;
 
-		unsigned int out = 0;
+		int64_t out = 0;
 		while (*cur >= '0' && *cur <= '9') {
 			out *= 10;
 			out += *cur++ - '0';
 		}
 
-		*out_int = neg ? -(int)out : (int)out;
+		*out_int = (int)out;
 		c = cur;
 		return true;
 	}
@@ -86,15 +77,20 @@ namespace parse {
 enum TokenType {
 	T_EOF=0, // end of file
 
-	T_PLUS,        // +
-	T_MINUS,       // -
-	T_MULTIPLY,    // *
-	T_DIVIDE,      // /
-	T_PAREN_OPEN,  // (
-	T_PAREN_CLOSE, // )
-	T_COMMA,       // ,
-	T_EQUALS,      // =
-	T_SEMICOLON,   // ;
+	T_PLUS,          // +
+	T_MINUS,         // -
+	T_MULTIPLY,      // *
+	T_DIVIDE,        // /
+	T_EQUALS,        // =
+	T_SEMICOLON,     // ;
+	T_COMMA,         // ,
+
+	T_PAREN_OPEN,    // (
+	T_PAREN_CLOSE,   // )
+	T_BLOCK_OPEN,    // {
+	T_BLOCK_CLOSE,   // }
+	T_INDEX_OPEN,    // [
+	T_INDEX_CLOSE,   // ]
 
 	T_LITERAL_INT,
 	T_LITERAL_FLOAT,
@@ -102,42 +98,60 @@ enum TokenType {
 
 	// starts with  '_' or [a-Z]  and then any number of  '_' or [a-Z] or [0-9]
 	T_IDENTIFIER,
+
+	T_FOR,
 };
 inline constexpr const char* TokenType_str[] = {
 	"T_EOF",
-	
-	"T_PLUS",
-	"T_MINUS",
-	"T_MULTIPLY",
-	"T_DIVIDE",
-	"T_PAREN_OPEN",
+
+	"T_PLUS",       
+	"T_MINUS",      
+	"T_MULTIPLY",   
+	"T_DIVIDE",     
+	"T_EQUALS",     
+	"T_SEMICOLON",  
+	"T_COMMA",      
+
+	"T_PAREN_OPEN", 
 	"T_PAREN_CLOSE",
-	"T_COMMA",
-	"T_EQUALS",
+	"T_BLOCK_OPEN", 
+	"T_BLOCK_CLOSE",
+	"T_INDEX_OPEN", 
+	"T_INDEX_CLOSE",
 	
 	"T_LITERAL_INT",
 	"T_LITERAL_FLOAT",
 	"T_LITERAL_STRING",
 	
 	"T_IDENTIFIER",
+
+	"T_FOR",
 };
 inline constexpr const char* TokenType_char[] = {
-		"\\0",
+	"\\0",
 
-		"+",
-		"-",
-		"*",
-		"/",
-		"(",
-		")",
-		",",
-		"=",
+	"+",
+	"-",
+	"*",
+	"/",
+	"=",
+	";",
+	",",
+	
+	"(",
+	")",
+	"{",
+	"}",
+	"[",
+	"]",
 
-		"int",
-		"flt",
-		"str",
+	"int",
+	"flt",
+	"str",
 
-		"identifier",
+	"identifier",
+
+	"for",
 };
 
 struct Token {
@@ -261,24 +275,45 @@ Tokenized tokenize (const char* src) {
 			case '-': tok.type = T_MINUS;         break;
 			case '*': tok.type = T_MULTIPLY;      break;
 			case '/': tok.type = T_DIVIDE;        break;
-
-			case '(': tok.type = T_PAREN_OPEN;    break;
-			case ')': tok.type = T_PAREN_CLOSE;   break;
-			case ',': tok.type = T_COMMA;         break;
-
 			case '=': tok.type = T_EQUALS;        break;
 			case ';': tok.type = T_SEMICOLON;     break;
+			case ',': tok.type = T_COMMA;         break;
+
+			case '(': tok.type = T_PAREN_OPEN;    break; 
+			case ')': tok.type = T_PAREN_CLOSE;   break; 
+			case '{': tok.type = T_BLOCK_OPEN;    break; 
+			case '}': tok.type = T_BLOCK_CLOSE;   break; 
+			case '[': tok.type = T_INDEX_OPEN;    break; 
+			case ']': tok.type = T_INDEX_CLOSE;   break; 
 
 			case '0': case '1': case '2': case '3': case '4':
 			case '5': case '6': case '7': case '8': case '9': {
 
-				if (!parse_double(cur, &tok.value_flt)) {
-					throw_error("number parse error", start, start+1);
-				}
+				char const* start = cur;
 
-				tok.type = T_LITERAL_FLOAT;
-				tok.text = strview(start, cur - start);
-				continue;
+				while (is_decimal_c(*cur))
+					cur++;
+
+				if (*cur == '.') {
+					// float
+					cur = start; // reset to begining
+					if (!parse_double(cur, &tok.value_flt)) {
+						throw_error("number parse error", start, start+1);
+					}
+					tok.type = T_LITERAL_FLOAT;
+					tok.text = strview(start, cur - start);
+					continue;
+				}
+				else {
+					// float
+					cur = start; // reset to begining
+					if (!parse_integer(cur, &tok.value_int)) {
+						throw_error("number parse error", start, start+1);
+					}
+					tok.type = T_LITERAL_INT;
+					tok.text = strview(start, cur - start);
+					continue;
+				}
 			}
 
 			case '"': {
@@ -311,8 +346,10 @@ Tokenized tokenize (const char* src) {
 					while (is_ident_c(*cur))
 						cur++; // find end of identifier
 
-					tok.type = T_IDENTIFIER;
 					tok.text = strview(start, cur - start);
+
+					if (tok.text  == "for")    tok.type = T_FOR;
+					else                       tok.type = T_IDENTIFIER;
 					continue;
 				}
 				else {

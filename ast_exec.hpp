@@ -89,12 +89,11 @@ mismatch:
 
 struct Interpreter {
 
-	Value binop (Value& lhs, Value& rhs, AST* op) {
-		ASTType at = op->type;
+	Value binop (Value& lhs, Value& rhs, ASTType opt, AST* op) {
 		Type lt = lhs.type, rt = rhs.type;
 
 		if ((lt == NULL || rt == NULL) &&
-			(at == A_EQUALS || at == A_NOT_EQUALS)) {
+			(opt == A_EQUALS || opt == A_NOT_EQUALS)) {
 			// something compared to null
 			// if both actually null -> true  (null == null)
 			// else                  -> false (null == <something>  or  <something> == null)
@@ -107,7 +106,7 @@ struct Interpreter {
 		switch (lt) {
 			case INT: {
 				int64_t l = lhs.u.i, r = rhs.u.i;
-				switch (at) {
+				switch (opt) {
 					case A_ADD:        return l +  r;
 					case A_SUB:        return l -  r;
 					case A_MUL:        return l *  r;
@@ -123,7 +122,7 @@ struct Interpreter {
 			} break;
 			case FLT: {
 				double l = lhs.u.f, r = rhs.u.f;
-				switch (at) {
+				switch (opt) {
 					case A_ADD:        return l +  r;
 					case A_SUB:        return l -  r;
 					case A_MUL:        return l *  r;
@@ -139,7 +138,7 @@ struct Interpreter {
 			} break;
 			case BOOL: {
 				bool l = lhs.u.b, r = rhs.u.b;
-				switch (at) {
+				switch (opt) {
 					case A_EQUALS:     return l == r;
 					case A_NOT_EQUALS: return l != r;
 
@@ -156,7 +155,7 @@ struct Interpreter {
 				}
 			} break;
 			case STR: {
-				switch (at) {
+				switch (opt) {
 					case A_EQUALS:
 					case A_NOT_EQUALS:
 					case A_LESS:
@@ -165,7 +164,7 @@ struct Interpreter {
 					case A_GREATEREQ: {
 						int res = strcmp(lhs.u.str, rhs.u.str);
 						
-						switch (at) {
+						switch (opt) {
 							case A_EQUALS:     return res == 0;
 							case A_NOT_EQUALS: return res != 0;
 							case A_LESS:       return res <  0;
@@ -183,7 +182,7 @@ struct Interpreter {
 				}
 			} break;
 			case NULL: {
-				switch (at) {
+				switch (opt) {
 					case A_ADD:
 					case A_SUB:
 					case A_MUL:
@@ -211,11 +210,15 @@ struct Interpreter {
 			case INT:
 				switch (op->type) {
 					case A_NEGATE : return -rhs.u.i;
+					case A_INC    : return rhs.u.i++;
+					case A_DEC    : return rhs.u.i--;
 				}
 				break;
 			case FLT:
 				switch (op->type) {
 					case A_NEGATE : return -rhs.u.f;
+					case A_INC    : return rhs.u.f++;
+					case A_DEC    : return rhs.u.f--;
 				}
 				break;
 			case NULL: throw MyException{"can't do math with null", op->source};
@@ -257,7 +260,8 @@ struct Interpreter {
 				return it->second.copy();
 			} break;
 
-			case A_ASSIGNMENT: {
+			case A_ASSIGNMENT:
+			case A_ADDEQ: case A_SUBEQ: case A_MULEQ: case A_DIVEQ: {
 				AST* lhs = node->child.get();
 				AST* rhs = lhs->next.get();
 				assert(!rhs->next);
@@ -269,10 +273,56 @@ struct Interpreter {
 
 				assert(!lhs->child);
 				Value& val = vars[lhs->source.text()];
-				val.set_null();
-				val = std::move(tmp);
+				
+				if (node->type != A_ASSIGNMENT) {
+					Value tmp2 = binop(val, tmp, (ASTType)(node->type - 4), node); // execute the += as +
+
+					val.set_null();
+					val = std::move(tmp2);
+				} else {
+					val.set_null();
+					val = std::move(tmp);
+				}
 
 				return NULLVAL;
+			} break;
+
+			// binary operators
+			case A_ADD: case A_SUB: case A_MUL: case A_DIV:
+			case A_LESS: case A_LESSEQ: case A_GREATER: case A_GREATEREQ:
+			case A_EQUALS: case A_NOT_EQUALS: {
+				AST* lhs = node->child.get();
+				AST* rhs = lhs->next.get();
+				assert(!rhs->next);
+
+				Value l = execute(lhs, depth+1);
+				Value r = execute(rhs, depth+1);
+
+				return binop(l, r, node->type, node);
+			} break;
+
+			// unary operators
+			case A_NEGATE: case A_NOT:
+			case A_INC: case A_DEC: {
+				AST* operand = node->child.get();
+				assert(!operand->next);
+
+				if (node->type == A_INC || node->type == A_DEC) {
+					if (operand->type != A_VARIABLE)
+						throw MyException{"post inc/decrement can only operate on variables", node->source};
+
+					auto it = vars.find(operand->source.text());
+					if (it == vars.end())
+						throw MyException{"unknown variable", node->source};
+					Value& operand_val = it->second;
+
+					return unop(operand_val, node);
+				}
+				else {
+					Value operand_val = execute(operand, depth+1);
+
+					return unop(operand_val, node);
+				}
 			} break;
 
 			case A_CALL: {
@@ -316,38 +366,6 @@ struct Interpreter {
 				}
 
 				return NULLVAL;
-			} break;
-
-			// binary operators
-			case A_ADD:
-			case A_SUB:
-			case A_MUL:
-			case A_DIV:
-			case A_LESS:
-			case A_LESSEQ:
-			case A_GREATER:
-			case A_GREATEREQ:
-			case A_EQUALS:
-			case A_NOT_EQUALS: {
-				AST* lhs = node->child.get();
-				AST* rhs = lhs->next.get();
-				assert(!rhs->next);
-
-				Value l = execute(lhs, depth+1);
-				Value r = execute(rhs, depth+1);
-				
-				return binop(l, r, node);
-			} break;
-
-			// unary operators
-			case A_NOT:
-			case A_NEGATE: {
-				AST* operand = node->child.get();
-				assert(!operand->next);
-
-				Value operand_val = execute(operand, depth+1);
-
-				return unop(operand_val, node);
 			} break;
 
 			default:

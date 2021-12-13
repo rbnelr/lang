@@ -5,14 +5,29 @@
 #include "types.hpp"
 
 inline constexpr bool is_binary_op (TokenType tok) {
-	return tok >= T_PLUS && tok <= T_NOT_EQUALS;
+	return tok >= T_ADD && tok <= T_NOT_EQUALS;
+}
+inline constexpr bool is_unary_op (TokenType tok) {
+	return (tok >= T_ADD && tok <= T_SUB) || (tok >= T_NOT && tok <= T_DEC);
+}
+inline constexpr bool is_unary_prefix_op (TokenType tok) {
+	return (tok >= T_ADD && tok <= T_SUB) || tok == T_NOT;
+}
+inline constexpr bool is_unary_postfix_op (TokenType tok) {
+	return tok >= T_INC && tok <= T_DEC;
 }
 
 inline constexpr uint8_t BINARY_OP_PRECEDENCE[] = {
-	2, // T_PLUS
-	2, // T_MINUS
-	3, // T_MULTIPLY
-	3, // T_DIVIDE
+	2, // T_ADD
+	2, // T_SUB
+	4, // T_MUL
+	4, // T_DIV
+
+	0, // T_ADDEQ
+	0, // T_SUBEQ
+	0, // T_MULEQ
+	0, // T_DIVEQ
+	0, // T_ASSIGN
 
 	1, // T_LESS
 	1, // T_LESSEQ
@@ -22,12 +37,20 @@ inline constexpr uint8_t BINARY_OP_PRECEDENCE[] = {
 	0, // T_NOT_EQUALS
 	
 	255, // T_NOT
+	255, // T_INC
+	255, // T_DEC
 };
 inline constexpr uint8_t UNARY_OP_PRECEDENCE[] = {
-	255, // T_PLUS
-	3, // T_MINUS
-	255, // T_MULTIPLY
-	255, // T_DIVIDE
+	255, // T_ADD
+	3,   // T_SUB
+	255, // T_MUL
+	255, // T_DIV
+
+	255, // T_ADDEQ
+	255, // T_SUBEQ
+	255, // T_MULEQ
+	255, // T_DIVEQ
+	255, // T_ASSIGN
 
 	255, // T_LESS
 	255, // T_LESSEQ
@@ -36,7 +59,9 @@ inline constexpr uint8_t UNARY_OP_PRECEDENCE[] = {
 	255, // T_EQUALS
 	255, // T_NOT_EQUALS
 	
-	4, // T_NOT
+	5, // T_NOT
+	6, // T_INC
+	6, // T_DEC
 };
 
 enum Associativity : uint8_t {
@@ -44,25 +69,42 @@ enum Associativity : uint8_t {
 	RIGHT_ASSOC=1,
 };
 inline constexpr Associativity BINARY_OP_ASSOCIATIVITY[] = { // 0 = left (left to right execution)  1 = right
-	LEFT_ASSOC, // T_PLUS,
-	LEFT_ASSOC, // T_MINUS,
-	LEFT_ASSOC, // T_MULTIPLY,
-	LEFT_ASSOC, // T_DIVIDE,
-	RIGHT_ASSOC, // T_POWER,
+	LEFT_ASSOC, // T_ADD
+	LEFT_ASSOC, // T_SUB
+	LEFT_ASSOC, // T_MUL
+	LEFT_ASSOC, // T_DIV
+
+	RIGHT_ASSOC, // T_ADDEQ
+	RIGHT_ASSOC, // T_SUBEQ
+	RIGHT_ASSOC, // T_MULEQ
+	RIGHT_ASSOC, // T_DIVEQ
+	RIGHT_ASSOC, // T_ASSIGN
+
+	LEFT_ASSOC, // T_LESS
+	LEFT_ASSOC, // T_LESSEQ
+	LEFT_ASSOC, // T_GREATER
+	LEFT_ASSOC, // T_GREATEREQ
+	LEFT_ASSOC, // T_EQUALS
+	LEFT_ASSOC, // T_NOT_EQUALS
+
+	RIGHT_ASSOC, // T_NOT
+	LEFT_ASSOC, // T_INC
+	LEFT_ASSOC, // T_DEC
 };
 
-inline unsigned get_binary_op_precedence (TokenType tok) {
+inline unsigned bin_prec (TokenType tok) {
 	assert(is_binary_op(tok));
-	return BINARY_OP_PRECEDENCE[tok - T_PLUS];
+	return BINARY_OP_PRECEDENCE[tok - T_ADD];
 }
-inline unsigned get_binary_op_associativity (TokenType tok) {
+inline unsigned un_prec (TokenType tok) {
+	assert(is_unary_op(tok));
+	return UNARY_OP_PRECEDENCE[tok - T_ADD];
+}
+inline unsigned bin_assoc (TokenType tok) {
 	assert(is_binary_op(tok));
-	return (bool)BINARY_OP_ASSOCIATIVITY[tok - T_PLUS];
+	return (bool)BINARY_OP_ASSOCIATIVITY[tok - T_ADD];
 }
-inline unsigned get_unary_op_precedence (TokenType tok) {
-	assert(tok == T_MINUS || tok == T_NOT);
-	return UNARY_OP_PRECEDENCE[tok - T_PLUS];
-}
+
 
 enum ASTType {
 	A_BLOCK,
@@ -70,8 +112,6 @@ enum ASTType {
 	// values
 	A_CONSTANT,
 	A_VARIABLE,
-
-	A_ASSIGNMENT,
 
 	A_CALL,
 
@@ -84,6 +124,12 @@ enum ASTType {
 	A_MUL,
 	A_DIV,
 
+	A_ADDEQ,
+	A_SUBEQ,
+	A_MULEQ,
+	A_DIVEQ,
+	A_ASSIGNMENT,
+
 	A_LESS,
 	A_LESSEQ,
 	A_GREATER,
@@ -92,16 +138,16 @@ enum ASTType {
 	A_NOT_EQUALS,
 
 	// unary operators
-	A_NOT,
 	A_NEGATE,
+	A_NOT,
+	A_INC,
+	A_DEC,
 };
 inline const char* ASTType_str[] = {
 	"A_BLOCK",
 
 	"A_CONSTANT",
 	"A_VARIABLE",
-
-	"A_ASSIGNMENT",
 
 	"A_CALL",
 
@@ -112,6 +158,12 @@ inline const char* ASTType_str[] = {
 	"A_MUL",
 	"A_DIV",
 
+	"A_ADDEQ",
+	"A_SUBEQ",
+	"A_MULEQ",
+	"A_DIVEQ",
+	"A_ASSIGNMENT",
+
 	"A_LESS",
 	"A_LESSEQ",
 	"A_GREATER",
@@ -119,12 +171,20 @@ inline const char* ASTType_str[] = {
 	"A_EQUALS",
 	"A_NOT_EQUALS",
 
-	"A_NOT",
 	"A_NEGATE",
+	"A_NOT",
+	"A_INC",
+	"A_DEC",
 };
 
-inline constexpr ASTType ASTType_from_TokenType (TokenType tok) {
-	return (ASTType)( tok + (A_ADD - T_PLUS) );
+inline constexpr ASTType binop_from_TokenType (TokenType tok) {
+	return (ASTType)( tok + (A_ADD - T_ADD) );
+}
+inline constexpr ASTType unop_from_TokenType (TokenType tok) {
+	assert(tok != T_ADD);
+	if (tok == T_SUB) return A_NEGATE;
+
+	return (ASTType)( tok + (A_NOT - T_NOT) );
 }
 
 struct AST;
@@ -245,44 +305,46 @@ struct Parser {
 
 	ast_ptr expression (unsigned min_prec) {
 
-		ast_ptr unary_op = nullptr;
-		unsigned unary_prec;
+		// prefix unary operators
+		if (tok->type == T_ADD)
+			tok++; // unary plus is no-op
 
-		switch (tok->type) {
-			case T_MINUS:
-				unary_op = ast_alloc(A_NEGATE, *tok);
-				unary_prec = get_unary_op_precedence((*tok++).type);
-				min_prec = std::min(min_prec, unary_prec);
-				break;
-			case T_NOT:
-				unary_op = ast_alloc(A_NEGATE, *tok++);
-				unary_prec = get_unary_op_precedence((*tok++).type);
-				min_prec = std::min(min_prec, unary_prec);
-				break;
-			case T_PLUS:
-				tok++; // unary plus is no-op
-				break;
-		}
+		ast_ptr lhs;
 
-		ast_ptr lhs = atom();
+		if (is_unary_prefix_op(tok->type)) {
+			ast_ptr unary_op = ast_alloc(unop_from_TokenType(tok->type), *tok);
+			unsigned prec = un_prec(tok->type);
+			tok++;
 
-		if (unary_op && is_binary_op(tok->type) && unary_prec >= get_binary_op_associativity(tok->type)) {
+			lhs = expression(prec);
+
 			unary_op->child = std::move(lhs);
 			lhs = std::move(unary_op);
 		}
+		else {
+			lhs = atom();
+		}
 
-		for (;;) {
-			TokenType op_type = tok->type;
-			if (!is_binary_op(op_type))
-				break;
+		while (is_unary_postfix_op(tok->type)) {
+			unsigned prec = un_prec(tok->type);
+			if (prec < min_prec)
+				return lhs;
 
-			unsigned prec  = get_binary_op_precedence(   op_type);
-			unsigned assoc = get_binary_op_associativity(op_type);
+			ast_ptr post_op = ast_alloc(unop_from_TokenType(tok->type), *tok);
+			tok++;
+
+			post_op->child = std::move(lhs);
+			lhs = std::move(post_op);
+		}
+
+		while (is_binary_op(tok->type)) {
+			unsigned prec  = bin_prec( tok->type);
+			unsigned assoc = bin_assoc(tok->type);
 
 			if (prec < min_prec)
 				break;
 
-			ast_ptr op = ast_alloc(ASTType_from_TokenType(tok->type), *tok);
+			ast_ptr op = ast_alloc(binop_from_TokenType(tok->type), *tok);
 			tok++;
 
 			ast_ptr rhs = expression(assoc == LEFT_ASSOC ? prec+1 : prec);
@@ -292,16 +354,13 @@ struct Parser {
 			lhs = std::move(op);
 		}
 
-		if (unary_op) {
-			unary_op->child = std::move(lhs);
-			lhs = std::move(unary_op);
-		}
 		return lhs;
 	}
 
 	ast_ptr expression_or_assignment () { // without semicolon
-		ast_ptr expr = expression(0);
+		return expression(0);
 
+		/*
 		// expression (not being assigned)
 		if (tok->type != T_ASSIGN) {
 			return expr;
@@ -316,6 +375,7 @@ struct Parser {
 
 			return assign;
 		}
+		*/
 	}
 
 	ast_ptr statement () {

@@ -79,10 +79,16 @@ namespace parse {
 enum TokenType {
 	T_EOF=0, // end of file
 
-	T_PLUS,          // +
-	T_MINUS,         // -   binary operator   OR   unary (prefix operator)
-	T_MULTIPLY,      // *
-	T_DIVIDE,        // /
+	T_ADD,           // +
+	T_SUB,           // -   binary operator   OR   unary (prefix operator)
+	T_MUL,           // *
+	T_DIV,           // /
+
+	T_ADDEQ,         // +=
+	T_SUBEQ,         // -=
+	T_MULEQ,         // *=
+	T_DIVEQ,         // /=
+	T_ASSIGN,        // =
 
 	T_LESS,          // <
 	T_LESSEQ,        // <=
@@ -92,8 +98,9 @@ enum TokenType {
 	T_NOT_EQUALS,    // !=
 
 	T_NOT,           // !   unary (prefix) operator
+	T_INC,           // x++  postincrement
+	T_DEC,           // x--  postdecrement
 
-	T_ASSIGN,        // =
 	T_SEMICOLON,     // ;
 	T_COMMA,         // ,
 
@@ -114,10 +121,16 @@ enum TokenType {
 inline constexpr const char* TokenType_str[] = {
 	"T_EOF",
 
-	"T_PLUS",       
-	"T_MINUS",      
-	"T_MULTIPLY",   
-	"T_DIVIDE",     
+	"T_ADD",
+	"T_SUB",
+	"T_MUL",
+	"T_DIV",
+
+	"T_ADDEQ",
+	"T_SUBEQ",
+	"T_MULEQ",
+	"T_DIVEQ",
+	"T_ASSIGN",
 
 	"T_LESS",
 	"T_LESSEQ",
@@ -125,9 +138,11 @@ inline constexpr const char* TokenType_str[] = {
 	"T_GREATEREQ",
 	"T_EQUALS",
 	"T_NOT_EQUALS",
-	"T_NOT",
 
-	"T_ASSIGN",     
+	"T_NOT",
+	"T_INC",
+	"T_DEC",
+
 	"T_SEMICOLON",  
 	"T_COMMA",      
 
@@ -152,15 +167,23 @@ inline constexpr const char* TokenType_char[] = {
 	"*",
 	"/",
 
+	"+=",
+	"-=",
+	"*=",
+	"/=",
+	"=",
+
 	"<",
 	"<=",
 	">",
 	">=",
 	"==",
 	"!=",
-	"!",
 
-	"=",
+	"!",
+	"++",
+	"--",
+
 	";",
 	",",
 	
@@ -282,20 +305,27 @@ std::vector<Token> tokenize (const char* src) {
 
 		const char* start = cur;
 		switch (*cur) {
-			case '+': tok.type = T_PLUS;          break;
-			case '-': tok.type = T_MINUS;         break;
-			case '*': tok.type = T_MULTIPLY;      break;
-			case '/': tok.type = T_DIVIDE;        break;
+			case '+':
+				if (cur[1] == '=')      { tok.type = T_ADDEQ; cur++; }
+				else if (cur[1] == '+') { tok.type = T_INC;   cur++; }
+				else                    { tok.type = T_ADD; }
+				break;
 
-			case ';': tok.type = T_SEMICOLON;     break;
-			case ',': tok.type = T_COMMA;         break;
+			case '-':
+				if (cur[1] == '=')      { tok.type = T_SUBEQ; cur++; }
+				else if (cur[1] == '-') { tok.type = T_DEC;   cur++; }
+				else                    { tok.type = T_SUB; }
+				break;
 
-			case '(': tok.type = T_PAREN_OPEN;    break; 
-			case ')': tok.type = T_PAREN_CLOSE;   break; 
-			case '{': tok.type = T_BLOCK_OPEN;    break; 
-			case '}': tok.type = T_BLOCK_CLOSE;   break; 
-			case '[': tok.type = T_INDEX_OPEN;    break; 
-			case ']': tok.type = T_INDEX_CLOSE;   break; 
+			case '*':
+				if (cur[1] != '=') tok.type = T_MUL;
+				else {             tok.type = T_MULEQ;      cur++; }
+				break;
+
+			case '/':
+				if (cur[1] != '=') tok.type = T_DIV;
+				else {             tok.type = T_DIVEQ;      cur++; }
+				break;
 
 			case '<':
 				if (cur[1] != '=') tok.type = T_LESS;
@@ -316,6 +346,16 @@ std::vector<Token> tokenize (const char* src) {
 				if (cur[1] != '=') tok.type = T_ASSIGN;
 				else {             tok.type = T_EQUALS;     cur++; }
 				break;
+
+			case ';': tok.type = T_SEMICOLON;     break;
+			case ',': tok.type = T_COMMA;         break;
+
+			case '(': tok.type = T_PAREN_OPEN;    break;
+			case ')': tok.type = T_PAREN_CLOSE;   break;
+			case '{': tok.type = T_BLOCK_OPEN;    break;
+			case '}': tok.type = T_BLOCK_CLOSE;   break;
+			case '[': tok.type = T_INDEX_OPEN;    break;
+			case ']': tok.type = T_INDEX_CLOSE;   break;
 
 			case '0': case '1': case '2': case '3': case '4':
 			case '5': case '6': case '7': case '8': case '9': {

@@ -1,0 +1,12 @@
+
+println(- - - a ++ ++);
+
+println(a - - b + c);
+println(a - - b * c);
+println(a - ! b * c);
+
+println(a * b * -c * d + e);
+println(a * b * -c + d + e);
+
+--println(a * b * !c * d + e);
+--println(a * b * !c + d + e);

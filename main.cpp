@@ -11,7 +11,7 @@ int main (char** argv, int argc) {
 	for (int profi=0; profi<3; ++profi) {
 #endif
 
-	std::string filename = "test.la";
+	std::string filename = "test2.la";
 	std::string source;
 	{
 		ZoneScopedN("load_text_file");
@@ -35,7 +35,7 @@ int main (char** argv, int argc) {
 			ast = parser.file();
 		}
 
-		//dbg_print(ast.get());
+		dbg_print(ast.get());
 
 		printf("--------------------\n");
 

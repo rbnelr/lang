@@ -8,12 +8,13 @@ println(s);
 c = 1;
 a = 4 + c;
 
-printf("c: % %%\n", c);
+printf("\\ \" ^{} {}\n", 5);
+
+printf("a: {}  c: {}\n", a, c);
+
 -c;
 c = -c;
-printf("c: %\n", c);
-
-printf("a: %  c: %\n", a, c);
+printf("c: {}\n", c);
 
 println(1 * a - 2);
 
@@ -26,37 +27,46 @@ println(1 - 5 * 2);
 println("");
 
 ////
-printf("-------\n");
+printf("---------------\n");
 
 p = -4;
-printf("outer: %\n", p);
+printf("outer: {}\n", p);
 {
-	printf("inner: %\n", p);
+	printf("inner: {}\n", p);
 	p = -3;
+	printf("inner: {}\n", p);
 }
-printf("outer: %\n", p);
+printf("outer: {}\n", p);
 
-printf("-------\n");
+printf("---------------\n");
 {
 	p = -4;
-	printf("inner: %\n", p);
+	printf("inner: {}\n", p);
 	p = -3;
+	printf("inner: {}\n", p);
 }
-printf("outer: %\n", p);
+printf("outer: {}\n", p);
 
 ////
-printf("-------\n");
+printf("---------------\n");
 {}
 {;}
 
-println(false);
-println(true);
-println(1 == 0);
-println(1 == 1);
-println("helo" == "hello");
-println(5 >= 5);
-println(5 > 5);
-println(2>3 == 3>4);
+//println(null + 1); // error: types do not match.
+//println(null > 1); // error: types do not match.
+//println(null + null); // error: can't do math with null.
+//println(null > null); // error: null can't be larger or smaller.
+
+printf("false             : {}\n", false          );
+printf("true              : {}\n", true           );
+printf("1 == 0            : {}\n", 1 == 0         );
+printf("1 == 1            : {}\n", 1 == 1         );
+printf("'helo' == 'hello' : {}\n", "a" == "hello" );
+printf("'helo' > 'hello'  : {}\n", "a" > "hello"  );
+printf("'helo' == null    : {}\n", "a" == null    );
+printf("5 >= 5            : {}\n", 5 >= 5         );
+printf("5 > 5             : {}\n", 5 > 5          );
+printf("2>3 == 3>4        : {}\n", 2>3 == 3>4     );
 
 //for 10  error: '{' expected
 
@@ -67,4 +77,15 @@ for i=0; i<10; i=i+1 {
 }
 for j=0; j<5*2; j=j+1 {
 	printf("foo ");
+}
+
+printf("\n");
+printf("---------------\n");
+printf("---------------\n");
+
+for y=0; y<4; y=y+1 {
+	for x=0; x<4; x=x+1 {
+		printf("{}{} ", y,x);
+	}
+	printf("\n");
 }

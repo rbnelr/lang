@@ -28,28 +28,35 @@ struct Value {
 	Value ()  {
 		memset(this, 0, sizeof(Value));
 	}
+	Value (bool    b): type{BOOL},  b{b} {}
+	Value (int64_t i): type{INT},   i{i} {}
+	Value (double  f): type{FLT},   f{f} {}
 
-	Value (Value const& v) {
-		memset(this, 0, sizeof(Value));
-		_copy(*this, v);
-	}
+	Value (Value const& v) = delete;
+	//Value (Value const& v) {
+	//	memset(this, 0, sizeof(Value));
+	//	_copy(*this, v);
+	//}
 	Value (Value&& v) {
 		memset(this, 0, sizeof(Value));
 		_move(*this, v);
 	}
 
-	Value& operator= (Value const& v) {
-		_copy(*this, v);
-		return *this;
-	}
+	Value& operator= (Value const& v) = delete;
+	//Value& operator= (Value const& v) {
+	//	_copy(*this, v);
+	//	return *this;
+	//}
 	Value& operator= (Value&& v) {
 		_move(*this, v);
 		return *this;
 	}
 
-	Value (bool    b): type{BOOL},  b{b} {}
-	Value (int64_t i): type{INT},   i{i} {}
-	Value (double  f): type{FLT},   f{f} {}
+	Value copy () const {
+		Value val;
+		_copy(val, *this);
+		return val;
+	}
 
 	void set_str (std::string_view const& str) {
 		this->str = (char*)malloc(str.size() + 1);

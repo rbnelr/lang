@@ -2,17 +2,18 @@
 #include "common.hpp"
 #include "line_map.hpp"
 
-struct Exception {
+struct MyException {
 	const char* errstr;
-	const char* start;
-	const char* cur;
+
+	source_range source;
 
 	static inline int tab_spaces = 4;
 
 	void print (char const* filename, SourceLines const& lines) {
-		size_t start_lineno = lines.find_lineno(start);
-		auto& line = lines.lines[start_lineno];
-		auto line_str = std::string_view(line.start, (size_t)(line.end - line.start));
+		assert(source.end > source.start);
+
+		size_t start_lineno = lines.find_lineno(source.start);
+		auto line_str = lines.get_line_text(start_lineno);
 
 		auto print_line = [&] () {
 			for (char c : line_str) {
@@ -35,7 +36,7 @@ struct Exception {
 			}
 		};
 
-		size_t charno = start - line.start;
+		size_t charno = source.start - line_str.data();
 
 		if (ansi_color_supported) fputs(ANSI_COLOR_RED, stderr);
 		fprintf(stderr, "%s:%" PRIuMAX ":%" PRIuMAX ": error: %s.\n", filename, start_lineno+1, charno+1, errstr);
@@ -47,12 +48,10 @@ struct Exception {
 
 		if (ansi_color_supported) fputs(ANSI_COLOR_RED, stderr);
 
-		assert(start >= line.start);
-		assert(cur > start);
-		size_t begin = start - line.start;
-		size_t end   = (size_t)std::min(cur - line.start, line.end - line.start);
+		assert(source.start >= line_str.data());
+		const char* end = std::min(source.end, line_str.data() + line_str.size());
 
-		print_line_range(begin, end);
+		print_line_range(source.start - line_str.data(), end - line_str.data());
 		fputs("\n", stderr);
 
 		if (ansi_color_supported) fputs(ANSI_COLOR_RESET, stderr);

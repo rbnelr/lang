@@ -2,6 +2,7 @@
 #include "errors.hpp"
 #include "tokenizer.hpp"
 #include "parser.hpp"
+#include "ast_exec.hpp"
 
 int main (char** argv, int argc) {
 	enable_console_ansi_color_codes();
@@ -18,20 +19,27 @@ int main (char** argv, int argc) {
 	for (int profi=0; profi<1000; ++profi) {
 #endif
 
-	Tokenized   tokens;
-	Parser      parser;
+	SourceLines lines; // need lines outside of try to allow me to print error messages with line numbers
 	try {
-		tokens = tokenize(source.c_str());
+		lines.parse_lines(source.c_str());
+
+		auto tokens = tokenize(source.c_str());
 
 		ZoneScopedN("interpret");
 
-		parser.tok = &tokens.tokens[0];
+		Parser parser;
+		parser.tok = &tokens[0];
 		auto ast = parser.file();
 
 		dbg_print(ast.get());
+
+		printf("--------------------\n");
+
+		Interpreter interp;
+		interp.execute(ast.get());
 	}
-	catch (Exception& ex) {
-		ex.print(filename.c_str(), tokens.lines);
+	catch (MyException& ex) {
+		ex.print(filename.c_str(), lines);
 	}
 	catch (...) {
 		fprintf(stderr, "Unknown exception!");

@@ -68,7 +68,7 @@ enum ASTType {
 	A_BLOCK,
 
 	// values
-	A_LITERAL,
+	A_CONSTANT,
 	A_VARIABLE,
 
 	A_ASSIGNMENT,
@@ -98,7 +98,7 @@ enum ASTType {
 inline const char* ASTType_str[] = {
 	"A_BLOCK",
 
-	"A_LITERAL",
+	"A_CONSTANT",
 	"A_VARIABLE",
 
 	"A_ASSIGNMENT",
@@ -121,7 +121,6 @@ inline const char* ASTType_str[] = {
 
 	"A_NOT",
 	"A_NEGATE",
-
 };
 
 inline constexpr ASTType ASTType_from_TokenType (TokenType tok) {
@@ -136,7 +135,7 @@ struct AST {
 
 	source_range source;
 
-	Value        lit_value;
+	Value        value; // for constants
 
 	ast_ptr      next;
 	ast_ptr      child;
@@ -161,13 +160,13 @@ struct Parser {
 	Token* tok;
 
 	void throw_error_after (const char* errstr, Token const& after_tok) {
-		throw Exception{ errstr, after_tok.source.end, after_tok.source.end+1 };
+		throw MyException{errstr, {after_tok.source.end, after_tok.source.end+1}};
 	}
 	void throw_error (const char* errstr, Token const& tok) {
-		throw Exception{ errstr, tok.source.start, tok.source.end };
+		throw MyException{errstr, tok.source };
 	}
 	void throw_error (const char* errstr, Token const& first, Token const& last) {
-		throw Exception{ errstr, first.source.start, last.source.end };
+		throw MyException{errstr, {first.source.start, last.source.end} };
 	}
 
 	ast_ptr atom () {
@@ -206,7 +205,8 @@ struct Parser {
 						}
 					}
 
-					call->set_text_end_after(*tok++);
+					//call->set_text_end_after(*tok++);
+					tok++;
 					return call;
 				}
 				// variable
@@ -216,8 +216,8 @@ struct Parser {
 			}
 
 			case T_LITERAL: {
-				ast_ptr lit = ast_alloc(A_LITERAL, *tok);
-				lit->lit_value = std::move(tok->val);
+				ast_ptr lit = ast_alloc(A_CONSTANT, *tok);
+				lit->value = std::move(tok->val);
 				tok++;
 				return lit;
 			}
@@ -309,7 +309,7 @@ struct Parser {
 		auto eat_semicolon = [this] () {
 			if (tok->type != T_SEMICOLON)
 				throw_error("syntax error, ';' expected", *tok);
-			return *tok++;
+			tok++;
 		};
 
 		switch (tok[0].type) {
@@ -363,11 +363,11 @@ struct Parser {
 			throw_error("syntax error, '{' expected", *tok);
 
 		ast_ptr block = ast_alloc(A_BLOCK, *tok++);
-		auto* prev = block.get();
+		ast_ptr* prev = &block->child;
 
 		while (tok->type != T_BLOCK_CLOSE) {
-			prev->next = statement();
-			prev = prev->next.get();
+			*prev = statement();
+			prev = &(*prev)->next;
 		};
 
 		//if (tok->type != T_BLOCK_CLOSE)
@@ -399,24 +399,36 @@ struct Parser {
 	}
 };
 
-void dbg_print (AST* node, int depth=0) {
+void indent (int depth) {
 	for (int i=0; i<depth; ++i)
 		printf("  ");
-	printf(ASTType_str[node->type]);
+}
+void dbg_print (AST* node, int depth=0) {
+	indent(depth);
+	printf("%s ", ASTType_str[node->type]);
 
-	if (node->type == A_LITERAL) {
-		printf("(");
-		print_val(node->lit_value);
-		printf(")");
+	if (node->type == A_CONSTANT) {
+		print_val(node->value);
+		printf("\n");
+		assert(!node->child);
+		return;
+	}
+	else if (node->type == A_VARIABLE) {
+		std::string str(node->source.text());
+		printf("%s\n", str.c_str());
+		assert(!node->child);
+		return;
 	}
 	else if (node->type == A_CALL || node->type == A_VARIABLE) {
 		std::string str(node->source.text());
-		printf("(%s)", str.c_str());
+		printf("%s", str.c_str());
 	}
 
-	printf(":\n");
-
+	printf("(\n");
 	for (auto* n=node->child.get(); n != nullptr; n = n->next.get()) {
 		dbg_print(n, depth+1);
 	};
+
+	indent(depth);
+	printf(")\n");
 }

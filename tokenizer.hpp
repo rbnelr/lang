@@ -198,11 +198,13 @@ Value parse_escaped_string (const char* start, const char* end) {
 		if (*in == '\\') {
 			auto start = in++;
 			switch (*in++) {
-				case '0': *out++ = '\0'; break;
-				case 'n': *out++ = '\n'; break;
-				case 'r': *out++ = '\r'; break;
+				case '0' : *out++ = '\0'; break;
+				case 'n' : *out++ = '\n'; break;
+				case 'r' : *out++ = '\r'; break;
+				case '\\': *out++ = '\\'; break;
+				case '"' : *out++ = '\"'; break;
 				default:
-					throw Exception{ "invalid escape sequence in literal string", start, in };
+					throw MyException{ "invalid escape sequence in literal string", start, in };
 			}
 		} else {
 			*out++ = *in++;
@@ -214,50 +216,19 @@ Value parse_escaped_string (const char* start, const char* end) {
 	return val;
 }
 
-struct Tokenized {
-	std::vector<Token> tokens;
-	SourceLines        lines;
-};
-Tokenized tokenize (const char* src) {
+std::vector<Token> tokenize (const char* src) {
 	ZoneScoped;
-
-	Tokenized res;
-
-	res.tokens.reserve(4096);
-	res.lines.lines.reserve(4096);
+	std::vector<Token> tokens;
+	tokens.reserve(4096);
 
 	const char* cur = src;
 	const char* cur_line = src;
-
-
-	// need to know the end of the current line after EOF or on error
-	auto finish_line = [&] () {
-		const char* c = cur;
-		while (*c != '\n' && *c != '\r' && *c != '\0')
-			c++; // skip anything until newline or EOF
-
-		res.lines.lines.emplace_back(source_range{ cur_line, c });
-	};
-	auto newline = [&] () -> bool {
-		const char* before_newline = cur;
-		if (parse::newline(cur)) {
-			res.lines.lines.emplace_back(source_range{cur_line, before_newline});
-			cur_line = cur;
-			return true;
-		}
-		return false;
-	};
-
-	auto throw_error = [&] (const char* errstr, const char* start, const char* cur) {
-		finish_line();
-		throw Exception{ errstr, start, cur };
-	};
 
 	using namespace parse;
 
 	for (;;) {
 		// skip whitespace
-		if (is_whitespace_c(*cur)) {
+		if (is_whitespace_c(*cur) || *cur == '\n' || *cur == '\r') {
 			cur++;
 			continue;
 		}
@@ -269,7 +240,7 @@ Tokenized tokenize (const char* src) {
 			while (*cur != '\n' && *cur != '\r' && *cur != '\0')
 				cur++; // skip anything until newline or EOF
 
-			// fallthrough to newline()
+			continue;
 		}
 		// if block comment begin, skip until end of block comment while keeping track of nested block comments
 		else if (cur[0] == '/' && cur[1] == '*') {
@@ -279,9 +250,8 @@ Tokenized tokenize (const char* src) {
 			while (depth > 0) {
 				if (*cur == '\0') {
 					// TODO: also add note about block comment open location to error
-					throw_error("end of file in block comment", cur, cur+1);
+					throw MyException{ "end of file in block comment", {cur, cur+1}};
 				}
-				else if (newline()) {}
 				else if (cur[0] == '/' && cur[1] == '*') {
 					cur += 2; // skip "/*"
 					depth++;
@@ -297,15 +267,12 @@ Tokenized tokenize (const char* src) {
 			continue;
 		}
 		else if (cur[0] == '*' && cur[1] == '/') {
-			throw_error("unexpected block comment close", cur, cur+2);
+			throw MyException{"unexpected block comment close", {cur, cur+2}};
 		}
-
-		if (newline())
-			continue;
 
 		// non-whitespace character outside of comment -> start of a token
 
-		Token& tok = res.tokens.emplace_back();
+		Token& tok = tokens.emplace_back();
 
 		if (*cur == '\0') {
 			tok.type = T_EOF;
@@ -362,7 +329,7 @@ Tokenized tokenize (const char* src) {
 					cur = start; // reset to begining
 					double val;
 					if (!parse_double(cur, &val)) {
-						throw_error("number parse error", start, start+1);
+						throw MyException{"number parse error", {start, start+1}};
 					}
 					tok.type = T_LITERAL;
 					tok.source = { start, cur };
@@ -372,9 +339,9 @@ Tokenized tokenize (const char* src) {
 				else {
 					cur = start; // reset to begining
 					int64_t val;
-					if (!parse_integer(cur, &val)) {
-						throw_error("number parse error", start, start+1);
-					}
+					if (!parse_integer(cur, &val))
+						throw MyException{"number parse error", {start, start+1}};
+					
 					tok.type = T_LITERAL;
 					tok.source = { start, cur };
 					tok.val = val;
@@ -387,21 +354,22 @@ Tokenized tokenize (const char* src) {
 
 				char const* strstart = cur;
 
-				while (*cur != '"') {
-					if (*cur == '\0') {
-						throw_error("end of file in string literal", cur, cur+1);
-					}
-					else if (newline()) {}
-					else {
-						*cur++;
-					}
+				for (;;) {
+					if (*cur == '\0')
+						throw MyException{"end of file in string literal", {cur, cur+1}};
+					// escape sequences \\ and \"
+					else if (cur[0] == '\\' && (cur[1] == '"' || cur[1] == '\\'))
+						cur += 2;
+					else if (*cur == '"')
+						break;
+					*cur++;
 				}
 
 				char const* strend = cur++; // skip '"'
 
 				tok.type = T_LITERAL;
 				tok.source = { start, cur };
-				tok.val  = parse_escaped_string(strstart, strend);
+				tok.val  = parse_escaped_string(strstart, strend); // TODO: scanning this string twice, does this need to happen?
 				continue;
 			}
 
@@ -415,22 +383,18 @@ Tokenized tokenize (const char* src) {
 
 					auto text = tok.source.text();
 					if      (text == "for"  )   tok.type = T_FOR;
+					else if (text == "null" ) { tok.type = T_LITERAL; tok.val = {}; }
 					else if (text == "true" ) { tok.type = T_LITERAL; tok.val = { true };  }
 					else if (text == "false") { tok.type = T_LITERAL; tok.val = { false }; }
 					else                        tok.type = T_IDENTIFIER;
 					continue;
 				}
-				else {
-					throw_error("unknown token", start, start+1);
-				}
+				throw MyException{"unknown token", {start, start+1}};
 			}
 		}
 
 		cur++; // single-char token
 		tok.source = { start, cur };
 	}
-
-	// after EOF
-	finish_line();
-	return res;
+	return tokens;
 }

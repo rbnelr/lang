@@ -1,6 +1,8 @@
 #pragma once
 #include "common.hpp"
 #include "errors.hpp"
+#include "types.hpp"
+#include "line_map.hpp"
 
 namespace parse {
 	//// Check char class
@@ -78,10 +80,20 @@ enum TokenType {
 	T_EOF=0, // end of file
 
 	T_PLUS,          // +
-	T_MINUS,         // -
+	T_MINUS,         // -   binary operator   OR   unary (prefix operator)
 	T_MULTIPLY,      // *
 	T_DIVIDE,        // /
-	T_EQUALS,        // =
+
+	T_LESS,          // <
+	T_LESSEQ,        // <=
+	T_GREATER,       // >
+	T_GREATEREQ,     // >=
+	T_EQUALS,        // ==
+	T_NOT_EQUALS,    // !=
+
+	T_NOT,           // !   unary (prefix) operator
+
+	T_ASSIGN,        // =
 	T_SEMICOLON,     // ;
 	T_COMMA,         // ,
 
@@ -92,9 +104,7 @@ enum TokenType {
 	T_INDEX_OPEN,    // [
 	T_INDEX_CLOSE,   // ]
 
-	T_LITERAL_INT,
-	T_LITERAL_FLOAT,
-	T_LITERAL_STRING,
+	T_LITERAL,
 
 	// starts with  '_' or [a-Z]  and then any number of  '_' or [a-Z] or [0-9]
 	T_IDENTIFIER,
@@ -108,7 +118,16 @@ inline constexpr const char* TokenType_str[] = {
 	"T_MINUS",      
 	"T_MULTIPLY",   
 	"T_DIVIDE",     
-	"T_EQUALS",     
+
+	"T_LESS",
+	"T_LESSEQ",
+	"T_GREATER",
+	"T_GREATEREQ",
+	"T_EQUALS",
+	"T_NOT_EQUALS",
+	"T_NOT",
+
+	"T_ASSIGN",     
 	"T_SEMICOLON",  
 	"T_COMMA",      
 
@@ -119,9 +138,7 @@ inline constexpr const char* TokenType_str[] = {
 	"T_INDEX_OPEN", 
 	"T_INDEX_CLOSE",
 	
-	"T_LITERAL_INT",
-	"T_LITERAL_FLOAT",
-	"T_LITERAL_STRING",
+	"T_LITERAL",
 	
 	"T_IDENTIFIER",
 
@@ -134,6 +151,15 @@ inline constexpr const char* TokenType_char[] = {
 	"-",
 	"*",
 	"/",
+
+	"<",
+	"<=",
+	">",
+	">=",
+	"==",
+	"!=",
+	"!",
+
 	"=",
 	";",
 	",",
@@ -145,9 +171,7 @@ inline constexpr const char* TokenType_char[] = {
 	"[",
 	"]",
 
-	"int",
-	"flt",
-	"str",
+	"literal",
 
 	"identifier",
 
@@ -155,22 +179,44 @@ inline constexpr const char* TokenType_char[] = {
 };
 
 struct Token {
-	TokenType  type;
-	strview    text;
-	size_t     lineno;
-
-	union {
-		int64_t   value_int; // T_LITERAL_INT
-		double    value_flt; // T_LITERAL_FLOAT
-		strview   value_str;
-	};
-
-	Token () {}
+	TokenType    type;
+	Value        val;
+	source_range source;
 };
 
+Value parse_escaped_string (const char* start, const char* end) {
+	Value val;
+	val.type = STR;
+
+	// resulting strings should be shorter than escaped strings
+	val.str = (char*)malloc(end - start + 1);
+
+	const char* in = start;
+	char*       out = val.str;
+
+	while (in < end) {
+		if (*in == '\\') {
+			auto start = in++;
+			switch (*in++) {
+				case '0': *out++ = '\0'; break;
+				case 'n': *out++ = '\n'; break;
+				case 'r': *out++ = '\r'; break;
+				default:
+					throw Exception{ "invalid escape sequence in literal string", start, in };
+			}
+		} else {
+			*out++ = *in++;
+		}
+	}
+	*out++ = '\0';
+
+	val.str = (char*)realloc(val.str, out - val.str); // resize to (smaller) real size
+	return val;
+}
+
 struct Tokenized {
-	std::vector<Token>   tokens;
-	std::vector<strview> lines;
+	std::vector<Token> tokens;
+	SourceLines        lines;
 };
 Tokenized tokenize (const char* src) {
 	ZoneScoped;
@@ -178,7 +224,7 @@ Tokenized tokenize (const char* src) {
 	Tokenized res;
 
 	res.tokens.reserve(4096);
-	res.lines.reserve(4096);
+	res.lines.lines.reserve(4096);
 
 	const char* cur = src;
 	const char* cur_line = src;
@@ -190,12 +236,12 @@ Tokenized tokenize (const char* src) {
 		while (*c != '\n' && *c != '\r' && *c != '\0')
 			c++; // skip anything until newline or EOF
 
-		res.lines.emplace_back(strview(cur_line, c - cur_line));
+		res.lines.lines.emplace_back(source_range{ cur_line, c });
 	};
 	auto newline = [&] () -> bool {
 		const char* before_newline = cur;
 		if (parse::newline(cur)) {
-			res.lines.emplace_back(strview(cur_line, before_newline - cur_line));
+			res.lines.lines.emplace_back(source_range{cur_line, before_newline});
 			cur_line = cur;
 			return true;
 		}
@@ -204,7 +250,7 @@ Tokenized tokenize (const char* src) {
 
 	auto throw_error = [&] (const char* errstr, const char* start, const char* cur) {
 		finish_line();
-		throw Exception{ errstr, start, cur, res.lines.size() };
+		throw Exception{ errstr, start, cur };
 	};
 
 	using namespace parse;
@@ -261,11 +307,9 @@ Tokenized tokenize (const char* src) {
 
 		Token& tok = res.tokens.emplace_back();
 
-		tok.lineno = res.lines.size();
-
 		if (*cur == '\0') {
 			tok.type = T_EOF;
-			tok.text = strview(cur, 1);
+			tok.source = { cur, cur+1 };
 			break;
 		}
 
@@ -275,7 +319,7 @@ Tokenized tokenize (const char* src) {
 			case '-': tok.type = T_MINUS;         break;
 			case '*': tok.type = T_MULTIPLY;      break;
 			case '/': tok.type = T_DIVIDE;        break;
-			case '=': tok.type = T_EQUALS;        break;
+
 			case ';': tok.type = T_SEMICOLON;     break;
 			case ',': tok.type = T_COMMA;         break;
 
@@ -286,6 +330,26 @@ Tokenized tokenize (const char* src) {
 			case '[': tok.type = T_INDEX_OPEN;    break; 
 			case ']': tok.type = T_INDEX_CLOSE;   break; 
 
+			case '<':
+				if (cur[1] != '=') tok.type = T_LESS;
+				else {             tok.type = T_LESSEQ;     cur++; }
+				break;
+
+			case '>':
+				if (cur[1] != '=') tok.type = T_GREATER;
+				else {             tok.type = T_GREATEREQ;  cur++; }
+				break;
+
+			case '!':
+				if (cur[1] != '=') tok.type = T_NOT;
+				else {             tok.type = T_NOT_EQUALS; cur++; }
+				break;
+
+			case '=':
+				if (cur[1] != '=') tok.type = T_ASSIGN;
+				else {             tok.type = T_EQUALS;     cur++; }
+				break;
+
 			case '0': case '1': case '2': case '3': case '4':
 			case '5': case '6': case '7': case '8': case '9': {
 
@@ -293,25 +357,27 @@ Tokenized tokenize (const char* src) {
 
 				while (is_decimal_c(*cur))
 					cur++;
-
+				
 				if (*cur == '.') {
-					// float
 					cur = start; // reset to begining
-					if (!parse_double(cur, &tok.value_flt)) {
+					double val;
+					if (!parse_double(cur, &val)) {
 						throw_error("number parse error", start, start+1);
 					}
-					tok.type = T_LITERAL_FLOAT;
-					tok.text = strview(start, cur - start);
+					tok.type = T_LITERAL;
+					tok.source = { start, cur };
+					tok.val = val;
 					continue;
 				}
 				else {
-					// float
 					cur = start; // reset to begining
-					if (!parse_integer(cur, &tok.value_int)) {
+					int64_t val;
+					if (!parse_integer(cur, &val)) {
 						throw_error("number parse error", start, start+1);
 					}
-					tok.type = T_LITERAL_INT;
-					tok.text = strview(start, cur - start);
+					tok.type = T_LITERAL;
+					tok.source = { start, cur };
+					tok.val = val;
 					continue;
 				}
 			}
@@ -331,12 +397,11 @@ Tokenized tokenize (const char* src) {
 					}
 				}
 
-				tok.type = T_LITERAL_STRING;
-				tok.value_str = strview(strstart, cur - strstart);
+				char const* strend = cur++; // skip '"'
 
-				cur++; // skip '"'
-
-				tok.text = strview(start, cur - start);
+				tok.type = T_LITERAL;
+				tok.source = { start, cur };
+				tok.val  = parse_escaped_string(strstart, strend);
 				continue;
 			}
 
@@ -346,10 +411,13 @@ Tokenized tokenize (const char* src) {
 					while (is_ident_c(*cur))
 						cur++; // find end of identifier
 
-					tok.text = strview(start, cur - start);
+					tok.source = { start, cur };
 
-					if (tok.text  == "for")    tok.type = T_FOR;
-					else                       tok.type = T_IDENTIFIER;
+					auto text = tok.source.text();
+					if      (text == "for"  )   tok.type = T_FOR;
+					else if (text == "true" ) { tok.type = T_LITERAL; tok.val = { true };  }
+					else if (text == "false") { tok.type = T_LITERAL; tok.val = { false }; }
+					else                        tok.type = T_IDENTIFIER;
 					continue;
 				}
 				else {
@@ -359,7 +427,7 @@ Tokenized tokenize (const char* src) {
 		}
 
 		cur++; // single-char token
-		tok.text = strview(start, cur - start);
+		tok.source = { start, cur };
 	}
 
 	// after EOF

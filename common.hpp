@@ -5,6 +5,7 @@
 #include "assert.h"
 
 #include <string>
+#include <string_view>
 #include <vector>
 #include <unordered_map>
 
@@ -22,5 +23,4 @@
 
 using namespace kiss;
 
-typedef std::basic_string_view<const char> strview;
-
+typedef std::string_view strview;

@@ -31,7 +31,10 @@
       <Filter>tracy</Filter>
     </ClInclude>
     <ClInclude Include="..\..\errors.hpp" />
-    <ClInclude Include="..\..\interpreter.hpp" />
+    <ClInclude Include="..\..\ast_exec.hpp" />
+    <ClInclude Include="..\..\parser.hpp" />
+    <ClInclude Include="..\..\types.hpp" />
+    <ClInclude Include="..\..\line_map.hpp" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="util">

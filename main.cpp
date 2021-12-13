@@ -1,7 +1,7 @@
 #include "common.hpp"
 #include "errors.hpp"
 #include "tokenizer.hpp"
-#include "interpreter.hpp"
+#include "parser.hpp"
 
 int main (char** argv, int argc) {
 	enable_console_ansi_color_codes();
@@ -19,14 +19,16 @@ int main (char** argv, int argc) {
 #endif
 
 	Tokenized   tokens;
-	Interpreter interp;
+	Parser      parser;
 	try {
 		tokens = tokenize(source.c_str());
 
 		ZoneScopedN("interpret");
 
-		interp.tok = &tokens.tokens[0];
-		interp.file();
+		parser.tok = &tokens.tokens[0];
+		auto ast = parser.file();
+
+		dbg_print(ast.get());
 	}
 	catch (Exception& ex) {
 		ex.print(filename.c_str(), tokens.lines);

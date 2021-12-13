@@ -141,8 +141,11 @@
     <ClInclude Include="..\..\..\common\tracy\Tracy.hpp" />
     <ClInclude Include="..\..\common.hpp" />
     <ClInclude Include="..\..\errors.hpp" />
-    <ClInclude Include="..\..\interpreter.hpp" />
+    <ClInclude Include="..\..\ast_exec.hpp" />
+    <ClInclude Include="..\..\line_map.hpp" />
+    <ClInclude Include="..\..\parser.hpp" />
     <ClInclude Include="..\..\tokenizer.hpp" />
+    <ClInclude Include="..\..\types.hpp" />
     <ClInclude Include="..\..\util\console_colors.hpp" />
     <ClInclude Include="..\..\util\file_io.hpp" />
     <ClInclude Include="..\..\util\string.hpp" />

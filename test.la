@@ -29,12 +29,12 @@ println("");
 printf("-------\n");
 
 p = -4;
-printf("outter: %\n", p);
+printf("outer: %\n", p);
 {
 	printf("inner: %\n", p);
 	p = -3;
 }
-printf("outter: %\n", p);
+printf("outer: %\n", p);
 
 printf("-------\n");
 {
@@ -42,20 +42,29 @@ printf("-------\n");
 	printf("inner: %\n", p);
 	p = -3;
 }
-printf("outter: %\n", p);
+printf("outer: %\n", p);
 
 ////
 printf("-------\n");
 {}
 {;}
 
+println(false);
+println(true);
+println(1 == 0);
+println(1 == 1);
+println("helo" == "hello");
+println(5 >= 5);
+println(5 > 5);
+println(2>3 == 3>4);
+
 //for 10  error: '{' expected
 
 //for "hello World" {}  error: int expected
 
-for 10 {
+for i=0; i<10; i=i+1 {
 	
 }
-for 5*2 {
+for j=0; j<5*2; j=j+1 {
 	printf("foo ");
 }

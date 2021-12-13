@@ -12,6 +12,7 @@
 #include "util/string.hpp"
 #include "util/file_io.hpp"
 #include "util/console_colors.hpp"
+#include "util/timer.hpp"
 
 #include <exception>
 

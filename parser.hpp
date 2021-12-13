@@ -308,7 +308,7 @@ struct Parser {
 
 		auto eat_semicolon = [this] () {
 			if (tok->type != T_SEMICOLON)
-				throw_error("syntax error, ';' expected", *tok);
+				throw_error_after("syntax error, ';' expected", tok[-1]);
 			tok++;
 		};
 

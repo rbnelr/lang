@@ -3,6 +3,14 @@
 #include "types.hpp"
 #include "parser.hpp"
 
+#ifdef __GNUC__ // GCC 4.8+, Clang, Intel and other compilers compatible with GCC (-std=c++0x or above)
+	#define _UNREACHABLE __builtin_unreachable()
+#elif defined(_MSC_VER) // MSVC
+	#define _UNREACHABLE __assume(false)
+#else
+	#define _UNREACHABLE 
+#endif
+
 void println (Value& val) {
 	print_val(val);
 	printf("\n");
@@ -33,6 +41,50 @@ void my_printf (Value& format, Value const* args, size_t argc) {
 	// ignore varargs that are not printed (no error)
 }
 
+Value call_function (strview const& name, Value* args, size_t argc, AST* call) {
+	auto match = [] (Value* args, size_t argc, std::initializer_list<Type> types, bool follow_vararg=false) {
+		if (follow_vararg) {
+			if (argc < types.size()) return false;
+		} else {
+			if (argc != types.size()) return false;
+		}
+		for (size_t i=0; i<types.size(); ++i) {
+			if (args[i].type != *(types.begin() + i)) return false;
+		}
+		return true;
+	};
+
+	if (name == "print") {
+		if (argc != 1) goto mismatch;
+		print_val(args[0]);
+	}
+	else if (name == "println") {
+		if (argc != 1) goto mismatch;
+		println(args[0]);
+	}
+	else if (name == "printf") {
+		if (!match(args, argc, { STR }, true)) goto mismatch;
+		my_printf(args[0], args+1, argc-1);
+	}
+	else if (name == "timer") {
+		if (argc != 0) goto mismatch;
+		return (int64_t)get_timestamp();
+	}
+	else if (name == "timer_end") {
+		if (!match(args, argc, { INT })) goto mismatch;
+		auto end = (int64_t)get_timestamp();
+		return (float)(end - args[0].i) / (float)timestamp_freq;
+	}
+	else {
+		throw MyException{"unknown function", call->source};
+	}
+
+	return {};
+
+mismatch:
+	throw MyException{"no matching function overload", call->source};
+}
+
 struct Interpreter {
 
 	Value binop (Value& lhs, Value& rhs, AST* op) {
@@ -46,46 +98,41 @@ struct Interpreter {
 
 		if (lhs.type != rhs.type) {
 			throw MyException{"types do not match", op->source};
-			return {};
 		}
 		switch (lhs.type) {
 			case INT:
 				switch (op->type) {
-					case A_ADD:        return { lhs.i + rhs.i };
-					case A_SUB:        return { lhs.i - rhs.i };
-					case A_MUL:        return { lhs.i * rhs.i };
-					case A_DIV:        return { lhs.i / rhs.i };
+					case A_ADD:        return lhs.i + rhs.i;
+					case A_SUB:        return lhs.i - rhs.i;
+					case A_MUL:        return lhs.i * rhs.i;
+					case A_DIV:        return lhs.i / rhs.i;
 
-					case A_LESS:       return { lhs.i <  rhs.i };
-					case A_LESSEQ:     return { lhs.i <= rhs.i };
-					case A_GREATER:    return { lhs.i >  rhs.i };
-					case A_GREATEREQ:  return { lhs.i >= rhs.i };
-					case A_EQUALS:     return { lhs.i == rhs.i };
-					case A_NOT_EQUALS: return { lhs.i != rhs.i };
-
-					default: assert(false); return {};
+					case A_LESS:       return lhs.i <  rhs.i;
+					case A_LESSEQ:     return lhs.i <= rhs.i;
+					case A_GREATER:    return lhs.i >  rhs.i;
+					case A_GREATEREQ:  return lhs.i >= rhs.i;
+					case A_EQUALS:     return lhs.i == rhs.i;
+					case A_NOT_EQUALS: return lhs.i != rhs.i;
 				}
 			case FLT:
 				switch (op->type) {
-					case A_ADD:        return { lhs.f + rhs.f };
-					case A_SUB:        return { lhs.f - rhs.f };
-					case A_MUL:        return { lhs.f * rhs.f };
-					case A_DIV:        return { lhs.f / rhs.f };
+					case A_ADD:        return lhs.f + rhs.f;
+					case A_SUB:        return lhs.f - rhs.f;
+					case A_MUL:        return lhs.f * rhs.f;
+					case A_DIV:        return lhs.f / rhs.f;
 
-					case A_LESS:       return { lhs.f <  rhs.f };
-					case A_LESSEQ:     return { lhs.f <= rhs.f };
-					case A_GREATER:    return { lhs.f >  rhs.f };
-					case A_GREATEREQ:  return { lhs.f >= rhs.f };
-					case A_EQUALS:     return { lhs.f == rhs.f };
-					case A_NOT_EQUALS: return { lhs.f != rhs.f };
-
-					default: assert(false); return {};
+					case A_LESS:       return lhs.f <  rhs.f;
+					case A_LESSEQ:     return lhs.f <= rhs.f;
+					case A_GREATER:    return lhs.f >  rhs.f;
+					case A_GREATEREQ:  return lhs.f >= rhs.f;
+					case A_EQUALS:     return lhs.f == rhs.f;
+					case A_NOT_EQUALS: return lhs.f != rhs.f;
 				}
 
 			case BOOL:
 				switch (op->type) {
-					case A_EQUALS:     return { lhs.b == rhs.b };
-					case A_NOT_EQUALS: return { lhs.b != rhs.b };
+					case A_EQUALS:     return lhs.b == rhs.b;
+					case A_NOT_EQUALS: return lhs.b != rhs.b;
 
 					case A_ADD:
 					case A_SUB:
@@ -97,7 +144,6 @@ struct Interpreter {
 					case A_GREATER:
 					case A_GREATEREQ:
 						throw MyException{"can't compare bools", op->source};
-					default: assert(false); return {};
 				}
 
 			case STR:
@@ -111,12 +157,12 @@ struct Interpreter {
 						int res = strcmp(lhs.str, rhs.str);
 						
 						switch (op->type) {
-							case A_EQUALS:     return { res == 0 };
-							case A_NOT_EQUALS: return { res != 0 };
-							case A_LESS:       return { res <  0 };
-							case A_LESSEQ:     return { res <= 0 };
-							case A_GREATER:    return { res >  0 };
-							case A_GREATEREQ:  return { res >= 0 };
+							case A_EQUALS:     return res == 0;
+							case A_NOT_EQUALS: return res != 0;
+							case A_LESS:       return res <  0;
+							case A_LESSEQ:     return res <= 0;
+							case A_GREATER:    return res >  0;
+							case A_GREATEREQ:  return res >= 0;
 						}
 					}
 
@@ -125,7 +171,6 @@ struct Interpreter {
 					case A_MUL:
 					case A_DIV:
 						throw MyException{"can't do math with str", op->source};
-					default: assert(false); return {};
 				}
 
 			case NULL:
@@ -140,70 +185,31 @@ struct Interpreter {
 					case A_GREATER:
 					case A_GREATEREQ:
 						throw MyException{"null can't be larger or smaller", op->source};
-					default: assert(false); return {};
 				}
-
-			default: assert(false); return {};
 		}
+		assert(false);
+		_UNREACHABLE;
 	}
 
 	Value unop (Value& rhs, AST* op) {
 		switch (rhs.type) {
 			case BOOL:
 				switch (op->type) {
-					case A_NOT    : return { !rhs.b };
-					default: assert(false); return {};
+					case A_NOT    : return !rhs.b;
 				}
 			case INT:
 				switch (op->type) {
-					case A_NEGATE : return { -rhs.i };
-					default: assert(false); return {};
+					case A_NEGATE : return -rhs.i;
 				}
 			case FLT:
 				switch (op->type) {
-					case A_NEGATE : return { -rhs.f };
-					default: assert(false); return {};
+					case A_NEGATE : return -rhs.f;
 				}
 			case NULL: throw MyException{"can't do math with null", op->source};
 			case STR:  throw MyException{"can't do math with str", op->source};
-			default: assert(false); return {};
 		}
-	}
-
-	Value call_function (strview const& name, Value* args, size_t argc, AST* call) {
-		auto match = [] (Value* args, size_t argc, std::initializer_list<Type> types, bool follow_vararg=false) {
-			if (follow_vararg) {
-				if (argc < types.size()) return false;
-			} else {
-				if (argc != types.size()) return false;
-			}
-			for (size_t i=0; i<types.size(); ++i) {
-				if (args[i].type != *(types.begin() + i)) return false;
-			}
-			return true;
-		};
-
-		if (name == "print") {
-			if (argc != 1) goto mismatch;
-			print_val(args[0]);
-		}
-		else if (name == "println") {
-			if (argc != 1) goto mismatch;
-			println(args[0]);
-		}
-		else if (name == "printf") {
-			if (!match(args, argc, { STR }, true)) goto mismatch;
-			my_printf(args[0], args+1, argc-1);
-		}
-		else {
-			throw MyException{"unknown function", call->source};
-		}
-
-		return {};
-
-	mismatch:
-		throw MyException{"no matching function overload", call->source};
-		return {};
+		assert(false);
+		_UNREACHABLE;
 	}
 
 	//struct VarID {

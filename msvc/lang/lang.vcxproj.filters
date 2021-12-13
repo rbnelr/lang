@@ -14,6 +14,9 @@
     <ClCompile Include="..\..\..\common\tracy\TracyClient.cpp">
       <Filter>tracy</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\util\timer.cpp">
+      <Filter>util</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\util\string.hpp">
@@ -35,6 +38,9 @@
     <ClInclude Include="..\..\parser.hpp" />
     <ClInclude Include="..\..\types.hpp" />
     <ClInclude Include="..\..\line_map.hpp" />
+    <ClInclude Include="..\..\util\timer.hpp">
+      <Filter>util</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <Filter Include="util">

@@ -22,16 +22,17 @@ struct MyException {
 			}
 		};
 		auto print_line_range = [&] (size_t begin, size_t end) {
+			auto sz = line_str.size();
 			for (size_t i=0; i<begin; ++i) {
-				if (line_str[i] != '\t')              fputc(' ', stderr);
+				if (i >= sz || line_str[i] != '\t')   fputc(' ', stderr);
 				else for (int j=0; j<tab_spaces; ++j) fputc(' ', stderr);
 			}
 			{ size_t i=begin;
-				if (line_str[i] != '\t')              fputc('^', stderr);
+				if (i >= sz || line_str[i] != '\t')   fputc('^', stderr);
 				else for (int j=0; j<tab_spaces; ++j) fputc(j == 0 ? '^':'~', stderr);
 			}
 			for (size_t i=begin+1; i<end; ++i) {
-				if (line_str[i] != '\t')              fputc('~', stderr);
+				if (i >= sz || line_str[i] != '\t')   fputc('~', stderr);
 				else for (int j=0; j<tab_spaces; ++j) fputc('~', stderr);
 			}
 		};
@@ -49,9 +50,12 @@ struct MyException {
 		if (ansi_color_supported) fputs(ANSI_COLOR_RED, stderr);
 
 		assert(source.start >= line_str.data());
-		const char* end = std::min(source.end, line_str.data() + line_str.size());
 
-		print_line_range(source.start - line_str.data(), end - line_str.data());
+		// source.start and source.end could be in a bit after the line str due to the newline being excluded
+		// this is handled in print_line_range though
+		//assert(source.end   <= line_str.data() + line_str.size());
+
+		print_line_range(source.start - line_str.data(), source.end - line_str.data());
 		fputs("\n", stderr);
 
 		if (ansi_color_supported) fputs(ANSI_COLOR_RESET, stderr);

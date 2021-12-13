@@ -18,74 +18,74 @@ struct Value {
 		int64_t i;
 		double  f;
 		char*   str;
-	};
+	} u;
 
 	~Value () {
 		if (type == STR)
-			free(str);
+			free(u.str);
 	}
 
-	Value ()  {
-		memset(this, 0, sizeof(Value));
+	Value () {
+		type = NULL;
+		u = {};
 	}
-	Value (bool    b): type{BOOL},  b{b} {}
-	Value (int64_t i): type{INT},   i{i} {}
-	Value (double  f): type{FLT},   f{f} {}
+
+	Value (bool    b): type{BOOL} { u.b = b; }
+	Value (int64_t i): type{INT}  { u.i = i; }
+	Value (double  f): type{FLT}  { u.f = f; }
 
 	Value (Value const& v) = delete;
-	//Value (Value const& v) {
-	//	memset(this, 0, sizeof(Value));
-	//	_copy(*this, v);
-	//}
 	Value (Value&& v) {
-		memset(this, 0, sizeof(Value));
+		type = NULL;
+		u = {};
 		_move(*this, v);
 	}
 
 	Value& operator= (Value const& v) = delete;
-	//Value& operator= (Value const& v) {
-	//	_copy(*this, v);
-	//	return *this;
-	//}
 	Value& operator= (Value&& v) {
 		_move(*this, v);
 		return *this;
 	}
 
+	void set_null () {
+		if (type == STR)
+			free(u.str);
+		type = NULL;
+		u = {};
+	}
+
+	static void _move (Value& l, Value& r) {
+		//if (l.type == STR)
+		//	free(l.str);
+		//l.type = NULL;
+
+		// Only allow moving into structs that are NULL to avoid free calls all over the place
+		// instead manually set_null() only in the places where you overwrite values (only one place in the interpreter)
+		assert(l.type == NULL);
+		
+		l.type = r.type;
+		l.u = r.u;
+
+		r.type = NULL;
+		r.u = {};
+	}
+
 	Value copy () const {
 		Value val;
-		_copy(val, *this);
+		val.type = type;
+		if (type != STR) {
+			val.u = u;
+			return val;
+		}
+		val.set_str(u.str); // strlen + alloc + copy
 		return val;
 	}
 
 	void set_str (std::string_view const& str) {
-		this->str = (char*)malloc(str.size() + 1);
-		memcpy(this->str, str.data(), str.size());
-		this->str[str.size()] = '\0';
+		u.str = (char*)malloc(str.size() + 1);
+		memcpy(u.str, str.data(), str.size());
+		u.str[str.size()] = '\0';
 	}
-
-	static void _copy (Value& l, Value const& r) {
-		if (l.type == STR)
-			free(l.str);
-		l.type = NULL;
-
-		if (r.type == STR) {
-			l.type = r.type;
-			l.set_str(r.str); // strlen + alloc + copy
-		} else {
-			memcpy(&l, &r, sizeof(Value));
-		}
-	}
-	static void _move (Value& l, Value& r) {
-		if (l.type == STR)
-			free(l.str);
-		l.type = NULL;
-
-		memcpy(&l, &r, sizeof(Value));
-		memset(&r, 0, sizeof(Value));
-	}
-
-	//Value (std::string_view&& str): type{STR} { set_str(str); }
 };
 #define NULLVAL (Value{})
 
@@ -95,16 +95,16 @@ void print_val (Value const& arg) {
 			printf("null");
 			break;
 		case BOOL:
-			printf("%s", arg.b ? "true":"false");
+			printf("%s", arg.u.b ? "true":"false");
 			break;
 		case INT:
-			printf("%" PRIi64, arg.i);
+			printf("%" PRIi64, arg.u.i);
 			break;
 		case FLT:
-			printf("%f", arg.f);
+			printf("%f", arg.u.f);
 			break;
 		case STR:
-			printf("%s", arg.str);
+			printf("%s", arg.u.str);
 			break;
 		default:
 			assert(false);

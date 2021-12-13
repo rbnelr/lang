@@ -135,13 +135,24 @@ struct AST {
 
 	source_range source;
 
-	Value        value; // for constants
-
 	ast_ptr      next;
 	ast_ptr      child;
 
+	union {
+		struct {
+			Value value; // for constants
+		} constant;
+
+		struct {
+			size_t argc;
+		} call;
+	};
+
 	AST () {}
-	~AST () {}
+	~AST () {
+		if (type == A_CONSTANT)
+			constant.value.~Value();
+	}
 
 	void set_text_end_after (Token& endtok) {
 		source.end = endtok.source.end;
@@ -191,11 +202,14 @@ struct Parser {
 					ast_ptr call = ast_alloc(A_CALL, *tok++);
 					tok++; // T_PAREN_OPEN
 
-					ast_ptr* pprev = &call->child;
+					call->call.argc = 0;
 
+					ast_ptr* pprev = &call->child;
 					while (tok->type != T_PAREN_CLOSE) {
 						*pprev = expression(0);
 						pprev = &(*pprev)->next;
+
+						call->call.argc++;
 
 						if (tok->type == T_COMMA) {
 							tok++;
@@ -217,7 +231,7 @@ struct Parser {
 
 			case T_LITERAL: {
 				ast_ptr lit = ast_alloc(A_CONSTANT, *tok);
-				lit->value = std::move(tok->val);
+				lit->constant.value = std::move(tok->val);
 				tok++;
 				return lit;
 			}
@@ -410,7 +424,7 @@ void dbg_print (AST* node, int depth=0) {
 	printf("%s ", ASTType_str[node->type]);
 
 	if (node->type == A_CONSTANT) {
-		print_val(node->value);
+		print_val(node->constant.value);
 		printf("\n");
 		assert(!node->child);
 		return;

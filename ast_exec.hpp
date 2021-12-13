@@ -4,11 +4,14 @@
 #include "parser.hpp"
 
 #ifdef __GNUC__ // GCC 4.8+, Clang, Intel and other compilers compatible with GCC (-std=c++0x or above)
+	#define _ASSUME(cond) if (!(cond)) __builtin_unreachable()
 	#define _UNREACHABLE __builtin_unreachable()
 #elif defined(_MSC_VER) // MSVC
-	#define _UNREACHABLE __assume(false)
+	#define _ASSUME(cond) __assume(cond)
+	#define _UNREACHABLE  __assume(false)
 #else
-	#define _UNREACHABLE 
+	#define _ASSUME(cond)
+	#define _UNREACHABLE  
 #endif
 
 void println (Value& val) {
@@ -16,7 +19,7 @@ void println (Value& val) {
 	printf("\n");
 }
 void my_printf (Value& format, Value const* args, size_t argc) {
-	const char* cur = format.str;
+	const char* cur = format.u.str;
 
 	size_t i = 0;
 	while (*cur != '\0') {
@@ -72,7 +75,7 @@ Value call_function (strview const& name, Value* args, size_t argc, AST* call) {
 	else if (name == "timer_end") {
 		if (!match(args, argc, { INT })) goto mismatch;
 		auto end = (int64_t)get_timestamp();
-		return (double)(end - args[0].i) / (double)timestamp_freq;
+		return (double)(end - args[0].u.i) / (double)timestamp_freq;
 	}
 	else {
 		throw MyException{"unknown function", call->source};
@@ -87,52 +90,58 @@ mismatch:
 struct Interpreter {
 
 	Value binop (Value& lhs, Value& rhs, AST* op) {
-		if ((lhs.type == NULL || rhs.type == NULL) &&
-			(op->type == A_EQUALS || op->type == A_NOT_EQUALS)) {
+		ASTType at = op->type;
+		Type lt = lhs.type, rt = rhs.type;
+
+		if ((lt == NULL || rt == NULL) &&
+			(at == A_EQUALS || at == A_NOT_EQUALS)) {
 			// something compared to null
 			// if both actually null -> true  (null == null)
 			// else                  -> false (null == <something>  or  <something> == null)
-			return lhs.type == rhs.type;
+			return lt == rt;
 		}
 
-		if (lhs.type != rhs.type) {
+		if (lt != rt) {
 			throw MyException{"types do not match", op->source};
 		}
-		switch (lhs.type) {
-			case INT:
-				switch (op->type) {
-					case A_ADD:        return lhs.i + rhs.i;
-					case A_SUB:        return lhs.i - rhs.i;
-					case A_MUL:        return lhs.i * rhs.i;
-					case A_DIV:        return lhs.i / rhs.i;
+		switch (lt) {
+			case INT: {
+				int64_t l = lhs.u.i, r = rhs.u.i;
+				switch (at) {
+					case A_ADD:        return l +  r;
+					case A_SUB:        return l -  r;
+					case A_MUL:        return l *  r;
+					case A_DIV:        return l /  r;
 
-					case A_LESS:       return lhs.i <  rhs.i;
-					case A_LESSEQ:     return lhs.i <= rhs.i;
-					case A_GREATER:    return lhs.i >  rhs.i;
-					case A_GREATEREQ:  return lhs.i >= rhs.i;
-					case A_EQUALS:     return lhs.i == rhs.i;
-					case A_NOT_EQUALS: return lhs.i != rhs.i;
+					case A_LESS:       return l <  r;
+					case A_LESSEQ:     return l <= r;
+					case A_GREATER:    return l >  r;
+					case A_GREATEREQ:  return l >= r;
+					case A_EQUALS:     return l == r;
+					case A_NOT_EQUALS: return l != r;
 				}
-				break;
-			case FLT:
-				switch (op->type) {
-					case A_ADD:        return lhs.f + rhs.f;
-					case A_SUB:        return lhs.f - rhs.f;
-					case A_MUL:        return lhs.f * rhs.f;
-					case A_DIV:        return lhs.f / rhs.f;
+			} break;
+			case FLT: {
+				double l = lhs.u.f, r = rhs.u.f;
+				switch (at) {
+					case A_ADD:        return l +  r;
+					case A_SUB:        return l -  r;
+					case A_MUL:        return l *  r;
+					case A_DIV:        return l /  r;
 
-					case A_LESS:       return lhs.f <  rhs.f;
-					case A_LESSEQ:     return lhs.f <= rhs.f;
-					case A_GREATER:    return lhs.f >  rhs.f;
-					case A_GREATEREQ:  return lhs.f >= rhs.f;
-					case A_EQUALS:     return lhs.f == rhs.f;
-					case A_NOT_EQUALS: return lhs.f != rhs.f;
+					case A_LESS:       return l <  r;
+					case A_LESSEQ:     return l <= r;
+					case A_GREATER:    return l >  r;
+					case A_GREATEREQ:  return l >= r;
+					case A_EQUALS:     return l == r;
+					case A_NOT_EQUALS: return l != r;
 				}
-				break;
-			case BOOL:
-				switch (op->type) {
-					case A_EQUALS:     return lhs.b == rhs.b;
-					case A_NOT_EQUALS: return lhs.b != rhs.b;
+			} break;
+			case BOOL: {
+				bool l = lhs.u.b, r = rhs.u.b;
+				switch (at) {
+					case A_EQUALS:     return l == r;
+					case A_NOT_EQUALS: return l != r;
 
 					case A_ADD:
 					case A_SUB:
@@ -145,18 +154,18 @@ struct Interpreter {
 					case A_GREATEREQ:
 						throw MyException{"can't compare bools", op->source};
 				}
-				break;
-			case STR:
-				switch (op->type) {
+			} break;
+			case STR: {
+				switch (at) {
 					case A_EQUALS:
 					case A_NOT_EQUALS:
 					case A_LESS:
 					case A_LESSEQ:
 					case A_GREATER:
 					case A_GREATEREQ: {
-						int res = strcmp(lhs.str, rhs.str);
+						int res = strcmp(lhs.u.str, rhs.u.str);
 						
-						switch (op->type) {
+						switch (at) {
 							case A_EQUALS:     return res == 0;
 							case A_NOT_EQUALS: return res != 0;
 							case A_LESS:       return res <  0;
@@ -172,9 +181,9 @@ struct Interpreter {
 					case A_DIV:
 						throw MyException{"can't do math with str", op->source};
 				}
-				break;
-			case NULL:
-				switch (op->type) {
+			} break;
+			case NULL: {
+				switch (at) {
 					case A_ADD:
 					case A_SUB:
 					case A_MUL:
@@ -186,7 +195,7 @@ struct Interpreter {
 					case A_GREATEREQ:
 						throw MyException{"null can't be larger or smaller", op->source};
 				}
-				break;
+			} break;
 		}
 		assert(false);
 		_UNREACHABLE;
@@ -196,17 +205,17 @@ struct Interpreter {
 		switch (rhs.type) {
 			case BOOL:
 				switch (op->type) {
-					case A_NOT    : return !rhs.b;
+					case A_NOT    : return !rhs.u.b;
 				}
 				break;
 			case INT:
 				switch (op->type) {
-					case A_NEGATE : return -rhs.i;
+					case A_NEGATE : return -rhs.u.i;
 				}
 				break;
 			case FLT:
 				switch (op->type) {
-					case A_NEGATE : return -rhs.f;
+					case A_NEGATE : return -rhs.u.f;
 				}
 				break;
 			case NULL: throw MyException{"can't do math with null", op->source};
@@ -237,7 +246,7 @@ struct Interpreter {
 			// values
 			case A_CONSTANT: {
 				assert(!node->child);
-				return node->value.copy();
+				return node->constant.value.copy();
 			} break;
 
 			case A_VARIABLE: {
@@ -256,21 +265,30 @@ struct Interpreter {
 				if (lhs->type != A_VARIABLE)
 					throw MyException{"variable expected on left side of assigment", lhs->source};
 
+				Value tmp = execute(rhs, depth+1);
+
 				assert(!lhs->child);
 				Value& val = vars[lhs->source.text()];
-				val = execute(rhs, depth+1);
+				val.set_null();
+				val = std::move(tmp);
 
 				return NULLVAL;
 			} break;
 
 			case A_CALL: {
 				std::vector<Value> args;
-				args.reserve(32);
+				args.resize(node->call.argc);
 
+				size_t i = 0;
 				for (auto* n=node->child.get(); n != nullptr; n = n->next.get()) {
-					Value arg = execute(n, depth+1);
-					args.emplace_back(std::move(arg));
-				};
+					Value val = execute(n, depth+1);
+					args[i++] = std::move(val);
+
+					// compiler is too dumb to understand that the moved-from Value is NULL
+					// and generates dtor code for no reason, help it understand
+					assert(val.type == NULL);
+					_ASSUME(val.type == NULL);
+				}
 
 				return call_function(node->source.text(), args.data(), args.size(), node);
 			} break;
@@ -289,7 +307,7 @@ struct Interpreter {
 					Value condval = execute(cond, depth+1);
 					if (condval.type != BOOL)
 						throw MyException{"loop condition must be bool", cond->source};
-					if (!condval.b)
+					if (!condval.u.b)
 						break;
 
 					execute(body, depth+1);

@@ -189,10 +189,10 @@ Value parse_escaped_string (const char* start, const char* end) {
 	val.type = STR;
 
 	// resulting strings should be shorter than escaped strings
-	val.str = (char*)malloc(end - start + 1);
+	val.u.str = (char*)malloc(end - start + 1);
 
 	const char* in = start;
-	char*       out = val.str;
+	char*       out = val.u.str;
 
 	while (in < end) {
 		if (*in == '\\') {
@@ -212,7 +212,7 @@ Value parse_escaped_string (const char* start, const char* end) {
 	}
 	*out++ = '\0';
 
-	val.str = (char*)realloc(val.str, out - val.str); // resize to (smaller) real size
+	val.u.str = (char*)realloc(val.u.str, out - val.u.str); // resize to (smaller) real size
 	return val;
 }
 

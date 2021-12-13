@@ -379,6 +379,8 @@ struct Parser {
 	}
 
 	ast_ptr file () {
+		ZoneScoped;
+
 		ast_ptr block = ast_alloc(A_BLOCK, tok[0]);
 		ast_ptr* prev = &block->child;
 

@@ -87,6 +87,7 @@ struct Value {
 
 	//Value (std::string_view&& str): type{STR} { set_str(str); }
 };
+#define NULLVAL (Value{})
 
 void print_val (Value const& arg) {
 	switch (arg.type) {

@@ -15,7 +15,6 @@ void println (Value& val) {
 	print_val(val);
 	printf("\n");
 }
-
 void my_printf (Value& format, Value const* args, size_t argc) {
 	const char* cur = format.str;
 
@@ -73,13 +72,13 @@ Value call_function (strview const& name, Value* args, size_t argc, AST* call) {
 	else if (name == "timer_end") {
 		if (!match(args, argc, { INT })) goto mismatch;
 		auto end = (int64_t)get_timestamp();
-		return (float)(end - args[0].i) / (float)timestamp_freq;
+		return (double)(end - args[0].i) / (double)timestamp_freq;
 	}
 	else {
 		throw MyException{"unknown function", call->source};
 	}
 
-	return {};
+	return NULLVAL;
 
 mismatch:
 	throw MyException{"no matching function overload", call->source};
@@ -114,6 +113,7 @@ struct Interpreter {
 					case A_EQUALS:     return lhs.i == rhs.i;
 					case A_NOT_EQUALS: return lhs.i != rhs.i;
 				}
+				break;
 			case FLT:
 				switch (op->type) {
 					case A_ADD:        return lhs.f + rhs.f;
@@ -128,7 +128,7 @@ struct Interpreter {
 					case A_EQUALS:     return lhs.f == rhs.f;
 					case A_NOT_EQUALS: return lhs.f != rhs.f;
 				}
-
+				break;
 			case BOOL:
 				switch (op->type) {
 					case A_EQUALS:     return lhs.b == rhs.b;
@@ -145,7 +145,7 @@ struct Interpreter {
 					case A_GREATEREQ:
 						throw MyException{"can't compare bools", op->source};
 				}
-
+				break;
 			case STR:
 				switch (op->type) {
 					case A_EQUALS:
@@ -172,7 +172,7 @@ struct Interpreter {
 					case A_DIV:
 						throw MyException{"can't do math with str", op->source};
 				}
-
+				break;
 			case NULL:
 				switch (op->type) {
 					case A_ADD:
@@ -186,6 +186,7 @@ struct Interpreter {
 					case A_GREATEREQ:
 						throw MyException{"null can't be larger or smaller", op->source};
 				}
+				break;
 		}
 		assert(false);
 		_UNREACHABLE;
@@ -197,14 +198,17 @@ struct Interpreter {
 				switch (op->type) {
 					case A_NOT    : return !rhs.b;
 				}
+				break;
 			case INT:
 				switch (op->type) {
 					case A_NEGATE : return -rhs.i;
 				}
+				break;
 			case FLT:
 				switch (op->type) {
 					case A_NEGATE : return -rhs.f;
 				}
+				break;
 			case NULL: throw MyException{"can't do math with null", op->source};
 			case STR:  throw MyException{"can't do math with str", op->source};
 		}
@@ -221,19 +225,19 @@ struct Interpreter {
 	Vars vars;
 
 	Value execute (AST* node, int depth=0) {
-		Value ret = {};
-
 		switch (node->type) {
 			case A_BLOCK: {
 				for (auto* n=node->child.get(); n != nullptr; n = n->next.get()) {
 					execute(n, depth+1);
 				}
+
+				return NULLVAL;
 			} break;
 
 			// values
 			case A_CONSTANT: {
 				assert(!node->child);
-				ret = node->value.copy();
+				return node->value.copy();
 			} break;
 
 			case A_VARIABLE: {
@@ -241,7 +245,7 @@ struct Interpreter {
 				auto it = vars.find(node->source.text());
 				if (it == vars.end())
 					throw MyException{"unknown variable", node->source};
-				ret = it->second.copy();
+				return it->second.copy();
 			} break;
 
 			case A_ASSIGNMENT: {
@@ -255,6 +259,8 @@ struct Interpreter {
 				assert(!lhs->child);
 				Value& val = vars[lhs->source.text()];
 				val = execute(rhs, depth+1);
+
+				return NULLVAL;
 			} break;
 
 			case A_CALL: {
@@ -266,7 +272,7 @@ struct Interpreter {
 					args.emplace_back(std::move(arg));
 				};
 
-				ret = call_function(node->source.text(), args.data(), args.size(), node);
+				return call_function(node->source.text(), args.data(), args.size(), node);
 			} break;
 
 			// flow control
@@ -290,6 +296,8 @@ struct Interpreter {
 
 					execute(end, depth+1);
 				}
+
+				return NULLVAL;
 			} break;
 
 			// binary operators
@@ -310,7 +318,7 @@ struct Interpreter {
 				Value l = execute(lhs, depth+1);
 				Value r = execute(rhs, depth+1);
 				
-				ret = binop(l, r, node);
+				return binop(l, r, node);
 			} break;
 
 			// unary operators
@@ -321,13 +329,12 @@ struct Interpreter {
 
 				Value operand_val = execute(operand, depth+1);
 
-				ret = unop(operand_val, node);
+				return unop(operand_val, node);
 			} break;
 
 			default:
 				assert(false);
+				_UNREACHABLE;
 		}
-
-		return ret;
 	}
 };

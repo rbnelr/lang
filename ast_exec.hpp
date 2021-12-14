@@ -396,6 +396,20 @@ struct Interpreter {
 
 				return NULLVAL;
 			}
+			// ternary operator
+			case A_SELECT: {
+				AST* cond       = node     ->child.get();
+				AST* true_expr  = cond     ->next .get();
+				AST* false_expr = true_expr->next .get();
+				assert(!false_expr->next);
+
+				Value condval = execute(cond, depth+1);
+				if (condval.type != BOOL)
+					throw MyException{"loop condition must be bool", cond->source};
+
+				AST* body = condval.u.b ? true_expr : false_expr;
+				return execute(body, depth+1);
+			}
 		}
 		assert(false);
 		_UNREACHABLE;

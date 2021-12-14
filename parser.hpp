@@ -4,8 +4,8 @@
 #include "errors.hpp"
 #include "types.hpp"
 
-inline constexpr bool is_binary_op (TokenType tok) {
-	return tok >= T_ADD && tok <= T_NOT_EQUALS;
+inline constexpr bool is_binary_or_ternary_op (TokenType tok) {
+	return tok >= T_ADD && tok <= T_QUESTIONMARK;
 }
 inline constexpr bool is_binary_assignemnt_op (TokenType tok) {
 	return tok >= T_ASSIGN && tok <= T_DIVEQ;
@@ -22,17 +22,19 @@ inline constexpr bool is_unary_postfix_op (TokenType tok) {
 }
 
 inline constexpr uint8_t BINARY_OP_PRECEDENCE[] = {
-	2, // T_ADD
-	2, // T_SUB
-	4, // T_MUL
-	4, // T_DIV
+	3, // T_ADD
+	3, // T_SUB
+	5, // T_MUL
+	5, // T_DIV
 
-	1, // T_LESS
-	1, // T_LESSEQ
-	1, // T_GREATER
-	1, // T_GREATEREQ
-	0, // T_EQUALS
-	0, // T_NOT_EQUALS
+	2, // T_LESS
+	2, // T_LESSEQ
+	2, // T_GREATER
+	2, // T_GREATEREQ
+	1, // T_EQUALS
+	1, // T_NOT_EQUALS
+
+	0, // T_QUESTIONMARK
 	
 	255, // T_NOT
 	255, // T_INC
@@ -40,7 +42,7 @@ inline constexpr uint8_t BINARY_OP_PRECEDENCE[] = {
 };
 inline constexpr uint8_t UNARY_OP_PRECEDENCE[] = {
 	255, // T_ADD
-	3,   // T_SUB
+	4,   // T_SUB
 	255, // T_MUL
 	255, // T_DIV
 
@@ -50,10 +52,12 @@ inline constexpr uint8_t UNARY_OP_PRECEDENCE[] = {
 	255, // T_GREATEREQ
 	255, // T_EQUALS
 	255, // T_NOT_EQUALS
+
+	255, // T_QUESTIONMARK
 	
-	5, // T_NOT
-	6, // T_INC
-	6, // T_DEC
+	6, // T_NOT
+	7, // T_INC
+	7, // T_DEC
 };
 
 enum Associativity : uint8_t {
@@ -73,21 +77,23 @@ inline constexpr Associativity BINARY_OP_ASSOCIATIVITY[] = { // 0 = left (left t
 	LEFT_ASSOC, // T_EQUALS
 	LEFT_ASSOC, // T_NOT_EQUALS
 
+	RIGHT_ASSOC, // T_QUESTIONMARK
+
 	RIGHT_ASSOC, // T_NOT
 	LEFT_ASSOC, // T_INC
 	LEFT_ASSOC, // T_DEC
 };
 
-inline unsigned bin_prec (TokenType tok) {
-	assert(is_binary_op(tok));
+inline unsigned bt_prec (TokenType tok) {
+	assert(is_binary_or_ternary_op(tok));
 	return BINARY_OP_PRECEDENCE[tok - T_ADD];
 }
 inline unsigned un_prec (TokenType tok) {
 	assert(is_unary_op(tok));
 	return UNARY_OP_PRECEDENCE[tok - T_ADD];
 }
-inline unsigned bin_assoc (TokenType tok) {
-	assert(is_binary_op(tok));
+inline unsigned bt_assoc (TokenType tok) {
+	assert(is_binary_or_ternary_op(tok));
 	return (bool)BINARY_OP_ASSOCIATIVITY[tok - T_ADD];
 }
 
@@ -117,6 +123,9 @@ enum ASTType {
 	A_GREATEREQ,
 	A_EQUALS,
 	A_NOT_EQUALS,
+
+	// ternary operator
+	A_SELECT,
 
 	// unary operators
 	A_NEGATE,
@@ -154,6 +163,8 @@ inline const char* ASTType_str[] = {
 	"A_EQUALS",
 	"A_NOT_EQUALS",
 
+	"A_SELECT",
+
 	"A_NEGATE",
 	"A_NOT",
 	"A_INC",
@@ -166,7 +177,7 @@ inline const char* ASTType_str[] = {
 	"A_DIVEQ",
 };
 
-inline constexpr ASTType tok2binop (TokenType tok) {
+inline constexpr ASTType tok2btop (TokenType tok) {
 	return (ASTType)( tok + (A_ADD - T_ADD) );
 }
 inline constexpr ASTType tok2unop (TokenType tok) {
@@ -319,7 +330,7 @@ struct Parser {
 
 	ast_ptr expression (unsigned min_prec) {
 
-		// prefix unary operators
+		// unary prefix operators
 		if (tok->type == T_ADD)
 			tok++; // unary plus is no-op
 
@@ -340,6 +351,7 @@ struct Parser {
 			lhs = atom();
 		}
 
+		// unary postfix operators
 		while (is_unary_postfix_op(tok->type)) {
 			unsigned prec = un_prec(tok->type);
 			if (prec < min_prec)
@@ -354,18 +366,29 @@ struct Parser {
 			lhs = std::move(post_op);
 		}
 
-		while (is_binary_op(tok->type)) {
-			unsigned prec  = bin_prec( tok->type);
-			unsigned assoc = bin_assoc(tok->type);
+		// binary and ternary operators
+		while (is_binary_or_ternary_op(tok->type)) {
+			unsigned prec  = bt_prec( tok->type);
+			unsigned assoc = bt_assoc(tok->type);
 
 			if (prec < min_prec)
 				break;
 
-			ast_ptr op = ast_alloc(tok2binop(tok->type));
+			ast_ptr op = ast_alloc(tok2btop(tok->type));
 			op->source = tok->source;
 			tok++;
 
 			ast_ptr rhs = expression(assoc == LEFT_ASSOC ? prec+1 : prec);
+
+			if (op->type == A_SELECT) {
+				if (tok->type != T_COLON)
+					throw_error_after("syntax error, ':' expected after true case of select operator", tok[-1]);
+				tok++;
+
+				assert(assoc == RIGHT_ASSOC);
+				ast_ptr rhs2 = expression(prec);
+				rhs->next = std::move(rhs2);
+			}
 
 			lhs->next  = std::move(rhs);
 			op-> child = std::move(lhs);
@@ -418,7 +441,7 @@ struct Parser {
 		ast_ptr start = assign_expr();
 		eat_semicolon();
 
-		ast_ptr cond  = assign_expr();
+		ast_ptr cond  = expression(0);
 		eat_semicolon();
 
 		ast_ptr step  = assign_expr();
@@ -449,7 +472,7 @@ struct Parser {
 		if_kw->source.start = tok->source.start;
 		tok++;
 
-		ast_ptr cond = assign_expr();
+		ast_ptr cond = expression(0);
 		if_kw->source.end = tok[-1].source.end;
 
 		ast_ptr body = block();
@@ -467,7 +490,7 @@ struct Parser {
 		if_kw->source.start = tok->source.start;
 		tok++;
 
-		ast_ptr cond = assign_expr();
+		ast_ptr cond = expression(0);
 		if_kw->source.end = tok[-1].source.end;
 
 		ast_ptr body = block();
@@ -571,8 +594,14 @@ void dbg_print (AST* node, int depth=0) {
 	indent(depth);
 	printf("%s ", ASTType_str[node->type]);
 
-	if (node->type == A_VAR || node->type == A_VAR_DECL || node->type == A_LITERAL) {
+	if (node->type == A_LITERAL) {
 		std::string str(node->source.text());
+		printf("%s\n", str.c_str());
+		assert(!node->child);
+		return;
+	}
+	else if (node->type == A_VAR || node->type == A_VAR_DECL) {
+		std::string str(node->var.ident);
 		printf("%s\n", str.c_str());
 		assert(!node->child);
 		return;

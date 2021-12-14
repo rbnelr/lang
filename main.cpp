@@ -36,14 +36,14 @@ int main (int argc, const char** argv) {
 			parser.tok = &tokens[0];
 			ast = parser.file();
 
+			dbg_print(ast.get());
+
 			{
 				ZoneScopedN("map_vars");
 				OptimizePasses opt;
 				opt.map_vars(ast.get());
 			}
 		}
-
-		dbg_print(ast.get());
 
 		printf("--------------------\n");
 

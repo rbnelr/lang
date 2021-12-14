@@ -117,6 +117,8 @@ printf("---------------\n");
 	} else {
 		printf("Now it's False!\n");
 	}
+	
+	printf("\n");
 
 	b := -2;
 
@@ -135,6 +137,25 @@ printf("---------------\n");
 		}
 	}
 }
+
+printf("---------------\n");
+
+{ //// ternary
+	a := true;
+	printf("a : {}\n", a?"True!":"False...");
+
+	a = !a;
+	printf("a : {}\n", a?"True!":"False...");
+	
+	f := false;
+	t := true;
+	printf("t=true f=false\n");
+	printf("t? t?0:1 : t?2:3 = {}\n", t? t?0:1 : t?2:3);
+	printf("t? f?0:1 : f?2:3 = {}\n", t? f?0:1 : t?2:3);
+	printf("f? t?0:1 : t?2:3 = {}\n", f? t?0:1 : t?2:3);
+	printf("f? f?0:1 : f?2:3 = {}\n", f? f?0:1 : f?2:3);
+}
+
 
 //// Loops
 //for 10  error: '{' expected

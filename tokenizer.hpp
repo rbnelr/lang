@@ -70,6 +70,8 @@ enum TokenType {
 	T_EQUALS,        // ==
 	T_NOT_EQUALS,    // !=
 
+	T_QUESTIONMARK,  // ?
+
 	T_NOT,           // !   unary (prefix) operator
 	T_INC,           // x++  postincrement
 	T_DEC,           // x--  postdecrement
@@ -91,11 +93,13 @@ enum TokenType {
 	T_INDEX_OPEN,    // [
 	T_INDEX_CLOSE,   // ]
 
+	// literals of differing types
 	T_LITERAL,
 
 	// starts with  '_' or [a-Z]  and then any number of  '_' or [a-Z] or [0-9]
 	T_IDENTIFIER,
 
+	// keywords
 	T_IF,
 	T_ELIF,
 	T_ELSE,
@@ -115,6 +119,8 @@ inline constexpr const char* TokenType_str[] = {
 	"T_GREATEREQ",
 	"T_EQUALS",
 	"T_NOT_EQUALS",
+
+	"T_QUESTIONMARK",
 
 	"T_NOT",
 	"T_INC",
@@ -146,6 +152,7 @@ inline constexpr const char* TokenType_str[] = {
 	"T_ELSE",
 	"T_FOR",
 };
+/*
 inline constexpr const char* TokenType_char[] = {
 	"\\0",
 
@@ -160,6 +167,8 @@ inline constexpr const char* TokenType_char[] = {
 	">=",
 	"==",
 	"!=",
+
+	"?",
 
 	"!",
 	"++",
@@ -191,6 +200,7 @@ inline constexpr const char* TokenType_char[] = {
 	"else",
 	"for",
 };
+*/
 
 struct Token {
 	TokenType    type;
@@ -340,6 +350,7 @@ std::vector<Token> tokenize (const char* src, IdentiferIDs& ident_ids) {
 			case ':': tok.type = T_COLON;         break;
 			case ';': tok.type = T_SEMICOLON;     break;
 			case ',': tok.type = T_COMMA;         break;
+			case '?': tok.type = T_QUESTIONMARK;  break;
 
 			case '(': tok.type = T_PAREN_OPEN;    break;
 			case ')': tok.type = T_PAREN_CLOSE;   break;

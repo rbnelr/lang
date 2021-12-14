@@ -1,4 +1,13 @@
 
+// /* blah
+// */
+
+/*
+	blah // blah
+	/* blah */
+*/
+
+
 //// Variable declarations
 //l = 7; // error: unknown variable.
 l :;
@@ -190,11 +199,14 @@ printf("---------------\n");
 	printf("simple_loop:\n");
 	start := timer();
 
-	count := 0;
-	for i:=0; i<10_000_000; i++ {
-		count++;
+	//count := 10_000_000; countf := 10000000.0;
+	count := 100;        countf := 100.0; // no casts yet
+
+	counter := 0;
+	for i:=0; i<count; i++ {
+		counter++;
 	}
 	
 	dur := timer_end(start);
-	printf("time: {} ms\n", dur * 1000.0);
+	printf("time: {} ms  time/iter: {} ns\n", dur * 1000.0, dur / countf * 1000000000.0);
 }

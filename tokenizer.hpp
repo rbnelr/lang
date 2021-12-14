@@ -244,53 +244,60 @@ Value parse_escaped_string (const char* start, const char* end) {
 std::vector<Token> tokenize (const char* src, IdentiferIDs& ident_ids) {
 	ZoneScoped;
 	std::vector<Token> tokens;
-	tokens.reserve(4096);
+	tokens.reserve(1024*8);
 
 	const char* cur = src;
 	const char* cur_line = src;
 
 	for (;;) {
-		// skip whitespace
-		if (is_whitespace_c(*cur) || *cur == '\n' || *cur == '\r') {
-			cur++;
-			continue;
-		}
-
-		// if line comment begin, skip until newline or EOF
-		if (cur[0] == '/' && cur[1] == '/') {
-			cur += 2; // skip "//"
-
-			while (*cur != '\n' && *cur != '\r' && *cur != '\0')
-				cur++; // skip anything until newline or EOF
-
-			continue;
-		}
-		// if block comment begin, skip until end of block comment while keeping track of nested block comments
-		else if (cur[0] == '/' && cur[1] == '*') {
-			cur += 2; // skip "/*"
-
-			size_t depth = 1;
-			while (depth > 0) {
-				if (*cur == '\0') {
-					// TODO: also add note about block comment open location to error
-					throw MyException{ "end of file in block comment", {cur, cur+1}};
-				}
-				else if (cur[0] == '/' && cur[1] == '*') {
-					cur += 2; // skip "/*"
-					depth++;
-				}
-				else if (cur[0] == '*' && cur[1] == '/') {
-					cur += 2; // skip "*/"
-					depth--;
-				}
-				else {
-					cur++;
-				}
+		switch (*cur) {
+			// skip whitespace
+			case ' ': case '\t':
+			case '\n': case '\r': {
+				cur++;
+				continue;
 			}
-			continue;
-		}
-		else if (cur[0] == '*' && cur[1] == '/') {
-			throw MyException{"unexpected block comment close", {cur, cur+2}};
+			
+			case '/': {
+				// "//" if line comment begin, skip until newline or EOF
+				if (cur[1] == '/') {
+					cur+=2;
+
+					while (*cur != '\n' && *cur != '\r' && *cur != '\0')
+						cur++; // skip anything until newline or EOF
+
+					continue;
+				}
+				// "/*" if block comment begin, skip until end of block comment while keeping track of nested block comments
+				else if (cur[1] == '*') {
+					cur+=2;
+
+					size_t depth = 1;
+					while (depth > 0) {
+						if (*cur == '\0') {
+							// TODO: also add note about block comment open location to error
+							throw MyException{ "end of file in block comment", {cur, cur+1}};
+						}
+						else if (cur[0] == '/' && cur[1] == '*') {
+							cur += 2; // skip "/*"
+							depth++;
+						}
+						else if (cur[0] == '*' && cur[1] == '/') {
+							cur += 2; // skip "*/"
+							depth--;
+						}
+						else {
+							cur++;
+						}
+					}
+					continue;
+				}
+			} break;
+			case '*': {
+				if (cur[1] == '/') {
+					throw MyException{"unexpected block comment close", {cur, cur+2}};
+				}
+			} break;
 		}
 
 		// non-whitespace character outside of comment -> start of a token
@@ -367,6 +374,7 @@ std::vector<Token> tokenize (const char* src, IdentiferIDs& ident_ids) {
 				while (is_decimal_c(*cur))
 					cur++;
 				
+				// float
 				if (*cur == '.') {
 					cur = start; // reset to begining
 					double val;
@@ -378,7 +386,9 @@ std::vector<Token> tokenize (const char* src, IdentiferIDs& ident_ids) {
 					tok.val = val;
 					continue;
 				}
+				// int
 				else {
+
 					cur = start; // reset to begining
 					int64_t val;
 					if (!parse_integer(cur, &val))

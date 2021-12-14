@@ -20,7 +20,7 @@ struct SourceLines {
 	void parse_lines (const char* src) {
 		ZoneScoped;
 
-		lines.reserve(4096);
+		lines.reserve(1024*8);
 		const char* cur = src;
 		const char* cur_line = src;
 

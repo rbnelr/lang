@@ -8,10 +8,6 @@
 int main (int argc, const char** argv) {
 	enable_console_ansi_color_codes();
 
-#if TRACY_ENABLE
-	for (int profi=0; profi<3; ++profi) {
-#endif
-
 	std::string filename = "test.la";
 	std::string source;
 	{
@@ -21,6 +17,10 @@ int main (int argc, const char** argv) {
 			return 1;
 		}
 	}
+
+#if TRACY_ENABLE
+	for (int profi=0; profi<100000; ++profi) {
+#endif
 
 	SourceLines lines; // need lines outside of try to allow me to print error messages with line numbers
 	try {
@@ -36,7 +36,7 @@ int main (int argc, const char** argv) {
 			parser.tok = &tokens[0];
 			ast = parser.file();
 
-			dbg_print(ast.get());
+			//dbg_print(ast.get());
 
 			{
 				ZoneScopedN("map_vars");
@@ -45,13 +45,13 @@ int main (int argc, const char** argv) {
 			}
 		}
 
-		printf("--------------------\n");
-
-		{
-			ZoneScopedN("interpret AST");
-			Interpreter interp;
-			interp.execute(ast.get());
-		}
+		//printf("--------------------\n");
+		//
+		//{
+		//	ZoneScopedN("interpret AST");
+		//	Interpreter interp;
+		//	interp.execute(ast.get());
+		//}
 	}
 	catch (MyException& ex) {
 		ex.print(filename.c_str(), lines);

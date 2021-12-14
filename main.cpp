@@ -24,11 +24,12 @@ int main (int argc, const char** argv) {
 	SourceLines lines; // need lines outside of try to allow me to print error messages with line numbers
 	try {
 		ast_ptr ast;
+		IdentiferIDs ident_ids;
 		{
 			ZoneScopedN("compile");
 			lines.parse_lines(source.c_str());
 
-			auto tokens = tokenize(source.c_str());
+			auto tokens = tokenize(source.c_str(), ident_ids);
 
 			Parser parser;
 			parser.tok = &tokens[0];

@@ -199,7 +199,12 @@ struct AST {
 		} literal;
 
 		struct {
-			size_t argc;
+			ident_id_t identid;
+		} var;
+
+		struct {
+			size_t     argc;
+			ident_id_t identid;
 		} call;
 	};
 
@@ -254,10 +259,12 @@ struct Parser {
 			case T_IDENTIFIER: {
 				// func call
 				if (tok[1].type == T_PAREN_OPEN) {
-					ast_ptr call = ast_alloc(A_CALL, *tok++);
-					tok++; // T_PAREN_OPEN
+					ast_ptr call = ast_alloc(A_CALL, *tok);
 
 					call->call.argc = 0;
+					call->call.identid = tok->identid;
+
+					tok+=2; // T_PAREN_OPEN
 
 					ast_ptr* pprev = &call->child;
 					while (tok->type != T_PAREN_CLOSE) {
@@ -280,7 +287,11 @@ struct Parser {
 				}
 				// variable
 				else {
-					return ast_alloc(A_VAR, *tok++);
+					ast_ptr var = ast_alloc(A_VAR, *tok);
+					var->var.identid = tok->identid;
+
+					tok++;
+					return var;
 				}
 			}
 
@@ -357,8 +368,10 @@ struct Parser {
 
 		// lhs declaration in potential assignment
 		if (tok[0].type == T_IDENTIFIER && tok[1].type == T_COLON) {
-			lhs = ast_alloc(A_VAR_DECL, *tok++);
-			tok++;
+			lhs = ast_alloc(A_VAR_DECL, *tok);
+			lhs->var.identid = tok->identid;
+
+			tok += 2;
 		}
 		// lhs expression in potential assignment
 		else {

@@ -17,6 +17,15 @@
     <ClCompile Include="..\..\util\timer.cpp">
       <Filter>util</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\util\smhasher\MurmurHash1.cpp">
+      <Filter>util\smhasher</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\util\smhasher\MurmurHash2.cpp">
+      <Filter>util\smhasher</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\util\smhasher\MurmurHash3.cpp">
+      <Filter>util\smhasher</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\util\string.hpp">
@@ -41,6 +50,16 @@
     <ClInclude Include="..\..\util\timer.hpp">
       <Filter>util</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\util\smhasher\MurmurHash1.h">
+      <Filter>util\smhasher</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\util\smhasher\MurmurHash2.h">
+      <Filter>util\smhasher</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\util\smhasher\MurmurHash3.h">
+      <Filter>util\smhasher</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\ident_ids.hpp" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="util">
@@ -48,6 +67,9 @@
     </Filter>
     <Filter Include="tracy">
       <UniqueIdentifier>{03b26709-89a4-4de1-a908-4a65cd98dc18}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="util\smhasher">
+      <UniqueIdentifier>{4486f546-c03b-46ca-b21b-32e11ccab3c2}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>

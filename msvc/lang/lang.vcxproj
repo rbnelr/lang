@@ -135,6 +135,9 @@
     <ClCompile Include="..\..\main.cpp" />
     <ClCompile Include="..\..\util\console_colors.cpp" />
     <ClCompile Include="..\..\util\file_io.cpp" />
+    <ClCompile Include="..\..\util\smhasher\MurmurHash1.cpp" />
+    <ClCompile Include="..\..\util\smhasher\MurmurHash2.cpp" />
+    <ClCompile Include="..\..\util\smhasher\MurmurHash3.cpp" />
     <ClCompile Include="..\..\util\string.cpp" />
     <ClCompile Include="..\..\util\timer.cpp" />
   </ItemGroup>
@@ -143,12 +146,16 @@
     <ClInclude Include="..\..\common.hpp" />
     <ClInclude Include="..\..\errors.hpp" />
     <ClInclude Include="..\..\ast_exec.hpp" />
+    <ClInclude Include="..\..\ident_ids.hpp" />
     <ClInclude Include="..\..\line_map.hpp" />
     <ClInclude Include="..\..\parser.hpp" />
     <ClInclude Include="..\..\tokenizer.hpp" />
     <ClInclude Include="..\..\types.hpp" />
     <ClInclude Include="..\..\util\console_colors.hpp" />
     <ClInclude Include="..\..\util\file_io.hpp" />
+    <ClInclude Include="..\..\util\smhasher\MurmurHash1.h" />
+    <ClInclude Include="..\..\util\smhasher\MurmurHash2.h" />
+    <ClInclude Include="..\..\util\smhasher\MurmurHash3.h" />
     <ClInclude Include="..\..\util\string.hpp" />
     <ClInclude Include="..\..\util\timer.hpp" />
   </ItemGroup>

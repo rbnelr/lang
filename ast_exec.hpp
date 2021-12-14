@@ -32,6 +32,9 @@ void my_printf (Value& format, Value const* args, size_t argc) {
 	// ignore varargs that are not printed (no error)
 }
 
+// TODO: make this more dynamic
+// function names should be turned into IDs before tokenization
+// then put into a hashmap along with the implementation func ptr and a types list to match arguments against
 Value call_function (strview const& name, Value* args, size_t argc, AST* call) {
 	auto match = [] (Value* args, size_t argc, std::initializer_list<Type> types, bool follow_vararg=false) {
 		if (follow_vararg) {
@@ -76,40 +79,69 @@ mismatch:
 	throw MyException{"no matching function overload", call->source};
 }
 
-struct ScopedVars {
-	typedef std::unordered_map<strview, Value> Vars;
+struct ScopedIdentifer {
+	int        scope;
+	ident_id_t id;
+};
 
-	// use unique_ptr of hashmap here because vector for some godforsaken reason wants to copy the hashmap instead of moving
-	// apparently this might be realted to my Value::move ctor not being noexcept, but adding that did not fix it
-	// it appears that this is a defect in the impl of the MSVC unordered_map, which does not have noexcept move methods
-	std::vector<std::unique_ptr<Vars>> scopes;
+_FORCEINLINE bool operator== (ScopedIdentifer const& l, ScopedIdentifer const& r) {
+	return l.scope == r.scope && l.id == r.id;
+}
+template<> struct std::hash<ScopedIdentifer> {
+	_FORCEINLINE std::size_t operator()(ScopedIdentifer const& i) const noexcept {
+		return MurmurHash64A(&i.id, sizeof(i.id), (uint64_t)i.scope);
+	}
+};
+
+struct ScopedVars {
+	// scope_idx, name -> Value
+	std::unordered_map<ScopedIdentifer, Value>  vars_map;
+	// list of all variable names in order of declaration (of all scopes)
+	std::vector<ident_id_t>                     vars_stack;
+	// index of first variable of each scope in <vars_stack>
+	std::vector<size_t>                         scopes;
 
 	Value& declare (AST* var) {
-		auto& cur_scope = scopes.back();
+		assert(!scopes.empty());
+		int scope_idx = (int)scopes.size()-1;
+		auto nameid = var->var.identid;
 		
-		auto res = cur_scope->try_emplace(var->source.text());
+		auto res = vars_map.try_emplace({ scope_idx, nameid });
 		if (!res.second)
 			throw MyException{"variable already declared in this scope", var->source};
 		
+		vars_stack.emplace_back(nameid);
+
 		return res.first->second;
 	}
 
 	Value& get (AST* var) {
-		for (int i=(int)scopes.size()-1; i>=0; --i) {
-			auto& scope = scopes[i];
+		assert(!scopes.empty());
+		int scope_idx = (int)(scopes.size()-1);
+		auto nameid = var->var.identid;
 
-			auto it = scope->find(var->source.text());
-			if (it != scope->end())
+		for (int i=scope_idx; i>=0; --i) {
+			auto it = vars_map.find({ i, nameid });
+			if (it != vars_map.end())
 				return it->second;
 		}
 		throw MyException{"unknown variable", var->source};
 	}
 
 	void open_scope () {
-		scopes.emplace_back(std::make_unique<Vars>());
+		scopes.emplace_back( vars_stack.size() );
 	}
 	void close_scope () {
 		assert(!scopes.empty());
+
+		int scope_idx = (int)scopes.size()-1;
+		size_t scope_frame = scopes[scope_idx];
+
+		for (size_t i=scope_frame; i<vars_stack.size(); ++i) {
+			vars_map.erase({ scope_idx, vars_stack[i] });
+		}
+
+		vars_stack.resize(scope_frame);
 		scopes.pop_back();
 	}
 };

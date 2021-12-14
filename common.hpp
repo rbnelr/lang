@@ -15,6 +15,7 @@
 #include "util/file_io.hpp"
 #include "util/console_colors.hpp"
 #include "util/timer.hpp"
+#include "util/smhasher/MurmurHash2.h"
 
 #include <exception>
 
@@ -32,7 +33,7 @@ typedef std::string_view strview;
 #ifdef __GNUC__ // GCC 4.8+, Clang, Intel and other compilers compatible with GCC (-std=c++0x or above)
 	#define _ASSUME(cond) if (!(cond)) __builtin_unreachable()
 	#define _UNREACHABLE __builtin_unreachable()
-	#define _FORCEINLINE __attribute__((always_inline))
+	#define _FORCEINLINE __attribute__((always_inline)) inline
 
 #elif defined(_MSC_VER) // MSVC
 	#define _ASSUME(cond) __assume(cond)

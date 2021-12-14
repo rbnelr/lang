@@ -3,6 +3,7 @@
 #include "errors.hpp"
 #include "types.hpp"
 #include "line_map.hpp"
+#include "ident_ids.hpp"
 
 namespace parse {
 	//// Check char class
@@ -206,8 +207,10 @@ inline constexpr const char* TokenType_char[] = {
 
 struct Token {
 	TokenType    type;
-	Value        val;
 	source_range source;
+
+	Value        val;
+	ident_id_t   identid;
 };
 
 Value parse_escaped_string (const char* start, const char* end) {
@@ -242,7 +245,7 @@ Value parse_escaped_string (const char* start, const char* end) {
 	return val;
 }
 
-std::vector<Token> tokenize (const char* src) {
+std::vector<Token> tokenize (const char* src, IdentiferIDs& ident_ids) {
 	ZoneScoped;
 	std::vector<Token> tokens;
 	tokens.reserve(4096);
@@ -430,7 +433,10 @@ std::vector<Token> tokenize (const char* src) {
 					else if (text == "null" ) { tok.type = T_LITERAL; tok.val = {}; }
 					else if (text == "true" ) { tok.type = T_LITERAL; tok.val = { true };  }
 					else if (text == "false") { tok.type = T_LITERAL; tok.val = { false }; }
-					else                        tok.type = T_IDENTIFIER;
+					else {
+						tok.type = T_IDENTIFIER;
+						tok.identid = ident_ids.get_id(tok.source.text());
+					}
 					continue;
 				}
 				throw MyException{"unknown token", {start, start+1}};

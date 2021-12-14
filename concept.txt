@@ -1,0 +1,168 @@
+////
+// programming language concept:
+////
+
+{ //// variable declaration:
+	a := 5;      // assignment with inferred type from initialization
+	a : int;     // declaration with explicit type and no initialization
+	a :;         // declaration with no type (makes no sense in a fixed type language, but currently my interpreter works like this)
+	a : any;     // any type allows for dyanmic types
+	a : flt = 5; // declarion with explicit type + initialization
+}
+{ //// variable initialization
+
+	// uninitialized variable, in debug mode accesses to uninitialized variables are checked (like asserts)
+	// runtime is actually uninitialized
+	a : int;
+
+	// if variable actually needs to be accessed while uninitialized, a syntax to allow this could look like this
+	// though I can't personally think of if I ever needed this, though code like   a &= 0;  can safely use uninitialized values
+	// so there might be justification for this existing
+	a : int = ---;
+}
+
+{ //// functions
+	// func function (args) -> (returns) { code }
+	// note that return values are named
+	func funcname (a : int, b : flt, ...) -> (ret : bool, sum : flt) {
+		b += (flt)a;
+		
+		return true, b; // can return multiple values
+		return ret = 5, sum = b; // can return by name
+		
+		// return values (if named) are just like variables and can be set manually and then returned
+		ret = 5;
+		sum = b;
+		return;
+	}
+	// empty return list is no returns (obviously)
+	func funcname (a : int, b : flt, ...) -> () {
+		return;
+	}
+	// empty return list can optionally be omitted
+	func funcname (a : int, b : flt, ...) {
+		return;
+	}
+	// empty arg list can optionally be omitted (maybe?)
+	func funcname {
+		// implicit valueless return at end of function
+	}
+}
+
+{ //// Function order
+	{ // functions can be referenced by code before they are declared
+		func A () {
+			B(); // fine, since A() is only declared (parsed+compiled) before B(), but not actually executed
+		}
+		A(); // fine, even though B is not yet declated as long as B does not depend on not-yet declared vars
+		B(); // fine, even though B is not yet declated as long as B does not depend on not-yet declared vars
+
+		func B () {
+			
+		}
+		B(); // fine, since B is already declared
+	}
+
+	{ // but not if they capture variables which are not yet delclared at call time
+		func A () {
+			B(); // fine, since A() is only declared (parsed+compiled) before B(), but not actually executed
+		}
+		A(); // compile error, A not ready, because B not ready, because it depends on count being declared
+		B(); // compile error,                      B not ready, because it depends on count being declared
+
+		count := 5;
+		func B () {
+			count++;
+		}
+		B(); // fine, since B and count is already declared
+	}
+	
+	{ // 
+		count : int;
+		func A () {
+			B(); // fine, since A() is only declared (parsed+compiled) before B(), but not actually executed
+		}
+		A(); // fine, but count is not yet initialized when modified by B()
+		B(); // fine, but count is not yet initialized when modified by B()
+
+		count = 5;
+		func B () {
+			count++;
+		}
+		B(); // fine, since B and count is already declared
+	}
+}
+
+{ //// nested functions
+	
+	// nested functions capture variables from outer functional scopes
+	func outer () {
+		a : flt;
+		c : flt;
+		func inner (a : int, b : flt, ...) {
+			a; // a (arg)
+			c; // c (captured)
+		}
+		inner();
+	}
+	
+	func outer () {
+		func innerA (a : int, b : flt) {
+			innerB(); // innerB depends on c,   but ok, since we don't call innerA yet
+		}
+		
+		a : flt;
+		c : flt;
+		func innerB (a : int, b : flt) {
+			a; // a (arg)
+			c; // c (captured)
+		}
+		innerB();
+		innerA();
+	}
+	
+	func outer () {
+		d : bool;
+		func innerA (a : int, b : flt) { // needs a frame ptr to point to outer() variables (just like this ptr in C++ structs)
+			if (d)
+				innerB(); // innerB depends on c,   but ok, since we don't call innerA yet
+		}
+		
+		a : flt;
+		c : flt;
+		func innerB (a : int, b : flt) { // needs a frame ptr for outer()
+			a; // a (arg)
+			c; // c (captured)
+		}
+		innerB();
+		
+		d = true;
+		innerA();
+	}
+	
+	// nested functions where multiple frame ptrs might be needed (is this a good idea? I suppose by-ref lambdas in C++ are actually worse if not inlined)
+	func outer () {
+		d : bool;
+		func innerA (a : int, b : flt) { // needs a frame ptr to point to outer() variables (just like this ptr in C++ structs)
+			
+			a : flt;
+			c : flt;
+			func innerB (a : int, b : flt) { // needs a frame ptr for inner()
+				a; // a (arg)
+				c; // c (captured)
+			}
+			innerB();
+			
+			if (d)
+				innerB(); // innerB depends on c,   but ok, since we don't call innerA yet
+		}
+		
+		d = true;
+		innerA();
+	}
+}
+
+//// inline is forceinline
+// alternatively @inline(always)  @inline(agressive)  @inline(never)
+@inline
+func funcname (a : int, b : int) { return a + b; }

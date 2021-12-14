@@ -28,10 +28,9 @@ struct SourceLines {
 		lines.emplace_back(src);
 
 		while (*cur != '\0') {
-			if (!(*cur == '\n' || *cur == '\r')) {
+			while (!(*cur == '\n' || *cur == '\r'))
 				cur++;
-				continue;
-			}
+			// newline found
 			char c = *cur++;
 
 			// this code should even handle files with inconsistent unix vs windows newlines reasonably

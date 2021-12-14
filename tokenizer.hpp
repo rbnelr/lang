@@ -433,6 +433,7 @@ std::vector<Token> tokenize (const char* src, IdentiferIDs& ident_ids) {
 
 					tok.source = { start, cur };
 
+				#if 0
 					auto text = tok.source.text();
 					if      (text == "if"   )   tok.type = T_IF;
 					else if (text == "elif" )   tok.type = T_ELIF;
@@ -445,6 +446,60 @@ std::vector<Token> tokenize (const char* src, IdentiferIDs& ident_ids) {
 						tok.type = T_IDENTIFIER;
 					}
 					continue;
+				#elif 0
+					auto text = tok.source.text();
+					
+					auto cmp = [&] (std::string_view const& r) {
+						if (text.size() != r.size()) return false;
+						return memcmp(text.data()+1, r.data()+1, r.size()-1) == 0;
+					};
+
+					switch (text.data()[0]) {
+						case 'i': {
+							if      (cmp("if"   )) { tok.type = T_IF;                           continue; }
+						} break;
+
+						case 'e': {
+							if      (cmp("elif" )) { tok.type = T_ELIF;                         continue; }
+							else if (cmp("else" )) { tok.type = T_ELSE;                         continue; }
+						} break;
+
+						case 'f': {
+							if      (cmp("for"  )) { tok.type = T_FOR;                          continue; }
+							else if (cmp("false")) { tok.type = T_LITERAL; tok.val = { false }; continue; }
+						} break;
+
+						case 't': {
+							if      (cmp("true" )) { tok.type = T_LITERAL; tok.val = { true  }; continue; }
+						} break;
+
+						case 'n': {
+							if      (cmp("null" )) { tok.type = T_LITERAL; tok.val = {       }; continue; }
+						} break;
+					}
+					tok.type = T_IDENTIFIER;
+					continue;
+				#else
+					static std::unordered_map<strview, TokenType> map = {
+						{ "if"   , T_IF      },
+						{ "elif" , T_ELIF    },
+						{ "else" , T_ELSE    },
+						{ "for"  , T_FOR     },
+						{ "true" , T_LITERAL },
+						{ "false", T_LITERAL },
+						{ "null" , T_LITERAL },
+					};
+
+					auto text = tok.source.text();
+					auto ret = map.find(text);
+					if (ret == map.end()) {
+						tok.type = T_IDENTIFIER;
+					} else {
+						tok.type = ret->second;
+						tok.val = {};
+					}
+					continue;
+				#endif
 				}
 				throw MyException{"unknown token", {start, start+1}};
 			}

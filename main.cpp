@@ -43,7 +43,7 @@ int main (int argc, const char** argv) {
 			}
 		}
 
-		//dbg_print(ast.get());
+		dbg_print(ast.get());
 
 		printf("--------------------\n");
 

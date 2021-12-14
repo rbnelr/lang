@@ -96,6 +96,9 @@ enum TokenType {
 	// starts with  '_' or [a-Z]  and then any number of  '_' or [a-Z] or [0-9]
 	T_IDENTIFIER,
 
+	T_IF,
+	T_ELIF,
+	T_ELSE,
 	T_FOR,
 };
 inline constexpr const char* TokenType_str[] = {
@@ -138,6 +141,9 @@ inline constexpr const char* TokenType_str[] = {
 	
 	"T_IDENTIFIER",
 
+	"T_IF",
+	"T_ELIF",
+	"T_ELSE",
 	"T_FOR",
 };
 inline constexpr const char* TokenType_char[] = {
@@ -180,6 +186,9 @@ inline constexpr const char* TokenType_char[] = {
 
 	"identifier",
 
+	"if",
+	"elif",
+	"else",
 	"for",
 };
 
@@ -404,7 +413,10 @@ std::vector<Token> tokenize (const char* src, IdentiferIDs& ident_ids) {
 					tok.source = { start, cur };
 
 					auto text = tok.source.text();
-					if      (text == "for"  )   tok.type = T_FOR;
+					if      (text == "if"   )   tok.type = T_IF;
+					else if (text == "elif" )   tok.type = T_ELIF;
+					else if (text == "else" )   tok.type = T_ELSE;
+					else if (text == "for"  )   tok.type = T_FOR;
 					else if (text == "null" ) { tok.type = T_LITERAL; tok.val = {}; }
 					else if (text == "true" ) { tok.type = T_LITERAL; tok.val = { true };  }
 					else if (text == "false") { tok.type = T_LITERAL; tok.val = { false }; }

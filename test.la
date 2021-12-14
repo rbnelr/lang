@@ -101,6 +101,41 @@ printf("5 >= 5            : {}\n", 5 >= 5         );
 printf("5 > 5             : {}\n", 5 > 5          );
 printf("2>3 == 3>4        : {}\n", 2>3 == 3>4     );
 
+printf("---------------\n");
+
+{ //// ifs
+	a := true;
+	if a {
+		printf("True!\n");
+	} else {
+		printf("False!\n");
+	}
+
+	a = !a;
+	if a {
+		printf("Now it's True!\n");
+	} else {
+		printf("Now it's False!\n");
+	}
+
+	b := -2;
+
+	if b > 0 {
+		printf("b is bigger than 0!\n");
+	}
+	elif b == 0 {
+		printf("b is equal to 0!\n");
+	}
+	else /* b < 0 */ {
+		printf("b is smaller than 0!\n");
+		if a {
+			printf("Still True!\n");
+		} else {
+			printf("Still False!\n");
+		}
+	}
+}
+
 //// Loops
 //for 10  error: '{' expected
 

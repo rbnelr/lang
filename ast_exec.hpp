@@ -380,6 +380,22 @@ struct Interpreter {
 
 				return NULLVAL;
 			}
+			case A_IF: {
+				AST* cond       = node     ->child.get();
+				AST* true_body  = cond     ->next .get();
+				AST* false_body = true_body->next .get();
+				assert(!false_body->next);
+
+				Value condval = execute(cond, depth+1);
+				if (condval.type != BOOL)
+					throw MyException{"loop condition must be bool", cond->source};
+				
+				AST* body = condval.u.b ? true_body : false_body;
+				if (body)
+					execute(body, depth+1);
+
+				return NULLVAL;
+			}
 		}
 		assert(false);
 		_UNREACHABLE;

@@ -35,7 +35,7 @@ void my_printf (Value& format, Value const* args, size_t argc) {
 // TODO: make this more dynamic
 // function names should be turned into IDs before tokenization
 // then put into a hashmap along with the implementation func ptr and a types list to match arguments against
-Value call_function (strview const& name, Value* args, size_t argc, AST* call) {
+Value call_function (strview const& ident, Value* args, size_t argc, AST* call) {
 	auto match = [] (Value* args, size_t argc, std::initializer_list<Type> types, bool follow_vararg=false) {
 		if (follow_vararg) {
 			if (argc < types.size()) return false;
@@ -48,23 +48,23 @@ Value call_function (strview const& name, Value* args, size_t argc, AST* call) {
 		return true;
 	};
 
-	if (name == "print") {
+	if (ident == "print") {
 		if (argc != 1) goto mismatch;
 		print_val(args[0]);
 	}
-	else if (name == "println") {
+	else if (ident == "println") {
 		if (argc != 1) goto mismatch;
 		println(args[0]);
 	}
-	else if (name == "printf") {
+	else if (ident == "printf") {
 		if (!match(args, argc, { STR }, true)) goto mismatch;
 		my_printf(args[0], args+1, argc-1);
 	}
-	else if (name == "timer") {
+	else if (ident == "timer") {
 		if (argc != 0) goto mismatch;
 		return (int64_t)get_timestamp();
 	}
-	else if (name == "timer_end") {
+	else if (ident == "timer_end") {
 		if (!match(args, argc, { INT })) goto mismatch;
 		auto end = (int64_t)get_timestamp();
 		return (double)(end - args[0].u.i) / (double)timestamp_freq;
@@ -79,70 +79,31 @@ mismatch:
 	throw MyException{"no matching function overload", call->source};
 }
 
-struct ScopedIdentifer {
-	int        scope;
-	ident_id_t id;
-};
+struct Stack {
+	std::vector<Value>  values;
+	std::vector<size_t> frames;
 
-_FORCEINLINE bool operator== (ScopedIdentifer const& l, ScopedIdentifer const& r) {
-	return l.scope == r.scope && l.id == r.id;
-}
-template<> struct std::hash<ScopedIdentifer> {
-	_FORCEINLINE std::size_t operator()(ScopedIdentifer const& i) const noexcept {
-		return MurmurHash64A(&i.id, sizeof(i.id), (uint64_t)i.scope);
+	Value& push (AST* var) {
+		assert(var->var.addr == values.size());
+		return values.emplace_back();
 	}
-};
-
-struct ScopedVars {
-	// scope_idx, name -> Value
-	std::unordered_map<ScopedIdentifer, Value>  vars_map;
-	// list of all variable names in order of declaration (of all scopes)
-	std::vector<ident_id_t>                     vars_stack;
-	// index of first variable of each scope in <vars_stack>
-	std::vector<size_t>                         scopes;
-
-	Value& declare (AST* var) {
-		assert(!scopes.empty());
-		int scope_idx = (int)scopes.size()-1;
-		auto nameid = var->var.identid;
-		
-		auto res = vars_map.try_emplace({ scope_idx, nameid });
-		if (!res.second)
-			throw MyException{"variable already declared in this scope", var->source};
-		
-		vars_stack.emplace_back(nameid);
-
-		return res.first->second;
-	}
-
 	Value& get (AST* var) {
-		assert(!scopes.empty());
-		int scope_idx = (int)(scopes.size()-1);
-		auto nameid = var->var.identid;
+		assert(!frames.empty());
+		//size_t frame_ptr = frames.back();
 
-		for (int i=scope_idx; i>=0; --i) {
-			auto it = vars_map.find({ i, nameid });
-			if (it != vars_map.end())
-				return it->second;
-		}
-		throw MyException{"unknown variable", var->source};
+		assert(var->var.addr < values.size());
+		return values[var->var.addr]; 
 	}
 
-	void open_scope () {
-		scopes.emplace_back( vars_stack.size() );
+	void begin_scope () {
+		frames.emplace_back( values.size() );
 	}
-	void close_scope () {
-		assert(!scopes.empty());
+	void end_scope () {
+		assert(!frames.empty());
 
-		int scope_idx = (int)scopes.size()-1;
-		size_t scope_frame = scopes[scope_idx];
-
-		for (size_t i=scope_frame; i<vars_stack.size(); ++i) {
-			vars_map.erase({ scope_idx, vars_stack[i] });
-		}
-
-		vars_stack.resize(scope_frame);
-		scopes.pop_back();
+		int frame_idx = (int)frames.size()-1;
+		values.resize(frames[frame_idx]);
+		frames.pop_back();
 	}
 };
 
@@ -286,36 +247,33 @@ struct Interpreter {
 		_UNREACHABLE;
 	}
 
-	ScopedVars vars;
+	Stack stack;
 
 	Value execute (AST* node, int depth=0) {
 		switch (node->type) {
 			case A_BLOCK: {
-				vars.open_scope();
+				stack.begin_scope();
 
 				for (auto* n=node->child.get(); n != nullptr; n = n->next.get()) {
 					execute(n, depth+1);
 				}
 
-				vars.close_scope();
+				stack.end_scope();
 				return NULLVAL;
 			}
 
-			// values
 			case A_LITERAL: {
 				assert(!node->child);
 				return node->literal.value.copy();
 			}
-			
 			case A_VAR_DECL: {
 				assert(!node->child);
-				vars.declare(node);
+				stack.push(node);
 				return NULLVAL;
 			}
-
 			case A_VAR: {
 				assert(!node->child);
-				return vars.get(node).copy();
+				return stack.get(node).copy();
 			}
 			
 			case A_ASSIGN:
@@ -329,9 +287,9 @@ struct Interpreter {
 
 				assert(!lhs->child);
 				if (lhs->type == A_VAR_DECL)
-					vars.declare(lhs);
+					stack.push(lhs);
 
-				Value& val = vars.get(lhs);
+				Value& val = stack.get(lhs);
 
 				if (node->type != A_ASSIGN) {
 					tmp.assign( binop(val, tmp, assignop2binop(node->type), node) ); // execute the += as +
@@ -366,7 +324,7 @@ struct Interpreter {
 					if (operand->type != A_VAR)
 						throw MyException{"post inc/decrement can only operate on variables", node->source};
 
-					Value& operand_val = vars.get(operand);
+					Value& operand_val = stack.get(operand);
 					return unop(operand_val, node);
 				}
 				else {
@@ -390,7 +348,7 @@ struct Interpreter {
 					_ASSUME(val.type == NULL);
 				}
 
-				return call_function(node->source.text(), args.data(), args.size(), node);
+				return call_function(node->call.ident, args.data(), args.size(), node);
 			}
 
 			// flow control
@@ -402,7 +360,7 @@ struct Interpreter {
 				assert(!body->next);
 
 				// need a scope for the variables declared in <begin> and used in <cond> and <end>
-				vars.open_scope();
+				stack.begin_scope();
 
 				execute(begin, depth+1);
 
@@ -418,7 +376,7 @@ struct Interpreter {
 					execute(end, depth+1);
 				}
 
-				vars.close_scope();
+				stack.end_scope();
 
 				return NULLVAL;
 			}

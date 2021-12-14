@@ -146,8 +146,8 @@
     <ClInclude Include="..\..\common.hpp" />
     <ClInclude Include="..\..\errors.hpp" />
     <ClInclude Include="..\..\ast_exec.hpp" />
-    <ClInclude Include="..\..\ident_ids.hpp" />
     <ClInclude Include="..\..\line_map.hpp" />
+    <ClInclude Include="..\..\optimize.hpp" />
     <ClInclude Include="..\..\parser.hpp" />
     <ClInclude Include="..\..\tokenizer.hpp" />
     <ClInclude Include="..\..\types.hpp" />

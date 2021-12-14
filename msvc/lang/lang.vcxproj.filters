@@ -59,7 +59,7 @@
     <ClInclude Include="..\..\util\smhasher\MurmurHash3.h">
       <Filter>util\smhasher</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\ident_ids.hpp" />
+    <ClInclude Include="..\..\optimize.hpp" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="util">

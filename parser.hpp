@@ -199,12 +199,13 @@ struct AST {
 		} literal;
 
 		struct {
-			ident_id_t identid;
+			strview   ident;
+			size_t    addr;
 		} var;
 
 		struct {
-			size_t     argc;
-			ident_id_t identid;
+			strview   ident;
+			size_t    argc;
 		} call;
 	};
 
@@ -213,17 +214,12 @@ struct AST {
 		if (type == A_LITERAL)
 			literal.value.~Value();
 	}
-
-	void set_text_end_after (Token& endtok) {
-		source.end = endtok.source.end;
-	}
 };
 
-ast_ptr ast_alloc (ASTType type, Token& tok) {
+ast_ptr ast_alloc (ASTType type) {
 	ast_ptr ret = std::make_unique<AST>();
 	memset(ret.get(), 0, sizeof(AST)); // 0 is a valid empty state for all members
-	ret->type   = type;
-	ret->source = tok.source;
+	ret->type = type;
 	return ret;
 }
 
@@ -259,12 +255,14 @@ struct Parser {
 			case T_IDENTIFIER: {
 				// func call
 				if (tok[1].type == T_PAREN_OPEN) {
-					ast_ptr call = ast_alloc(A_CALL, *tok);
+
+					ast_ptr call = ast_alloc(A_CALL);
+					call->source.start = tok->source.start;
+					call->call.ident = tok->source.text();
+
+					tok+=2;
 
 					call->call.argc = 0;
-					call->call.identid = tok->identid;
-
-					tok+=2; // T_PAREN_OPEN
 
 					ast_ptr* pprev = &call->child;
 					while (tok->type != T_PAREN_CLOSE) {
@@ -281,14 +279,15 @@ struct Parser {
 						}
 					}
 
-					//call->set_text_end_after(*tok++);
+					call->source.end = tok->source.end;
 					tok++;
 					return call;
 				}
 				// variable
 				else {
-					ast_ptr var = ast_alloc(A_VAR, *tok);
-					var->var.identid = tok->identid;
+					ast_ptr var = ast_alloc(A_VAR);
+					var->source = tok->source;
+					var->var.ident = tok->source.text();
 
 					tok++;
 					return var;
@@ -296,7 +295,8 @@ struct Parser {
 			}
 
 			case T_LITERAL: {
-				ast_ptr lit = ast_alloc(A_LITERAL, *tok);
+				ast_ptr lit = ast_alloc(A_LITERAL);
+				lit->source = tok->source;
 				lit->literal.value = std::move(tok->val);
 				tok++;
 				return lit;
@@ -318,7 +318,8 @@ struct Parser {
 		ast_ptr lhs;
 
 		if (is_unary_prefix_op(tok->type)) {
-			ast_ptr unary_op = ast_alloc(tok2unop(tok->type), *tok);
+			ast_ptr unary_op = ast_alloc(tok2unop(tok->type));
+			unary_op->source = tok->source;
 			unsigned prec = un_prec(tok->type);
 			tok++;
 
@@ -336,7 +337,9 @@ struct Parser {
 			if (prec < min_prec)
 				return lhs;
 
-			ast_ptr post_op = ast_alloc(tok2unop(tok->type), *tok);
+			ast_ptr post_op = ast_alloc(tok2unop(tok->type));
+			post_op->source = tok->source;
+
 			tok++;
 
 			post_op->child = std::move(lhs);
@@ -350,7 +353,8 @@ struct Parser {
 			if (prec < min_prec)
 				break;
 
-			ast_ptr op = ast_alloc(tok2binop(tok->type), *tok);
+			ast_ptr op = ast_alloc(tok2binop(tok->type));
+			op->source = tok->source;
 			tok++;
 
 			ast_ptr rhs = expression(assoc == LEFT_ASSOC ? prec+1 : prec);
@@ -368,10 +372,12 @@ struct Parser {
 
 		// lhs declaration in potential assignment
 		if (tok[0].type == T_IDENTIFIER && tok[1].type == T_COLON) {
-			lhs = ast_alloc(A_VAR_DECL, *tok);
-			lhs->var.identid = tok->identid;
+			lhs = ast_alloc(A_VAR_DECL);
+			lhs->source.start = tok[0].source.start;
+			lhs->source.end   = tok[1].source.end;
+			lhs->var.ident = tok[0].source.text();
 
-			tok += 2;
+			tok+=2;
 		}
 		// lhs expression in potential assignment
 		else {
@@ -383,7 +389,8 @@ struct Parser {
 			if (lhs->type == A_VAR_DECL && tok->type != T_ASSIGN)
 				throw_error("syntax error, cannot modify variable during declaration", *tok);
 
-			ast_ptr assign = ast_alloc(tok2assign(tok->type), *tok);
+			ast_ptr assign = ast_alloc(tok2assign(tok->type));
+			assign->source = tok->source;
 			tok++;
 
 			ast_ptr rhs = expression(0);
@@ -413,7 +420,8 @@ struct Parser {
 
 			// for loop
 			case T_FOR: {
-				ast_ptr loop = ast_alloc(A_LOOP, *tok++);
+				Token* loop_tok = tok++;
+				ast_ptr loop = ast_alloc(A_LOOP);
 
 				ast_ptr start = assign_expr();
 				eat_semicolon();
@@ -423,6 +431,9 @@ struct Parser {
 
 				ast_ptr step  = assign_expr();
 
+				loop->source.start = loop_tok->source.start;
+				loop->source.end   = tok[-1].source.end;
+
 				ast_ptr body  = block();
 
 				step ->next = std::move(body);
@@ -430,8 +441,6 @@ struct Parser {
 				start->next = std::move(cond);
 
 				loop ->child = std::move(start);
-
-				loop->set_text_end_after(tok[-1]); // for - }
 				return loop;
 			} break;
 
@@ -453,9 +462,12 @@ struct Parser {
 		if (tok->type != T_BLOCK_OPEN)
 			throw_error("syntax error, '{' expected", *tok);
 
-		ast_ptr block = ast_alloc(A_BLOCK, *tok++);
-		ast_ptr* prev = &block->child;
+		ast_ptr block = ast_alloc(A_BLOCK);
+		block->source = tok->source;
 
+		tok++;
+
+		ast_ptr* prev = &block->child;
 		while (tok->type != T_BLOCK_CLOSE) {
 			*prev = statement();
 			prev = &(*prev)->next;
@@ -464,17 +476,16 @@ struct Parser {
 		//if (tok->type != T_BLOCK_CLOSE)
 		//	throw_error("syntax error, '}' expected", *tok);
 		tok++;
-
-		block->set_text_end_after(tok[-1]);
 		return block;
 	}
 
 	ast_ptr file () {
 		ZoneScoped;
 
-		ast_ptr block = ast_alloc(A_BLOCK, tok[0]);
-		ast_ptr* prev = &block->child;
+		ast_ptr block = ast_alloc(A_BLOCK);
+		block->source.start = tok[0].source.start;
 
+		ast_ptr* prev = &block->child;
 		while (tok->type != T_EOF) {
 			ast_ptr expr = statement();
 
@@ -484,10 +495,10 @@ struct Parser {
 			}
 		}
 
-		//if (tok->type != T_EOF)
-		//	throw_error("syntax error, end of input expected", *tok);
+		if (tok->type != T_EOF)
+			throw_error("syntax error, end of input expected", *tok);
 
-		block->set_text_end_after(*tok);
+		block->source.end = tok->source.end;
 		return block;
 	}
 };

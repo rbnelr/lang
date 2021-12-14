@@ -2,6 +2,7 @@
 #include "errors.hpp"
 #include "tokenizer.hpp"
 #include "parser.hpp"
+#include "optimize.hpp"
 #include "ast_exec.hpp"
 
 int main (int argc, const char** argv) {
@@ -34,6 +35,12 @@ int main (int argc, const char** argv) {
 			Parser parser;
 			parser.tok = &tokens[0];
 			ast = parser.file();
+
+			{
+				ZoneScopedN("map_vars");
+				OptimizePasses opt;
+				opt.map_vars(ast.get());
+			}
 		}
 
 		//dbg_print(ast.get());

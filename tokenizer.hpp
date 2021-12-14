@@ -5,76 +5,54 @@
 #include "line_map.hpp"
 #include "ident_ids.hpp"
 
-namespace parse {
-	//// Check char class
+constexpr inline bool is_decimal_c (char c) {
+	return c >= '0' && c <= '9';
+}
+constexpr inline bool is_hex_c (char c) {
+	return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f');
+}
 
-	constexpr inline bool is_decimal_c (char c) {
-		return c >= '0' && c <= '9';
-	}
-	constexpr inline bool is_hex_c (char c) {
-		return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f');
-	}
-	constexpr inline bool is_alpha_c (char c) {
-		return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
-	}
-	constexpr inline bool is_ident_start_c (char c) {
-		return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
-	}
-	constexpr inline bool is_ident_c (char c) {
-		return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || (c >= '0' && c <= '9');
-	}
-	constexpr inline bool is_whitespace_c (char c) {
-		return c == ' ' || c == '\t';
-	}
+constexpr inline bool is_ident_start_c (char c) {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+}
+constexpr inline bool is_ident_c (char c) {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || (c >= '0' && c <= '9');
+}
+constexpr inline bool is_whitespace_c (char c) {
+	return c == ' ' || c == '\t';
+}
 
-	inline bool is_newline (char const* c) {
-		return *c == '\n' || *c == '\r';
-	}
+// parse 1_000_000 as 1000000 for better readability
+// (user can put _ anywhere in int after intial digit
+inline bool parse_integer (const char*& c, int64_t* out_int) {
+	const char* cur = c;
+	if (*cur < '0' || *cur > '9')
+		return false;
 
-	// skips "\n" or "\r" or "\r\n" or "\n\r"
-	inline bool newline (char const*& c) {
-		if (!is_newline(c))
-			return false;
-
-		char ch = *c;
-		c++;
-
-		// "\n" "\r" "\n\r" "\r\n" each count as one newline whilte "\n\n" "\r\r" count as two
-		// ie. this code should even handle files with inconsistent newlines somewhat reasonably
-		if (is_newline(c) && ch != *c)
-			c++;
-		return true;
-	}
-
-	// skips "-012345"
-	// returns int in <out_int>
-	inline bool parse_integer (const char*& c, int64_t* out_int) {
-		const char* cur = c;
-		if (*cur < '0' || *cur > '9')
-			return false;
-
-		int64_t out = 0;
-		while (*cur >= '0' && *cur <= '9') {
+	int64_t out = 0;
+	while ((*cur >= '0' && *cur <= '9') || *cur == '_') {
+		if (*cur != '_') {
 			out *= 10;
-			out += *cur++ - '0';
+			out += *cur - '0';
 		}
+		cur++;
+	}
 
-		*out_int = (int)out;
+	*out_int = (int)out;
+	c = cur;
+	return true;
+}
+
+inline bool parse_double (const char*& c, double* out) {
+	char const* cur = c;
+	double val = strtod(c, (char**)&cur); // need to cast away const for strtod api
+
+	if (cur > c) {
+		*out = val;
 		c = cur;
 		return true;
 	}
-
-	inline bool parse_double (const char*& c, double* out) {
-		char const* cur = c;
-		double val = strtod(c, (char**)&cur); // need to cast away const for strtod api
-
-		if (cur > c) {
-			*out = val;
-			c = cur;
-			return true;
-		}
-		return false; // parsing error
-	}
+	return false; // parsing error
 }
 
 enum TokenType {
@@ -210,7 +188,6 @@ struct Token {
 	source_range source;
 
 	Value        val;
-	ident_id_t   identid;
 };
 
 Value parse_escaped_string (const char* start, const char* end) {
@@ -252,8 +229,6 @@ std::vector<Token> tokenize (const char* src, IdentiferIDs& ident_ids) {
 
 	const char* cur = src;
 	const char* cur_line = src;
-
-	using namespace parse;
 
 	for (;;) {
 		// skip whitespace
@@ -435,7 +410,6 @@ std::vector<Token> tokenize (const char* src, IdentiferIDs& ident_ids) {
 					else if (text == "false") { tok.type = T_LITERAL; tok.val = { false }; }
 					else {
 						tok.type = T_IDENTIFIER;
-						tok.identid = ident_ids.get_id(tok.source.text());
 					}
 					continue;
 				}

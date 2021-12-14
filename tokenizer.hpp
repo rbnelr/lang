@@ -84,12 +84,6 @@ enum TokenType {
 	T_MUL,           // *
 	T_DIV,           // /
 
-	T_ADDEQ,         // +=
-	T_SUBEQ,         // -=
-	T_MULEQ,         // *=
-	T_DIVEQ,         // /=
-	T_ASSIGN,        // =
-
 	T_LESS,          // <
 	T_LESSEQ,        // <=
 	T_GREATER,       // >
@@ -101,6 +95,13 @@ enum TokenType {
 	T_INC,           // x++  postincrement
 	T_DEC,           // x--  postdecrement
 
+	T_ASSIGN,        // =
+	T_ADDEQ,         // +=
+	T_SUBEQ,         // -=
+	T_MULEQ,         // *=
+	T_DIVEQ,         // /=
+
+	T_COLON,         // :
 	T_SEMICOLON,     // ;
 	T_COMMA,         // ,
 
@@ -126,12 +127,6 @@ inline constexpr const char* TokenType_str[] = {
 	"T_MUL",
 	"T_DIV",
 
-	"T_ADDEQ",
-	"T_SUBEQ",
-	"T_MULEQ",
-	"T_DIVEQ",
-	"T_ASSIGN",
-
 	"T_LESS",
 	"T_LESSEQ",
 	"T_GREATER",
@@ -143,14 +138,21 @@ inline constexpr const char* TokenType_str[] = {
 	"T_INC",
 	"T_DEC",
 
-	"T_SEMICOLON",  
-	"T_COMMA",      
+	"T_ASSIGN",
+	"T_ADDEQ",
+	"T_SUBEQ",
+	"T_MULEQ",
+	"T_DIVEQ",
 
-	"T_PAREN_OPEN", 
+	"T_COLON",
+	"T_SEMICOLON",
+	"T_COMMA",
+
+	"T_PAREN_OPEN",
 	"T_PAREN_CLOSE",
-	"T_BLOCK_OPEN", 
+	"T_BLOCK_OPEN",
 	"T_BLOCK_CLOSE",
-	"T_INDEX_OPEN", 
+	"T_INDEX_OPEN",
 	"T_INDEX_CLOSE",
 	
 	"T_LITERAL",
@@ -167,12 +169,6 @@ inline constexpr const char* TokenType_char[] = {
 	"*",
 	"/",
 
-	"+=",
-	"-=",
-	"*=",
-	"/=",
-	"=",
-
 	"<",
 	"<=",
 	">",
@@ -184,6 +180,13 @@ inline constexpr const char* TokenType_char[] = {
 	"++",
 	"--",
 
+	"=",
+	"+=",
+	"-=",
+	"*=",
+	"/=",
+
+	":",
 	";",
 	",",
 	
@@ -347,6 +350,7 @@ std::vector<Token> tokenize (const char* src) {
 				else {             tok.type = T_EQUALS;     cur++; }
 				break;
 
+			case ':': tok.type = T_COLON;         break;
 			case ';': tok.type = T_SEMICOLON;     break;
 			case ',': tok.type = T_COMMA;         break;
 
@@ -402,14 +406,14 @@ std::vector<Token> tokenize (const char* src) {
 						cur += 2;
 					else if (*cur == '"')
 						break;
-					*cur++;
+					cur++;
 				}
 
 				char const* strend = cur++; // skip '"'
 
 				tok.type = T_LITERAL;
 				tok.source = { start, cur };
-				tok.val  = parse_escaped_string(strstart, strend); // TODO: scanning this string twice, does this need to happen?
+				tok.val = parse_escaped_string(strstart, strend); // TODO: scanning this string twice, does this need to happen?
 				continue;
 			}
 

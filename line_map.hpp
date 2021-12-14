@@ -79,7 +79,7 @@ struct SourceLines {
 			if (loc < line_start)
 				hi = lineno;
 			// loc before line start
-			else if (loc > line_end)
+			else if (loc >= line_end)
 				lo = lineno+1;
 			// line found
 			else

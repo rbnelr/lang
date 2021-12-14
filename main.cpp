@@ -4,14 +4,14 @@
 #include "parser.hpp"
 #include "ast_exec.hpp"
 
-int main (char** argv, int argc) {
+int main (int argc, const char** argv) {
 	enable_console_ansi_color_codes();
 
 #if TRACY_ENABLE
 	for (int profi=0; profi<3; ++profi) {
 #endif
 
-	std::string filename = "test2.la";
+	std::string filename = "test.la";
 	std::string source;
 	{
 		ZoneScopedN("load_text_file");
@@ -35,7 +35,7 @@ int main (char** argv, int argc) {
 			ast = parser.file();
 		}
 
-		dbg_print(ast.get());
+		//dbg_print(ast.get());
 
 		printf("--------------------\n");
 

@@ -7,6 +7,10 @@
 inline constexpr bool is_binary_op (TokenType tok) {
 	return tok >= T_ADD && tok <= T_NOT_EQUALS;
 }
+inline constexpr bool is_binary_assignemnt_op (TokenType tok) {
+	return tok >= T_ASSIGN && tok <= T_DIVEQ;
+}
+
 inline constexpr bool is_unary_op (TokenType tok) {
 	return (tok >= T_ADD && tok <= T_SUB) || (tok >= T_NOT && tok <= T_DEC);
 }
@@ -22,12 +26,6 @@ inline constexpr uint8_t BINARY_OP_PRECEDENCE[] = {
 	2, // T_SUB
 	4, // T_MUL
 	4, // T_DIV
-
-	0, // T_ADDEQ
-	0, // T_SUBEQ
-	0, // T_MULEQ
-	0, // T_DIVEQ
-	0, // T_ASSIGN
 
 	1, // T_LESS
 	1, // T_LESSEQ
@@ -45,12 +43,6 @@ inline constexpr uint8_t UNARY_OP_PRECEDENCE[] = {
 	3,   // T_SUB
 	255, // T_MUL
 	255, // T_DIV
-
-	255, // T_ADDEQ
-	255, // T_SUBEQ
-	255, // T_MULEQ
-	255, // T_DIVEQ
-	255, // T_ASSIGN
 
 	255, // T_LESS
 	255, // T_LESSEQ
@@ -73,12 +65,6 @@ inline constexpr Associativity BINARY_OP_ASSOCIATIVITY[] = { // 0 = left (left t
 	LEFT_ASSOC, // T_SUB
 	LEFT_ASSOC, // T_MUL
 	LEFT_ASSOC, // T_DIV
-
-	RIGHT_ASSOC, // T_ADDEQ
-	RIGHT_ASSOC, // T_SUBEQ
-	RIGHT_ASSOC, // T_MULEQ
-	RIGHT_ASSOC, // T_DIVEQ
-	RIGHT_ASSOC, // T_ASSIGN
 
 	LEFT_ASSOC, // T_LESS
 	LEFT_ASSOC, // T_LESSEQ
@@ -105,13 +91,13 @@ inline unsigned bin_assoc (TokenType tok) {
 	return (bool)BINARY_OP_ASSOCIATIVITY[tok - T_ADD];
 }
 
-
 enum ASTType {
 	A_BLOCK,
 
 	// values
-	A_CONSTANT,
-	A_VARIABLE,
+	A_LITERAL,
+	A_VAR,
+	A_VAR_DECL,
 
 	A_CALL,
 
@@ -123,12 +109,6 @@ enum ASTType {
 	A_SUB,
 	A_MUL,
 	A_DIV,
-
-	A_ADDEQ,
-	A_SUBEQ,
-	A_MULEQ,
-	A_DIVEQ,
-	A_ASSIGNMENT,
 
 	A_LESS,
 	A_LESSEQ,
@@ -142,12 +122,19 @@ enum ASTType {
 	A_NOT,
 	A_INC,
 	A_DEC,
+
+	A_ASSIGN,
+	A_ADDEQ,
+	A_SUBEQ,
+	A_MULEQ,
+	A_DIVEQ,
 };
 inline const char* ASTType_str[] = {
 	"A_BLOCK",
 
-	"A_CONSTANT",
-	"A_VARIABLE",
+	"A_LITERAL",
+	"A_VAR",
+	"A_VAR_DECL",
 
 	"A_CALL",
 
@@ -157,12 +144,6 @@ inline const char* ASTType_str[] = {
 	"A_SUB",
 	"A_MUL",
 	"A_DIV",
-
-	"A_ADDEQ",
-	"A_SUBEQ",
-	"A_MULEQ",
-	"A_DIVEQ",
-	"A_ASSIGNMENT",
 
 	"A_LESS",
 	"A_LESSEQ",
@@ -175,16 +156,30 @@ inline const char* ASTType_str[] = {
 	"A_NOT",
 	"A_INC",
 	"A_DEC",
+
+	"A_ASSIGN",
+	"A_ADDEQ",
+	"A_SUBEQ",
+	"A_MULEQ",
+	"A_DIVEQ",
 };
 
-inline constexpr ASTType binop_from_TokenType (TokenType tok) {
+inline constexpr ASTType tok2binop (TokenType tok) {
 	return (ASTType)( tok + (A_ADD - T_ADD) );
 }
-inline constexpr ASTType unop_from_TokenType (TokenType tok) {
+inline constexpr ASTType tok2unop (TokenType tok) {
 	assert(tok != T_ADD);
 	if (tok == T_SUB) return A_NEGATE;
 
 	return (ASTType)( tok + (A_NOT - T_NOT) );
+}
+inline constexpr ASTType tok2assign (TokenType tok) {
+	return (ASTType)( tok + (A_ASSIGN - T_ASSIGN) );
+}
+
+inline constexpr ASTType assignop2binop (ASTType type) {
+	assert(type >= A_ADDEQ && type <= A_DIVEQ);
+	return (ASTType)( type + (A_ADD - A_ADDEQ) );
 }
 
 struct AST;
@@ -201,7 +196,7 @@ struct AST {
 	union {
 		struct {
 			Value value; // for constants
-		} constant;
+		} literal;
 
 		struct {
 			size_t argc;
@@ -210,8 +205,8 @@ struct AST {
 
 	AST () {}
 	~AST () {
-		if (type == A_CONSTANT)
-			constant.value.~Value();
+		if (type == A_LITERAL)
+			literal.value.~Value();
 	}
 
 	void set_text_end_after (Token& endtok) {
@@ -285,13 +280,13 @@ struct Parser {
 				}
 				// variable
 				else {
-					return ast_alloc(A_VARIABLE, *tok++);
+					return ast_alloc(A_VAR, *tok++);
 				}
 			}
 
 			case T_LITERAL: {
-				ast_ptr lit = ast_alloc(A_CONSTANT, *tok);
-				lit->constant.value = std::move(tok->val);
+				ast_ptr lit = ast_alloc(A_LITERAL, *tok);
+				lit->literal.value = std::move(tok->val);
 				tok++;
 				return lit;
 			}
@@ -312,7 +307,7 @@ struct Parser {
 		ast_ptr lhs;
 
 		if (is_unary_prefix_op(tok->type)) {
-			ast_ptr unary_op = ast_alloc(unop_from_TokenType(tok->type), *tok);
+			ast_ptr unary_op = ast_alloc(tok2unop(tok->type), *tok);
 			unsigned prec = un_prec(tok->type);
 			tok++;
 
@@ -330,7 +325,7 @@ struct Parser {
 			if (prec < min_prec)
 				return lhs;
 
-			ast_ptr post_op = ast_alloc(unop_from_TokenType(tok->type), *tok);
+			ast_ptr post_op = ast_alloc(tok2unop(tok->type), *tok);
 			tok++;
 
 			post_op->child = std::move(lhs);
@@ -344,7 +339,7 @@ struct Parser {
 			if (prec < min_prec)
 				break;
 
-			ast_ptr op = ast_alloc(binop_from_TokenType(tok->type), *tok);
+			ast_ptr op = ast_alloc(tok2binop(tok->type), *tok);
 			tok++;
 
 			ast_ptr rhs = expression(assoc == LEFT_ASSOC ? prec+1 : prec);
@@ -357,25 +352,35 @@ struct Parser {
 		return lhs;
 	}
 
-	ast_ptr expression_or_assignment () { // without semicolon
-		return expression(0);
+	ast_ptr assign_expr () {
+		ast_ptr lhs;
 
-		/*
-		// expression (not being assigned)
-		if (tok->type != T_ASSIGN) {
-			return expr;
+		// lhs declaration in potential assignment
+		if (tok[0].type == T_IDENTIFIER && tok[1].type == T_COLON) {
+			lhs = ast_alloc(A_VAR_DECL, *tok++);
+			tok++;
 		}
-		// assignment
+		// lhs expression in potential assignment
 		else {
-			ast_ptr assign = ast_alloc(A_ASSIGNMENT, *tok++);
+			lhs = expression(0);
+		}
+
+		// lhs = rhs   or  lhs += rhs  etc.
+		if (is_binary_assignemnt_op(tok->type)) {
+			if (lhs->type == A_VAR_DECL && tok->type != T_ASSIGN)
+				throw_error("syntax error, cannot modify variable during declaration", *tok);
+
+			ast_ptr assign = ast_alloc(tok2assign(tok->type), *tok);
+			tok++;
+
 			ast_ptr rhs = expression(0);
 
-			expr->next    = std::move(rhs);
-			assign->child = std::move(expr);
-
-			return assign;
+			lhs->next = std::move(rhs);
+			assign->child = std::move(lhs);
+			lhs = std::move(assign);
 		}
-		*/
+
+		return lhs;
 	}
 
 	ast_ptr statement () {
@@ -397,13 +402,13 @@ struct Parser {
 			case T_FOR: {
 				ast_ptr loop = ast_alloc(A_LOOP, *tok++);
 
-				ast_ptr start = expression_or_assignment();
+				ast_ptr start = assign_expr();
 				eat_semicolon();
 
-				ast_ptr cond  = expression(0);
+				ast_ptr cond  = assign_expr();
 				eat_semicolon();
 
-				ast_ptr step  = expression_or_assignment();
+				ast_ptr step  = assign_expr();
 
 				ast_ptr body  = block();
 
@@ -411,7 +416,7 @@ struct Parser {
 				cond ->next = std::move(step);
 				start->next = std::move(cond);
 
-				loop ->child   = std::move(start);
+				loop ->child = std::move(start);
 
 				loop->set_text_end_after(tok[-1]); // for - }
 				return loop;
@@ -424,10 +429,9 @@ struct Parser {
 			}
 
 			default: {
-				ast_ptr statement = expression_or_assignment();
+				ast_ptr statement = assign_expr();
 				eat_semicolon();
 				return statement;
-
 			}
 		}
 	}
@@ -483,19 +487,19 @@ void dbg_print (AST* node, int depth=0) {
 	indent(depth);
 	printf("%s ", ASTType_str[node->type]);
 
-	if (node->type == A_CONSTANT) {
-		print_val(node->constant.value);
+	if (node->type == A_LITERAL) {
+		print_val(node->literal.value);
 		printf("\n");
 		assert(!node->child);
 		return;
 	}
-	else if (node->type == A_VARIABLE) {
+	else if (node->type == A_VAR || node->type == A_VAR_DECL) {
 		std::string str(node->source.text());
 		printf("%s\n", str.c_str());
 		assert(!node->child);
 		return;
 	}
-	else if (node->type == A_CALL || node->type == A_VARIABLE) {
+	else if (node->type == A_CALL) {
 		std::string str(node->source.text());
 		printf("%s", str.c_str());
 	}

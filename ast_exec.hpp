@@ -3,17 +3,6 @@
 #include "types.hpp"
 #include "parser.hpp"
 
-#ifdef __GNUC__ // GCC 4.8+, Clang, Intel and other compilers compatible with GCC (-std=c++0x or above)
-	#define _ASSUME(cond) if (!(cond)) __builtin_unreachable()
-	#define _UNREACHABLE __builtin_unreachable()
-#elif defined(_MSC_VER) // MSVC
-	#define _ASSUME(cond) __assume(cond)
-	#define _UNREACHABLE  __assume(false)
-#else
-	#define _ASSUME(cond)
-	#define _UNREACHABLE  
-#endif
-
 void println (Value& val) {
 	print_val(val);
 	printf("\n");
@@ -86,6 +75,44 @@ Value call_function (strview const& name, Value* args, size_t argc, AST* call) {
 mismatch:
 	throw MyException{"no matching function overload", call->source};
 }
+
+struct ScopedVars {
+	typedef std::unordered_map<strview, Value> Vars;
+
+	// use unique_ptr of hashmap here because vector for some godforsaken reason wants to copy the hashmap instead of moving
+	// apparently this might be realted to my Value::move ctor not being noexcept, but adding that did not fix it
+	// it appears that this is a defect in the impl of the MSVC unordered_map, which does not have noexcept move methods
+	std::vector<std::unique_ptr<Vars>> scopes;
+
+	Value& declare (AST* var) {
+		auto& cur_scope = scopes.back();
+		
+		auto res = cur_scope->try_emplace(var->source.text());
+		if (!res.second)
+			throw MyException{"variable already declared in this scope", var->source};
+		
+		return res.first->second;
+	}
+
+	Value& get (AST* var) {
+		for (int i=(int)scopes.size()-1; i>=0; --i) {
+			auto& scope = scopes[i];
+
+			auto it = scope->find(var->source.text());
+			if (it != scope->end())
+				return it->second;
+		}
+		throw MyException{"unknown variable", var->source};
+	}
+
+	void open_scope () {
+		scopes.emplace_back(std::make_unique<Vars>());
+	}
+	void close_scope () {
+		assert(!scopes.empty());
+		scopes.pop_back();
+	}
+};
 
 struct Interpreter {
 
@@ -199,7 +226,6 @@ struct Interpreter {
 		assert(false);
 		_UNREACHABLE;
 	}
-
 	Value unop (Value& rhs, AST* op) {
 		switch (rhs.type) {
 			case BOOL:
@@ -228,64 +254,61 @@ struct Interpreter {
 		_UNREACHABLE;
 	}
 
-	//struct VarID {
-	//	int     scope;
-	//	strview name;
-	//};
-	typedef std::unordered_map<strview, Value> Vars;
-
-	Vars vars;
+	ScopedVars vars;
 
 	Value execute (AST* node, int depth=0) {
 		switch (node->type) {
 			case A_BLOCK: {
+				vars.open_scope();
+
 				for (auto* n=node->child.get(); n != nullptr; n = n->next.get()) {
 					execute(n, depth+1);
 				}
 
+				vars.close_scope();
 				return NULLVAL;
-			} break;
+			}
 
 			// values
-			case A_CONSTANT: {
+			case A_LITERAL: {
 				assert(!node->child);
-				return node->constant.value.copy();
-			} break;
-
-			case A_VARIABLE: {
+				return node->literal.value.copy();
+			}
+			
+			case A_VAR_DECL: {
 				assert(!node->child);
-				auto it = vars.find(node->source.text());
-				if (it == vars.end())
-					throw MyException{"unknown variable", node->source};
-				return it->second.copy();
-			} break;
+				vars.declare(node);
+				return NULLVAL;
+			}
 
-			case A_ASSIGNMENT:
+			case A_VAR: {
+				assert(!node->child);
+				return vars.get(node).copy();
+			}
+			
+			case A_ASSIGN:
 			case A_ADDEQ: case A_SUBEQ: case A_MULEQ: case A_DIVEQ: {
 				AST* lhs = node->child.get();
 				AST* rhs = lhs->next.get();
 				assert(!rhs->next);
-				
-				if (lhs->type != A_VARIABLE)
-					throw MyException{"variable expected on left side of assigment", lhs->source};
+				assert(lhs->type == A_VAR || (node->type == A_ASSIGN && lhs->type == A_VAR_DECL));
 
 				Value tmp = execute(rhs, depth+1);
 
 				assert(!lhs->child);
-				Value& val = vars[lhs->source.text()];
-				
-				if (node->type != A_ASSIGNMENT) {
-					Value tmp2 = binop(val, tmp, (ASTType)(node->type - 4), node); // execute the += as +
+				if (lhs->type == A_VAR_DECL)
+					vars.declare(lhs);
 
-					val.set_null();
-					val = std::move(tmp2);
-				} else {
-					val.set_null();
-					val = std::move(tmp);
+				Value& val = vars.get(lhs);
+
+				if (node->type != A_ASSIGN) {
+					tmp.assign( binop(val, tmp, assignop2binop(node->type), node) ); // execute the += as +
 				}
 
+				val.assign(std::move(tmp));
+
 				return NULLVAL;
-			} break;
+			}
 
 			// binary operators
 			case A_ADD: case A_SUB: case A_MUL: case A_DIV:
@@ -299,7 +322,7 @@ struct Interpreter {
 				Value r = execute(rhs, depth+1);
 
 				return binop(l, r, node->type, node);
-			} break;
+			}
 
 			// unary operators
 			case A_NEGATE: case A_NOT:
@@ -308,22 +331,17 @@ struct Interpreter {
 				assert(!operand->next);
 
 				if (node->type == A_INC || node->type == A_DEC) {
-					if (operand->type != A_VARIABLE)
+					if (operand->type != A_VAR)
 						throw MyException{"post inc/decrement can only operate on variables", node->source};
 
-					auto it = vars.find(operand->source.text());
-					if (it == vars.end())
-						throw MyException{"unknown variable", node->source};
-					Value& operand_val = it->second;
-
+					Value& operand_val = vars.get(operand);
 					return unop(operand_val, node);
 				}
 				else {
 					Value operand_val = execute(operand, depth+1);
-
 					return unop(operand_val, node);
 				}
-			} break;
+			}
 
 			case A_CALL: {
 				std::vector<Value> args;
@@ -341,7 +359,7 @@ struct Interpreter {
 				}
 
 				return call_function(node->source.text(), args.data(), args.size(), node);
-			} break;
+			}
 
 			// flow control
 			case A_LOOP: {
@@ -350,6 +368,9 @@ struct Interpreter {
 				AST* end   = cond ->next.get();
 				AST* body  = end  ->next.get();
 				assert(!body->next);
+
+				// need a scope for the variables declared in <begin> and used in <cond> and <end>
+				vars.open_scope();
 
 				execute(begin, depth+1);
 
@@ -365,12 +386,12 @@ struct Interpreter {
 					execute(end, depth+1);
 				}
 
-				return NULLVAL;
-			} break;
+				vars.close_scope();
 
-			default:
-				assert(false);
-				_UNREACHABLE;
+				return NULLVAL;
+			}
 		}
+		assert(false);
+		_UNREACHABLE;
 	}
 };

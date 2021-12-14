@@ -3,7 +3,7 @@
 
 #undef NULL
 
-enum Type {
+enum Type : uint32_t {
 	NULL=0,
 	BOOL,
 	INT,
@@ -20,68 +20,60 @@ struct Value {
 		char*   str;
 	} u;
 
-	~Value () {
+	_FORCEINLINE ~Value () {
 		if (type == STR)
 			free(u.str);
 	}
 
-	Value () {
+	_FORCEINLINE Value () {
 		type = NULL;
 		u = {};
 	}
 
-	Value (bool    b): type{BOOL} { u.b = b; }
-	Value (int64_t i): type{INT}  { u.i = i; }
-	Value (double  f): type{FLT}  { u.f = f; }
+	_FORCEINLINE Value (bool    b): type{BOOL} { u.b = b; }
+	_FORCEINLINE Value (int64_t i): type{INT}  { u.i = i; }
+	_FORCEINLINE Value (double  f): type{FLT}  { u.f = f; }
 
-	Value (Value const& v) = delete;
-	Value (Value&& v) {
-		type = NULL;
-		u = {};
-		_move(*this, v);
-	}
-
-	Value& operator= (Value const& v) = delete;
-	Value& operator= (Value&& v) {
-		_move(*this, v);
+	// automatic move via assignment (only for convinience, and in case containers need to use it)
+	// only allowed for null values since compiler is not smart enough to optimize away the free even if it's never needed
+	// (frees appear all over the place)
+	// in the few places where we need to actually overwrite a value we use assign() instead
+	_FORCEINLINE Value& operator= (Value&& r) {
+		assert(type == NULL);
+		memcpy(this, &r, sizeof(Value));
+		memset(&r, 0, sizeof(Value));
 		return *this;
 	}
-
-	void set_null () {
+	// allow move ctor to enable use in containers
+	_FORCEINLINE Value (Value&& r) noexcept {
+		memcpy(this, &r, sizeof(Value));
+		memset(&r, 0, sizeof(Value));
+	}
+	// manual overwriting of values is possible with manual assignment
+	_FORCEINLINE void assign (Value&& r) {
 		if (type == STR)
 			free(u.str);
-		type = NULL;
-		u = {};
+
+		memcpy(this, &r, sizeof(Value));
+		memset(&r, 0, sizeof(Value));
 	}
 
-	static void _move (Value& l, Value& r) {
-		//if (l.type == STR)
-		//	free(l.str);
-		//l.type = NULL;
-
-		// Only allow moving into structs that are NULL to avoid free calls all over the place
-		// instead manually set_null() only in the places where you overwrite values (only one place in the interpreter)
-		assert(l.type == NULL);
-		
-		l.type = r.type;
-		l.u = r.u;
-
-		r.type = NULL;
-		r.u = {};
-	}
-
-	Value copy () const {
+	// no automatic copy for this class
+	Value (Value const& v) = delete;
+	Value& operator= (Value const& v) = delete;
+	// manaul copy where needed
+	_FORCEINLINE Value copy () const noexcept {
 		Value val;
-		val.type = type;
 		if (type != STR) {
-			val.u = u;
+			memcpy(&val, this, sizeof(Value));
 			return val;
 		}
 		val.set_str(u.str); // strlen + alloc + copy
 		return val;
 	}
 
-	void set_str (std::string_view const& str) {
+	void set_str (std::string_view const& str) noexcept {
+		type = STR;
 		u.str = (char*)malloc(str.size() + 1);
 		memcpy(u.str, str.data(), str.size());
 		u.str[str.size()] = '\0';

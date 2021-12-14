@@ -1,5 +1,7 @@
 #include "string.hpp"
 #include "assert.h"
+#include "string.h"
+#include "stdlib.h"
 
 //#ifdef _WIN32
 //#include "clean_windows_h.hpp"
@@ -43,9 +45,9 @@ namespace kiss {
 		return ret;
 	}
 
-	bool starts_with (std::string const& str, std::string_view substr) {
-		return str.size() >= substr.size() && memcmp(str.data(), substr.data(), substr.size()) == 0;
-	}
+	//bool starts_with (std::string const& str, std::string_view substr) {
+	//	return str.size() >= substr.size() && memcmp(str.data(), substr.data(), substr.size()) == 0;
+	//}
 
 	constexpr inline bool _is_whitespace_c (char c) {
 		return c == ' ' || c == '\t';

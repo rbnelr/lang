@@ -433,25 +433,22 @@ std::vector<Token> tokenize (const char* src, IdentiferIDs& ident_ids) {
 
 					tok.source = { start, cur };
 
-				#if 1
+				#if 0
 					auto text = tok.source.text();
 
 					switch (text.size()) {
 						case 2: {
 							if      (text == "if"   ) { tok.type = T_IF;                           continue; }
 						} break;
-
 						case 3: {
 							if      (text == "for"  ) { tok.type = T_FOR;                          continue; }
 						} break;
-
 						case 4: {
 							if      (text == "elif" ) { tok.type = T_ELIF;                         continue; }
 							else if (text == "else" ) { tok.type = T_ELSE;                         continue; }
 							else if (text == "null" ) { tok.type = T_LITERAL; tok.val = {};        continue; }
 							else if (text == "true" ) { tok.type = T_LITERAL; tok.val = { true };  continue; }
 						} break;
-
 						case 5: {
 							if      (text == "false") { tok.type = T_LITERAL; tok.val = { false }; continue; }
 						} break;
@@ -473,6 +470,7 @@ std::vector<Token> tokenize (const char* src, IdentiferIDs& ident_ids) {
 					continue;
 				#endif
 				}
+
 				throw MyException{"unknown token", {start, start+1}};
 			}
 		}

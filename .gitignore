@@ -9,6 +9,9 @@
 *.ipdb
 *.ilk
 
+todo.txt
+concept.txt
+
 build_*/*
 
 tracy_traces/*

@@ -5,6 +5,37 @@
 #include "line_map.hpp"
 #include "ident_ids.hpp"
 
+inline constexpr uint64_t _STR2INT (char a='\0', char b='\0', char c='\0', char d='\0',
+	                                char e='\0', char f='\0', char g='\0', char h='\0') {
+	uint64_t i = 0;
+	i |= (uint64_t)a << (8*0);
+	i |= (uint64_t)b << (8*1);
+	i |= (uint64_t)c << (8*2);
+	i |= (uint64_t)d << (8*3);
+	i |= (uint64_t)e << (8*4);
+	i |= (uint64_t)f << (8*5);
+	i |= (uint64_t)g << (8*6);
+	i |= (uint64_t)h << (8*7);
+	return i;
+}
+
+inline constexpr const char _IF   [8] = "if";
+inline constexpr const char _ELIF [8] = "elif";
+inline constexpr const char _ELSE [8] = "else";
+inline constexpr const char _FOR  [8] = "for";
+inline constexpr const char _NULL [8] = "null";
+inline constexpr const char _TRUE [8] = "true";
+inline constexpr const char _FALSE[8] = "false";
+
+inline constexpr uint64_t I_IF    = _STR2INT('i','f'            );
+inline constexpr uint64_t I_ELIF  = _STR2INT('e','l','i','f'    );
+inline constexpr uint64_t I_ELSE  = _STR2INT('e','l','s','e'    );
+inline constexpr uint64_t I_FOR   = _STR2INT('f','o','r'        );
+inline constexpr uint64_t I_NULL  = _STR2INT('n','u','l','l'    );
+inline constexpr uint64_t I_TRUE  = _STR2INT('t','r','u','e'    );
+inline constexpr uint64_t I_FALSE = _STR2INT('f','a','l','s','e');
+
+
 constexpr inline bool is_decimal_c (char c) {
 	return c >= '0' && c <= '9';
 }
@@ -435,6 +466,25 @@ std::vector<Token> tokenize (const char* src, IdentiferIDs& ident_ids) {
 
 				#if 0
 					auto text = tok.source.text();
+
+					uint64_t i = *(uint64_t*)text.data();
+					i &= ~((uint64_t)-1 << text.size()*8); // unsafe since we could overread at the end of the source code
+
+					uint64_t z = I_NULL;
+
+					switch (i) {
+						case I_IF   : tok.type = T_IF;                              break;
+						case I_ELIF : tok.type = T_ELIF;                            break;
+						case I_ELSE : tok.type = T_ELSE;                            break;
+						case I_FOR  : tok.type = T_FOR;                             break;
+						case I_NULL : tok.type = T_LITERAL; tok.val = {};           break;
+						case I_TRUE : tok.type = T_LITERAL; tok.val = { true };     break;
+						case I_FALSE: tok.type = T_LITERAL; tok.val = { false };    break;
+						default: tok.type = T_IDENTIFIER;
+					}
+					continue;
+				#else
+					auto text = tok.source.text();
 					if      (text == "if"   )   tok.type = T_IF;
 					else if (text == "elif" )   tok.type = T_ELIF;
 					else if (text == "else" )   tok.type = T_ELSE;
@@ -444,59 +494,6 @@ std::vector<Token> tokenize (const char* src, IdentiferIDs& ident_ids) {
 					else if (text == "false") { tok.type = T_LITERAL; tok.val = { false }; }
 					else {
 						tok.type = T_IDENTIFIER;
-					}
-					continue;
-				#elif 0
-					auto text = tok.source.text();
-					
-					auto cmp = [&] (std::string_view const& r) {
-						if (text.size() != r.size()) return false;
-						return memcmp(text.data()+1, r.data()+1, r.size()-1) == 0;
-					};
-
-					switch (text.data()[0]) {
-						case 'i': {
-							if      (cmp("if"   )) { tok.type = T_IF;                           continue; }
-						} break;
-
-						case 'e': {
-							if      (cmp("elif" )) { tok.type = T_ELIF;                         continue; }
-							else if (cmp("else" )) { tok.type = T_ELSE;                         continue; }
-						} break;
-
-						case 'f': {
-							if      (cmp("for"  )) { tok.type = T_FOR;                          continue; }
-							else if (cmp("false")) { tok.type = T_LITERAL; tok.val = { false }; continue; }
-						} break;
-
-						case 't': {
-							if      (cmp("true" )) { tok.type = T_LITERAL; tok.val = { true  }; continue; }
-						} break;
-
-						case 'n': {
-							if      (cmp("null" )) { tok.type = T_LITERAL; tok.val = {       }; continue; }
-						} break;
-					}
-					tok.type = T_IDENTIFIER;
-					continue;
-				#else
-					static std::unordered_map<strview, TokenType> map = {
-						{ "if"   , T_IF      },
-						{ "elif" , T_ELIF    },
-						{ "else" , T_ELSE    },
-						{ "for"  , T_FOR     },
-						{ "true" , T_LITERAL },
-						{ "false", T_LITERAL },
-						{ "null" , T_LITERAL },
-					};
-
-					auto text = tok.source.text();
-					auto ret = map.find(text);
-					if (ret == map.end()) {
-						tok.type = T_IDENTIFIER;
-					} else {
-						tok.type = ret->second;
-						tok.val = {};
 					}
 					continue;
 				#endif

@@ -22,14 +22,15 @@ int main (int argc, const char** argv) {
 	for (int profi=0; profi<TRACY_REPEAT; ++profi) {
 #endif
 
-#if USE_ALLOCATOR
-	//g_allocator.add_block();
-#endif
+	// we need at least one memory block anyway
+	// and in case we only end up needing one this could actually help the branch predictor
+	// since add_block will never be called in the compiler code this way
+	g_allocator.add_block();
 
 	SourceLines lines; // need lines outside of try to allow me to print error messages with line numbers
 	try {
 
-		ast_ptr ast;
+		AST* ast;
 		IdentiferIDs ident_ids;
 		{
 			ZoneScopedN("compile");
@@ -46,11 +47,11 @@ int main (int argc, const char** argv) {
 			{
 				ZoneScopedN("map_vars");
 				OptimizePasses opt;
-				opt.map_vars(ast.get());
+				opt.map_vars(ast);
 			}
 		}
 
-	//#ifndef TRACY_ENABLE
+	#ifndef TRACY_ENABLE
 		printf("--------------------\n");
 		
 		{
@@ -58,9 +59,9 @@ int main (int argc, const char** argv) {
 			Interpreter interp;
 		
 			Value retval;
-			interp.execute(ast.get(), &retval);
+			interp.execute(ast, &retval);
 		}
-	//#endif
+	#endif
 	}
 	catch (MyException& ex) {
 		ex.print(filename.c_str(), lines);
@@ -69,9 +70,7 @@ int main (int argc, const char** argv) {
 		fprintf(stderr, "Unknown exception!");
 	}
 
-#if USE_ALLOCATOR
 	g_allocator.reset();
-#endif
 
 #if TRACY_ENABLE
 	}

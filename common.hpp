@@ -48,7 +48,7 @@ typedef std::string_view strview;
 	#define _NOINLINE     
 #endif
 
-#if 0
+#if 1
 	#define TRACY_REPEAT 100000
 #else
 	#define TRACY_REPEAT 100
@@ -128,5 +128,3 @@ struct BumpAllocator {
 };
 
 BumpAllocator g_allocator;
-
-#define USE_ALLOCATOR 1

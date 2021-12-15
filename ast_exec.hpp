@@ -249,7 +249,7 @@ struct Interpreter {
 
 	Stack stack;
 
-	void execute (AST_base* node, Value* retval, int depth=0) {
+	void execute (AST* node, Value* retval, int depth=0) {
 		//assert(retval->type == NULL);
 		//_ASSUME(retval->type == NULL);
 
@@ -270,10 +270,10 @@ struct Interpreter {
 				auto* op = (AST_binop*)node;
 
 				Value tmp;
-				execute(op->rhs.get(), &tmp, depth+1);
+				execute(op->rhs, &tmp, depth+1);
 
 				assert(op->lhs->type == A_VAR || op->lhs->type == A_VAR_DECL);
-				auto* lhs = (AST_var*)op->lhs.get();
+				auto* lhs = (AST_var*)op->lhs;
 
 				if (op->lhs->type == A_VAR_DECL)
 					stack.push(lhs) = tmp;
@@ -285,10 +285,10 @@ struct Interpreter {
 				auto* op = (AST_binop*)node;
 
 				Value tmp;
-				execute(op->rhs.get(), &tmp, depth+1);
+				execute(op->rhs, &tmp, depth+1);
 
 				assert(op->lhs->type == A_VAR);
-				auto* lhs = (AST_var*)op->lhs.get();
+				auto* lhs = (AST_var*)op->lhs;
 
 				auto& val = stack.get(lhs);
 				val = binop(val, tmp, assignop2binop(node->type), op); // execute the += as +
@@ -299,7 +299,7 @@ struct Interpreter {
 				auto* op = (AST_unop*)node;
 
 				Value operand_val;
-				execute(op->operand.get(), &operand_val, depth+1);
+				execute(op->operand, &operand_val, depth+1);
 				*retval = unop(operand_val, op);
 			} break;
 			case A_INC: case A_DEC: {
@@ -308,7 +308,7 @@ struct Interpreter {
 				if (op->operand->type != A_VAR)
 					throw MyException{"post inc/decrement can only operate on variables", node->source};
 
-				Value& operand_val = stack.get((AST_var*)op->operand.get());
+				Value& operand_val = stack.get((AST_var*)op->operand);
 				*retval = unop(operand_val, op);
 			} break;
 
@@ -319,8 +319,8 @@ struct Interpreter {
 				auto* op = (AST_binop*)node;
 
 				Value l, r;
-				execute(op->lhs.get(), &l, depth+1);
-				execute(op->rhs.get(), &r, depth+1);
+				execute(op->lhs, &l, depth+1);
+				execute(op->rhs, &r, depth+1);
 
 				*retval = binop(l, r, op->type, op);
 			} break;
@@ -329,25 +329,25 @@ struct Interpreter {
 				auto* aif = (AST_if*)node;
 
 				Value condval;
-				execute(aif->cond.get(), &condval, depth+1);
+				execute(aif->cond, &condval, depth+1);
 				if (condval.type != BOOL)
 					throw MyException{"if condition must be bool", aif->cond->source};
 
 				auto& body = condval.u.b ? aif->true_body : aif->false_body;
 				if (body)
-					execute(body.get(), retval, depth+1);
+					execute(body, retval, depth+1);
 			} break;
 			// ternary operator
 			case A_SELECT: {
 				auto* aif = (AST_if*)node;
 
 				Value condval;
-				execute(aif->cond.get(), &condval, depth+1);
+				execute(aif->cond, &condval, depth+1);
 				if (condval.type != BOOL)
 					throw MyException{"select condition must be bool", aif->cond->source};
 
 				auto& body = condval.u.b ? aif->true_body : aif->false_body;
-				execute(body.get(), retval, depth+1);
+				execute(body, retval, depth+1);
 			} break;
 
 			// flow control
@@ -358,20 +358,20 @@ struct Interpreter {
 				stack.begin_scope();
 
 				Value startret;
-				execute(loop->start.get(), &startret, depth+1);
+				execute(loop->start, &startret, depth+1);
 
 				for (;;) {
 					Value condval;
-					execute(loop->cond.get(), &condval, depth+1);
+					execute(loop->cond, &condval, depth+1);
 					if (condval.type != BOOL)
 						throw MyException{"loop condition must be bool", loop->cond->source};
 					if (!condval.u.b)
 						break;
 
 					Value bodyret;
-					execute(loop->body.get(), &bodyret, depth+1);
+					execute(loop->body, &bodyret, depth+1);
 					Value endret;
-					execute(loop->end.get(), &endret, depth+1);
+					execute(loop->end, &endret, depth+1);
 				}
 
 				stack.end_scope();
@@ -384,7 +384,7 @@ struct Interpreter {
 				args.resize(call->argc);
 
 				size_t i = 0;
-				for (auto* n=call->args.get(); n != nullptr; n = n->next.get()) {
+				for (auto* n=call->args; n != nullptr; n = n->next) {
 					auto& arg = args[i++];
 					execute(n, &arg, depth+1);
 				}
@@ -397,7 +397,7 @@ struct Interpreter {
 
 				stack.begin_scope();
 
-				for (auto* n=block->statements.get(); n != nullptr; n = n->next.get()) {
+				for (auto* n=block->statements; n != nullptr; n = n->next) {
 					Value ignore;
 					execute(n, &ignore, depth+1);
 				}

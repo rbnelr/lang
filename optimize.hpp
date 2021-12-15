@@ -72,7 +72,7 @@ struct VariableMapper {
 struct OptimizePasses {
 	VariableMapper var_map;
 
-	void map_vars (AST_base* node) {
+	void map_vars (AST* node) {
 		switch (node->type) {
 			case A_LITERAL: {
 				// do nothing
@@ -89,7 +89,7 @@ struct OptimizePasses {
 
 			case A_NEGATE: case A_NOT: case A_INC: case A_DEC: {
 				auto* unop = (AST_unop*)node;
-				map_vars(unop->operand.get());
+				map_vars(unop->operand);
 			} break;
 
 			case A_ADD: case A_SUB: case A_MUL: case A_DIV:
@@ -97,17 +97,17 @@ struct OptimizePasses {
 			case A_ASSIGN:
 			case A_ADDEQ: case A_SUBEQ: case A_MULEQ: case A_DIVEQ: {
 				auto* binop = (AST_binop*)node;
-				map_vars(binop->lhs.get());
-				map_vars(binop->rhs.get());
+				map_vars(binop->lhs);
+				map_vars(binop->rhs);
 			} break;
 
 			case A_IF:
 			case A_SELECT: {
 				auto* aif = (AST_if*)node;
-				map_vars(aif->cond     .get());
-				map_vars(aif->true_body.get());
+				map_vars(aif->cond     );
+				map_vars(aif->true_body);
 				if (aif->false_body)
-					map_vars(aif->false_body.get());
+					map_vars(aif->false_body);
 			} break;
 
 			case A_LOOP: {
@@ -116,10 +116,10 @@ struct OptimizePasses {
 				// need a scope for the variables declared in <begin> and used in <cond> and <end>
 				var_map.begin_scope();
 
-				map_vars(loop->start.get());
-				map_vars(loop->cond .get());
-				map_vars(loop->body .get());
-				map_vars(loop->end  .get());
+				map_vars(loop->start);
+				map_vars(loop->cond );
+				map_vars(loop->body );
+				map_vars(loop->end  );
 
 				var_map.end_scope();
 			} break;
@@ -127,7 +127,7 @@ struct OptimizePasses {
 			case A_CALL: {
 				auto* call = (AST_call*)node;
 
-				for (auto* n=call->args.get(); n != nullptr; n = n->next.get())
+				for (auto* n=call->args; n != nullptr; n = n->next)
 					map_vars(n);
 
 			} break;
@@ -137,7 +137,7 @@ struct OptimizePasses {
 
 				var_map.begin_scope();
 
-				for (auto* n=block->statements.get(); n != nullptr; n = n->next.get())
+				for (auto* n=block->statements; n != nullptr; n = n->next)
 					map_vars(n);
 
 				var_map.end_scope();

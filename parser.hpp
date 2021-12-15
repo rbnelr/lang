@@ -203,130 +203,104 @@ void indent (int depth) {
 template <typename T>
 T* ast_alloc (ASTType type) {
 
-#if USE_ALLOCATOR
 	T* ret = g_allocator.alloc<T>();
 	new (ret) T ();
-#else
-	T* ret = new T();
-#endif
 
 	ret->type = type;
 	return ret;
 }
 
-struct AST_base;
+struct AST;
+typedef AST* ast_ptr;
 
-#if USE_ALLOCATOR
-	struct BumpAllocDeleter {
-		template <typename T>
-		inline void operator() (T* ptr) {
-			// need to actually call dtor
-			ptr->~T();
-			// memory free is no-op
-			// we the whole tree by reseting the bump allocator once we are done with the AST
-		}
-	};
-	typedef std::unique_ptr<AST_base, BumpAllocDeleter> ast_ptr;
-#else
-	typedef std::unique_ptr<AST_base> ast_ptr;
-#endif
-
-struct AST_base {
+struct AST {
 	ASTType      type;
 	source_range source;
 
-	ast_ptr      next;
+	AST*         next;
 
-	virtual ~AST_base () {}
 	virtual void dbg_print (int depth) {
 		indent(depth);
 		printf("%s ", ASTType_str[type]);
 	}
 };
 
-struct AST_literal : public AST_base {
+struct AST_literal : public AST {
 	Value        value;
 
-	virtual ~AST_literal () {}
 	virtual void dbg_print (int depth) {
-		AST_base::dbg_print(depth);
+		AST::dbg_print(depth);
 		std::string str(source.text());
 		printf("%s\n", str.c_str());
 	}
 };
-struct AST_var : public AST_base {
-	strview      ident;
-	size_t       addr;
+struct AST_var : public AST {
+	strview  ident;
+	size_t   addr;
 
-	virtual ~AST_var () {}
 	virtual void dbg_print (int depth) {
-		AST_base::dbg_print(depth);
+		AST::dbg_print(depth);
 		std::string str(ident);
 		printf("%s\n", str.c_str());
 	}
 };
-struct AST_unop : public AST_base {
-	ast_ptr      operand;
+struct AST_unop : public AST {
+	AST* operand;
 
-	virtual ~AST_unop () {}
 	virtual void dbg_print (int depth) {
-		AST_base::dbg_print(depth);
+		AST::dbg_print(depth);
 		printf("(\n");
 		operand->dbg_print(depth+1);
 		indent(depth); printf(")\n");
 	}
 };
-struct AST_binop : public AST_base {
-	ast_ptr      lhs;
-	ast_ptr      rhs;
+struct AST_binop : public AST {
+	AST* lhs;
+	AST* rhs;
 
-	virtual ~AST_binop () {}
 	virtual void dbg_print (int depth) {
-		AST_base::dbg_print(depth);
+		AST::dbg_print(depth);
 		printf("(\n");
 		lhs->dbg_print(depth+1);
 		rhs->dbg_print(depth+1);
 		indent(depth); printf(")\n");
 	}
 };
-struct AST_call : public AST_base {
-	strview      ident;
+struct AST_call : public AST {
+	strview  ident;
 
-	size_t       argc;
-	ast_ptr      args;
+	size_t   argc;
+	AST*     args;
 
-	virtual ~AST_call () {}
 	virtual void dbg_print (int depth) {
-		AST_base::dbg_print(depth);
+		AST::dbg_print(depth);
 		std::string str(ident);
 		printf("%s", str.c_str());
 
 		printf("(\n");
-		for (auto* n=args.get(); n != nullptr; n = n->next.get())
+		for (auto* n=args; n != nullptr; n = n->next)
 			n->dbg_print(depth+1);
 		indent(depth); printf(")\n");
 	}
 };
-struct AST_block : public AST_base {
-	ast_ptr      statements;
+struct AST_block : public AST {
+	AST* statements;
 
-	virtual ~AST_block () {}
 	virtual void dbg_print (int depth) {
-		AST_base::dbg_print(depth);
+		AST::dbg_print(depth);
 		printf("(\n");
-		for (auto* n=statements.get(); n != nullptr; n = n->next.get())
+		for (auto* n=statements; n != nullptr; n = n->next)
 			n->dbg_print(depth+1);
 		indent(depth); printf(")\n");
 	}
 };
-struct AST_if : public AST_base {
-	ast_ptr      cond;
-	ast_ptr      true_body;
-	ast_ptr      false_body;
+struct AST_if : public AST {
+	AST* cond;
+	AST* true_body;
+	AST* false_body;
 
-	virtual ~AST_if () {}
 	virtual void dbg_print (int depth) {
-		AST_base::dbg_print(depth);
+		AST::dbg_print(depth);
 		printf("(\n");
 		cond      ->dbg_print(depth+1);
 		true_body ->dbg_print(depth+1);
@@ -334,15 +308,14 @@ struct AST_if : public AST_base {
 		indent(depth); printf(")\n");
 	}
 };
-struct AST_loop : public AST_base {
-	ast_ptr      start;
-	ast_ptr      cond;
-	ast_ptr      body;
-	ast_ptr      end;
+struct AST_loop : public AST {
+	AST* start;
+	AST* cond;
+	AST* body;
+	AST* end;
 
-	virtual ~AST_loop () {}
 	virtual void dbg_print (int depth) {
-		AST_base::dbg_print(depth);
+		AST::dbg_print(depth);
 		printf("(\n");
 		start->dbg_print(depth+1);
 		cond ->dbg_print(depth+1);

@@ -5,37 +5,6 @@
 #include "line_map.hpp"
 #include "ident_ids.hpp"
 
-inline constexpr uint64_t _STR2INT (char a='\0', char b='\0', char c='\0', char d='\0',
-	                                char e='\0', char f='\0', char g='\0', char h='\0') {
-	uint64_t i = 0;
-	i |= (uint64_t)a << (8*0);
-	i |= (uint64_t)b << (8*1);
-	i |= (uint64_t)c << (8*2);
-	i |= (uint64_t)d << (8*3);
-	i |= (uint64_t)e << (8*4);
-	i |= (uint64_t)f << (8*5);
-	i |= (uint64_t)g << (8*6);
-	i |= (uint64_t)h << (8*7);
-	return i;
-}
-
-inline constexpr const char _IF   [8] = "if";
-inline constexpr const char _ELIF [8] = "elif";
-inline constexpr const char _ELSE [8] = "else";
-inline constexpr const char _FOR  [8] = "for";
-inline constexpr const char _NULL [8] = "null";
-inline constexpr const char _TRUE [8] = "true";
-inline constexpr const char _FALSE[8] = "false";
-
-inline constexpr uint64_t I_IF    = _STR2INT('i','f'            );
-inline constexpr uint64_t I_ELIF  = _STR2INT('e','l','i','f'    );
-inline constexpr uint64_t I_ELSE  = _STR2INT('e','l','s','e'    );
-inline constexpr uint64_t I_FOR   = _STR2INT('f','o','r'        );
-inline constexpr uint64_t I_NULL  = _STR2INT('n','u','l','l'    );
-inline constexpr uint64_t I_TRUE  = _STR2INT('t','r','u','e'    );
-inline constexpr uint64_t I_FALSE = _STR2INT('f','a','l','s','e');
-
-
 constexpr inline bool is_decimal_c (char c) {
 	return c >= '0' && c <= '9';
 }
@@ -464,24 +433,30 @@ std::vector<Token> tokenize (const char* src, IdentiferIDs& ident_ids) {
 
 					tok.source = { start, cur };
 
-				#if 0
+				#if 1
 					auto text = tok.source.text();
 
-					uint64_t i = *(uint64_t*)text.data();
-					i &= ~((uint64_t)-1 << text.size()*8); // unsafe since we could overread at the end of the source code
+					switch (text.size()) {
+						case 2: {
+							if      (text == "if"   ) { tok.type = T_IF;                           continue; }
+						} break;
 
-					uint64_t z = I_NULL;
+						case 3: {
+							if      (text == "for"  ) { tok.type = T_FOR;                          continue; }
+						} break;
 
-					switch (i) {
-						case I_IF   : tok.type = T_IF;                              break;
-						case I_ELIF : tok.type = T_ELIF;                            break;
-						case I_ELSE : tok.type = T_ELSE;                            break;
-						case I_FOR  : tok.type = T_FOR;                             break;
-						case I_NULL : tok.type = T_LITERAL; tok.val = {};           break;
-						case I_TRUE : tok.type = T_LITERAL; tok.val = { true };     break;
-						case I_FALSE: tok.type = T_LITERAL; tok.val = { false };    break;
-						default: tok.type = T_IDENTIFIER;
+						case 4: {
+							if      (text == "elif" ) { tok.type = T_ELIF;                         continue; }
+							else if (text == "else" ) { tok.type = T_ELSE;                         continue; }
+							else if (text == "null" ) { tok.type = T_LITERAL; tok.val = {};        continue; }
+							else if (text == "true" ) { tok.type = T_LITERAL; tok.val = { true };  continue; }
+						} break;
+
+						case 5: {
+							if      (text == "false") { tok.type = T_LITERAL; tok.val = { false }; continue; }
+						} break;
 					}
+					tok.type = T_IDENTIFIER;
 					continue;
 				#else
 					auto text = tok.source.text();

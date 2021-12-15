@@ -209,7 +209,11 @@ struct AST_base {
 
 	ast_ptr      next;
 
-	virtual ~AST_base () {}
+	virtual ~AST_base () {
+	#if TRACY_TRACK_ALLOC
+		TracyFree(this)
+	#endif
+	}
 	virtual void dbg_print (int depth) {
 		indent(depth);
 		printf("%s ", ASTType_str[type]);
@@ -327,6 +331,9 @@ struct AST_loop : public AST_base {
 template <typename T>
 T* ast_alloc (ASTType type) {
 	T* ret = new T();
+#if TRACY_TRACK_ALLOC
+	TracyAlloc(ret, sizeof(T))
+#endif
 	ret->type = type;
 	return ret;
 }

@@ -44,3 +44,11 @@ typedef std::string_view strview;
 	#define _UNREACHABLE  
 	#define _FORCEINLINE 
 #endif
+
+#if 1
+#define TRACY_REPEAT 100000
+#define TRACY_TRACK_ALLOC 0
+#else
+#define TRACY_REPEAT 10
+#define TRACY_TRACK_ALLOC 1
+#endif

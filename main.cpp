@@ -19,7 +19,7 @@ int main (int argc, const char** argv) {
 	}
 
 #if TRACY_ENABLE
-	for (int profi=0; profi<100000; ++profi) {
+	for (int profi=0; profi<TRACY_REPEAT; ++profi) {
 #endif
 
 	SourceLines lines; // need lines outside of try to allow me to print error messages with line numbers

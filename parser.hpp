@@ -200,8 +200,36 @@ void indent (int depth) {
 		printf("  ");
 }
 
+template <typename T>
+T* ast_alloc (ASTType type) {
+
+#if USE_ALLOCATOR
+	T* ret = g_allocator.alloc<T>();
+	new (ret) T ();
+#else
+	T* ret = new T();
+#endif
+
+	ret->type = type;
+	return ret;
+}
+
 struct AST_base;
-typedef std::unique_ptr<AST_base> ast_ptr;
+
+#if USE_ALLOCATOR
+	struct BumpAllocDeleter {
+		template <typename T>
+		inline void operator() (T* ptr) {
+			// need to actually call dtor
+			ptr->~T();
+			// memory free is no-op
+			// we the whole tree by reseting the bump allocator once we are done with the AST
+		}
+	};
+	typedef std::unique_ptr<AST_base, BumpAllocDeleter> ast_ptr;
+#else
+	typedef std::unique_ptr<AST_base> ast_ptr;
+#endif
 
 struct AST_base {
 	ASTType      type;
@@ -209,11 +237,7 @@ struct AST_base {
 
 	ast_ptr      next;
 
-	virtual ~AST_base () {
-	#if TRACY_TRACK_ALLOC
-		TracyFree(this)
-	#endif
-	}
+	virtual ~AST_base () {}
 	virtual void dbg_print (int depth) {
 		indent(depth);
 		printf("%s ", ASTType_str[type]);
@@ -328,16 +352,6 @@ struct AST_loop : public AST_base {
 	}
 };
 
-template <typename T>
-T* ast_alloc (ASTType type) {
-	T* ret = new T();
-#if TRACY_TRACK_ALLOC
-	TracyAlloc(ret, sizeof(T))
-#endif
-	ret->type = type;
-	return ret;
-}
-
 struct Parser {
 	Token* tok;
 
@@ -418,7 +432,7 @@ struct Parser {
 			case T_LITERAL: {
 				auto* lit = ast_alloc<AST_literal>(A_LITERAL);
 				lit->source = tok->source;
-				lit->value = std::move(tok->val);
+				lit->value = tok->val;
 				tok++;
 				return ast_ptr(lit);
 			}

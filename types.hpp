@@ -14,68 +14,20 @@ enum Type : uint32_t {
 struct Value {
 	Type type;
 	union {
-		bool    b;
-		int64_t i;
-		double  f;
-		char*   str;
+		bool          b;
+		int64_t       i;
+		double        f;
+		const char*   str; // non-owning
 	} u;
 
-	_FORCEINLINE ~Value () {
-		if (type == STR)
-			free(u.str);
-	}
-
-	_FORCEINLINE Value () {
+	Value () {
 		type = NULL;
 		u = {};
 	}
 
-	_FORCEINLINE Value (bool    b): type{BOOL} { u.b = b; }
-	_FORCEINLINE Value (int64_t i): type{INT}  { u.i = i; }
-	_FORCEINLINE Value (double  f): type{FLT}  { u.f = f; }
-
-	// automatic move via assignment (only for convinience, and in case containers need to use it)
-	// only allowed for null values since compiler is not smart enough to optimize away the free even if it's never needed
-	// (frees appear all over the place)
-	// in the few places where we need to actually overwrite a value we use assign() instead
-	_FORCEINLINE Value& operator= (Value&& r) {
-		assert(type == NULL);
-		memcpy(this, &r, sizeof(Value));
-		memset(&r, 0, sizeof(Value));
-		return *this;
-	}
-	// allow move ctor to enable use in containers
-	_FORCEINLINE Value (Value&& r) noexcept {
-		memcpy(this, &r, sizeof(Value));
-		memset(&r, 0, sizeof(Value));
-	}
-
-	_FORCEINLINE void set_null () {
-		if (type == STR)
-			free(u.str);
-		memset(this, 0, sizeof(Value));
-	}
-
-	// no automatic copy for this class
-	Value (Value const& v) = delete;
-	Value& operator= (Value const& v) = delete;
-	// manaul copy where needed
-	_FORCEINLINE Value copy () const noexcept {
-		Value val;
-		if (type != STR) {
-			memcpy(&val, this, sizeof(Value));
-			return val;
-		}
-		val.set_str(u.str); // strlen + alloc + copy
-		return val;
-	}
-
-	void set_str (std::string_view const& str) noexcept {
-		type = STR;
-		u.str = (char*)malloc(str.size() + 1);
-		memcpy(u.str, str.data(), str.size());
-		u.str[str.size()] = '\0';
-	}
+	Value (bool    b): type{BOOL} { u.b = b; }
+	Value (int64_t i): type{INT}  { u.i = i; }
+	Value (double  f): type{FLT}  { u.f = f; }
 };
 #define NULLVAL (Value{})
 

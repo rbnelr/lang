@@ -22,8 +22,13 @@ int main (int argc, const char** argv) {
 	for (int profi=0; profi<TRACY_REPEAT; ++profi) {
 #endif
 
+#if USE_ALLOCATOR
+	//g_allocator.add_block();
+#endif
+
 	SourceLines lines; // need lines outside of try to allow me to print error messages with line numbers
 	try {
+
 		ast_ptr ast;
 		IdentiferIDs ident_ids;
 		{
@@ -45,15 +50,17 @@ int main (int argc, const char** argv) {
 			}
 		}
 
-		//printf("--------------------\n");
-		//
-		//{
-		//	ZoneScopedN("interpret AST");
-		//	Interpreter interp;
-		//
-		//	Value retval;
-		//	interp.execute(ast.get(), &retval);
-		//}
+	//#ifndef TRACY_ENABLE
+		printf("--------------------\n");
+		
+		{
+			ZoneScopedN("interpret AST");
+			Interpreter interp;
+		
+			Value retval;
+			interp.execute(ast.get(), &retval);
+		}
+	//#endif
 	}
 	catch (MyException& ex) {
 		ex.print(filename.c_str(), lines);
@@ -61,6 +68,10 @@ int main (int argc, const char** argv) {
 	catch (...) {
 		fprintf(stderr, "Unknown exception!");
 	}
+
+#if USE_ALLOCATOR
+	g_allocator.reset();
+#endif
 
 #if TRACY_ENABLE
 	}

@@ -256,14 +256,14 @@ struct Interpreter {
 		switch (node->type) {
 			case A_LITERAL: {
 				auto* lit = (AST_literal*)node;
-				*retval = lit->value.copy();
+				*retval = lit->value;
 			} break;
 
 			case A_VAR_DECL: {
 				stack.push((AST_var*)node);
 			} break;
 			case A_VAR: {
-				*retval = stack.get((AST_var*)node).copy();
+				*retval = stack.get((AST_var*)node);
 			} break;
 
 			case A_ASSIGN: {
@@ -276,12 +276,9 @@ struct Interpreter {
 				auto* lhs = (AST_var*)op->lhs.get();
 
 				if (op->lhs->type == A_VAR_DECL)
-					stack.push(lhs);
-
-				auto& val = stack.get(lhs);
-				val.set_null();
-				val = std::move(tmp);
-
+					stack.push(lhs) = tmp;
+				else
+					stack.get(lhs) = tmp;
 			} break;
 
 			case A_ADDEQ: case A_SUBEQ: case A_MULEQ: case A_DIVEQ: {
@@ -292,13 +289,9 @@ struct Interpreter {
 
 				assert(op->lhs->type == A_VAR);
 				auto* lhs = (AST_var*)op->lhs.get();
+
 				auto& val = stack.get(lhs);
-
-				Value tmp2 = binop(val, tmp, assignop2binop(node->type), op); // execute the += as +
-
-				val.set_null();
-				val = std::move(tmp2);
-				
+				val = binop(val, tmp, assignop2binop(node->type), op); // execute the += as +
 			} break;
 
 			// unary operators

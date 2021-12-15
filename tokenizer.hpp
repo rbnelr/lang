@@ -210,14 +210,13 @@ struct Token {
 };
 
 Value parse_escaped_string (const char* start, const char* end) {
-	Value val;
-	val.type = STR;
-
 	// resulting strings should be shorter than escaped strings
-	val.u.str = (char*)malloc(end - start + 1);
+	size_t max_len = end - start + 1;
+
+	char* result = g_allocator.alloc_array<char>(max_len);
 
 	const char* in = start;
-	char*       out = val.u.str;
+	char* out = result;
 
 	while (in < end) {
 		if (*in == '\\') {
@@ -237,7 +236,13 @@ Value parse_escaped_string (const char* start, const char* end) {
 	}
 	*out++ = '\0';
 
-	val.u.str = (char*)realloc(val.u.str, out - val.u.str); // resize to (smaller) real size
+	size_t real_len = out - result; // real length of generated string
+	// don't bother to reallocate the strings just to save a few bytes not needed due to escape sequences
+	// g_allocator does not support reallocation currently
+
+	Value val;
+	val.type = STR;
+	val.u.str = result;
 	return val;
 }
 

@@ -34,21 +34,99 @@ typedef std::string_view strview;
 	#define _ASSUME(cond) if (!(cond)) __builtin_unreachable()
 	#define _UNREACHABLE __builtin_unreachable()
 	#define _FORCEINLINE __attribute__((always_inline)) inline
+	#define _NOINLINE    __attribute__((noinline))
 
 #elif defined(_MSC_VER) // MSVC
 	#define _ASSUME(cond) __assume(cond)
 	#define _UNREACHABLE  __assume(false)
 	#define _FORCEINLINE  __forceinline
+	#define _NOINLINE     __declspec(noinline)
 #else
 	#define _ASSUME(cond)
 	#define _UNREACHABLE  
-	#define _FORCEINLINE 
+	#define _FORCEINLINE  
+	#define _NOINLINE     
 #endif
 
-#if 1
-#define TRACY_REPEAT 100000
-#define TRACY_TRACK_ALLOC 0
+#if 0
+	#define TRACY_REPEAT 100000
 #else
-#define TRACY_REPEAT 10
-#define TRACY_TRACK_ALLOC 1
+	#define TRACY_REPEAT 100
 #endif
+
+struct BumpAllocator {
+	static inline constexpr size_t BLOCK_SZ = 1024 * 1024 * 1;
+
+	char* cur = nullptr;
+	char* end = nullptr;
+
+	std::vector<char*> blocks;
+
+	BumpAllocator () {
+		blocks.reserve(32);
+	}
+	~BumpAllocator () {
+		reset();
+	}
+
+	static inline void* align_ptr (void* p, size_t align) {
+		return (void*)( ((uintptr_t)p + (align-1)) & ~(align-1) );
+	}
+
+	// new block is needed, slow path so use _NOINLINE to help the compiler pick the fast path for inlining
+	_NOINLINE char* alloc_from_new_block (size_t size, size_t align) {
+		ZoneScoped;
+
+		add_block();
+
+		cur = (char*)align_ptr(cur, align);
+
+		char* ptr = cur;
+		cur += size;
+
+		if (cur <= end)
+			return ptr;
+
+		return nullptr;
+	}
+	inline char* alloc (size_t size, size_t align) {
+		cur = (char*)align_ptr(cur, align);
+
+		char* ptr = cur;
+		cur += size;
+
+		if (cur <= end)
+			return ptr;
+
+		return alloc_from_new_block(size, align);
+	}
+
+	template <typename T>
+	T* alloc () {
+		return (T*)alloc(sizeof(T), alignof(T));
+	}
+	template <typename T>
+	T* alloc_array (size_t count) {
+		return (T*)alloc(sizeof(T)*count, alignof(T));
+	}
+
+	void add_block () {
+		cur = (char*)std::malloc(BLOCK_SZ);
+		end = cur + BLOCK_SZ;
+
+		blocks.push_back(cur);
+	}
+	void reset () {
+		for (auto& ptr : blocks)
+			std::free(ptr);
+
+		blocks.clear();
+
+		cur = nullptr;
+		end = nullptr;
+	}
+};
+
+BumpAllocator g_allocator;
+
+#define USE_ALLOCATOR 1

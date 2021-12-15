@@ -23,7 +23,7 @@ struct VariableMapper {
 	// index of first variable of each scope in <vars_stack>
 	std::vector<size_t>                         scopes;
 
-	size_t declare (AST* var) {
+	size_t declare (AST_var* var) {
 		assert(!scopes.empty());
 
 		int scope_idx = (int)scopes.size()-1;
@@ -31,20 +31,20 @@ struct VariableMapper {
 		//assert(scope_frame <= vars_stack.size());
 		size_t addr = vars_stack.size();
 
-		auto res = vars_map.try_emplace({ scope_idx, var->var.ident }, addr);
+		auto res = vars_map.try_emplace({ scope_idx, var->ident }, addr);
 		if (!res.second)
 			throw MyException{"variable already declared in this scope", var->source};
 
-		vars_stack.emplace_back(var->var.ident);
+		vars_stack.emplace_back(var->ident);
 
 		return addr;
 	}
 
-	size_t get (AST* var) {
+	size_t get (AST_var* var) {
 		assert(!scopes.empty());
 
 		for (int scope_idx=(int)scopes.size()-1; scope_idx>=0; --scope_idx) {
-			auto it = vars_map.find({ scope_idx, var->var.ident });
+			auto it = vars_map.find({ scope_idx, var->ident });
 			if (it != vars_map.end())
 				return it->second;
 		}
@@ -72,50 +72,80 @@ struct VariableMapper {
 struct OptimizePasses {
 	VariableMapper var_map;
 
-	void map_vars (AST* node) {
+	void map_vars (AST_base* node) {
 		switch (node->type) {
-			case A_BLOCK: {
-				var_map.begin_scope();
-
-				for (auto* n=node->child.get(); n != nullptr; n = n->next.get()) {
-					map_vars(n);
-				}
-
-				var_map.end_scope();
+			case A_LITERAL: {
+				// do nothing
 			} break;
-			
+
 			case A_VAR_DECL: {
-				assert(!node->child);
-				node->var.addr = var_map.declare(node);
+				auto* var = (AST_var*)node;
+				var->addr = var_map.declare(var);
 			} break;
 			case A_VAR: {
-				assert(!node->child);
-				node->var.addr = var_map.get(node);
+				auto* var = (AST_var*)node;
+				var->addr = var_map.get(var);
+			} break;
+
+			case A_NEGATE: case A_NOT: case A_INC: case A_DEC: {
+				auto* unop = (AST_unop*)node;
+				map_vars(unop->operand.get());
+			} break;
+
+			case A_ADD: case A_SUB: case A_MUL: case A_DIV:
+			case A_LESS: case A_LESSEQ: case A_GREATER: case A_GREATEREQ: case A_EQUALS: case A_NOT_EQUALS:
+			case A_ASSIGN:
+			case A_ADDEQ: case A_SUBEQ: case A_MULEQ: case A_DIVEQ: {
+				auto* binop = (AST_binop*)node;
+				map_vars(binop->lhs.get());
+				map_vars(binop->rhs.get());
+			} break;
+
+			case A_IF:
+			case A_SELECT: {
+				auto* aif = (AST_if*)node;
+				map_vars(aif->cond     .get());
+				map_vars(aif->true_body.get());
+				if (aif->false_body)
+					map_vars(aif->false_body.get());
 			} break;
 
 			case A_LOOP: {
-				AST* begin = node->child.get();
-				AST* cond  = begin->next.get();
-				AST* end   = cond ->next.get();
-				AST* body  = end  ->next.get();
-				assert(!body->next);
+				auto* loop = (AST_loop*)node;
 
 				// need a scope for the variables declared in <begin> and used in <cond> and <end>
 				var_map.begin_scope();
 
-				map_vars(begin);
-				map_vars(cond);
-				map_vars(body);
-				map_vars(end);
+				map_vars(loop->start.get());
+				map_vars(loop->cond .get());
+				map_vars(loop->body .get());
+				map_vars(loop->end  .get());
 
 				var_map.end_scope();
 			} break;
 
-			default: {
-				for (auto* n=node->child.get(); n != nullptr; n = n->next.get()) {
+			case A_CALL: {
+				auto* call = (AST_call*)node;
+
+				for (auto* n=call->args.get(); n != nullptr; n = n->next.get())
 					map_vars(n);
-				}
+
 			} break;
+
+			case A_BLOCK: {
+				auto* block = (AST_block*)node;
+
+				var_map.begin_scope();
+
+				for (auto* n=block->statements.get(); n != nullptr; n = n->next.get())
+					map_vars(n);
+
+				var_map.end_scope();
+			} break;
+
+			default:
+				assert(false);
+				_UNREACHABLE;
 		}
 	}
 };

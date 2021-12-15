@@ -1,0 +1,11 @@
+
+func B () {
+	printf("B!\n");
+}
+
+func A () {
+	printf("A!\n");
+	B();
+}
+
+A();

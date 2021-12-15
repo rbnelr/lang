@@ -75,5 +75,6 @@
   <ItemGroup>
     <None Include="..\..\test.la" />
     <None Include="..\..\test2.la" />
+    <None Include="..\..\test3.la" />
   </ItemGroup>
 </Project>

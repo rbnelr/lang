@@ -35,7 +35,7 @@ void my_printf (Value& format, Value const* args, size_t argc) {
 // TODO: make this more dynamic
 // function names should be turned into IDs before tokenization
 // then put into a hashmap along with the implementation func ptr and a types list to match arguments against
-Value call_function (strview const& ident, Value* args, size_t argc, AST* call) {
+Value call_function (strview const& ident, Value* args, size_t argc, AST_call* call) {
 	auto match = [] (Value* args, size_t argc, std::initializer_list<Type> types, bool follow_vararg=false) {
 		if (follow_vararg) {
 			if (argc < types.size()) return false;
@@ -83,16 +83,16 @@ struct Stack {
 	std::vector<Value>  values;
 	std::vector<size_t> frames;
 
-	Value& push (AST* var) {
-		assert(var->var.addr == values.size());
+	Value& push (AST_var* var) {
+		assert(var->addr == values.size());
 		return values.emplace_back();
 	}
-	Value& get (AST* var) {
+	Value& get (AST_var* var) {
 		assert(!frames.empty());
 		//size_t frame_ptr = frames.back();
 
-		assert(var->var.addr < values.size());
-		return values[var->var.addr]; 
+		assert(var->addr < values.size());
+		return values[var->addr]; 
 	}
 
 	void begin_scope () {
@@ -109,7 +109,7 @@ struct Stack {
 
 struct Interpreter {
 
-	Value binop (Value& lhs, Value& rhs, ASTType opt, AST* op) {
+	Value binop (Value& lhs, Value& rhs, ASTType opt, AST_binop* op) {
 		Type lt = lhs.type, rt = rhs.type;
 
 		if ((lt == NULL || rt == NULL) &&
@@ -219,7 +219,7 @@ struct Interpreter {
 		assert(false);
 		_UNREACHABLE;
 	}
-	Value unop (Value& rhs, AST* op) {
+	Value unop (Value& rhs, AST_unop* op) {
 		switch (rhs.type) {
 			case BOOL:
 				switch (op->type) {
@@ -249,169 +249,173 @@ struct Interpreter {
 
 	Stack stack;
 
-	Value execute (AST* node, int depth=0) {
+	void execute (AST_base* node, Value* retval, int depth=0) {
+		//assert(retval->type == NULL);
+		//_ASSUME(retval->type == NULL);
+
 		switch (node->type) {
-			case A_BLOCK: {
-				stack.begin_scope();
-
-				for (auto* n=node->child.get(); n != nullptr; n = n->next.get()) {
-					execute(n, depth+1);
-				}
-
-				stack.end_scope();
-				return NULLVAL;
-			}
-
 			case A_LITERAL: {
-				assert(!node->child);
-				return node->literal.value.copy();
-			}
+				auto* lit = (AST_literal*)node;
+				*retval = lit->value.copy();
+			} break;
+
 			case A_VAR_DECL: {
-				assert(!node->child);
-				stack.push(node);
-				return NULLVAL;
-			}
+				stack.push((AST_var*)node);
+			} break;
 			case A_VAR: {
-				assert(!node->child);
-				return stack.get(node).copy();
-			}
-			
-			case A_ASSIGN:
-			case A_ADDEQ: case A_SUBEQ: case A_MULEQ: case A_DIVEQ: {
-				AST* lhs = node->child.get();
-				AST* rhs = lhs->next.get();
-				assert(!rhs->next);
-				assert(lhs->type == A_VAR || (node->type == A_ASSIGN && lhs->type == A_VAR_DECL));
+				*retval = stack.get((AST_var*)node).copy();
+			} break;
 
-				Value tmp = execute(rhs, depth+1);
+			case A_ASSIGN: {
+				auto* op = (AST_binop*)node;
 
-				assert(!lhs->child);
-				if (lhs->type == A_VAR_DECL)
+				Value tmp;
+				execute(op->rhs.get(), &tmp, depth+1);
+
+				assert(op->lhs->type == A_VAR || op->lhs->type == A_VAR_DECL);
+				auto* lhs = (AST_var*)op->lhs.get();
+
+				if (op->lhs->type == A_VAR_DECL)
 					stack.push(lhs);
 
-				Value& val = stack.get(lhs);
+				auto& val = stack.get(lhs);
+				val.set_null();
+				val = std::move(tmp);
 
-				if (node->type != A_ASSIGN) {
-					tmp.assign( binop(val, tmp, assignop2binop(node->type), node) ); // execute the += as +
-				}
+			} break;
 
-				val.assign(std::move(tmp));
+			case A_ADDEQ: case A_SUBEQ: case A_MULEQ: case A_DIVEQ: {
+				auto* op = (AST_binop*)node;
 
-				return NULLVAL;
-			}
+				Value tmp;
+				execute(op->rhs.get(), &tmp, depth+1);
+
+				assert(op->lhs->type == A_VAR);
+				auto* lhs = (AST_var*)op->lhs.get();
+				auto& val = stack.get(lhs);
+
+				Value tmp2 = binop(val, tmp, assignop2binop(node->type), op); // execute the += as +
+
+				val.set_null();
+				val = std::move(tmp2);
+				
+			} break;
+
+			// unary operators
+			case A_NEGATE: case A_NOT: {
+				auto* op = (AST_unop*)node;
+
+				Value operand_val;
+				execute(op->operand.get(), &operand_val, depth+1);
+				*retval = unop(operand_val, op);
+			} break;
+			case A_INC: case A_DEC: {
+				auto* op = (AST_unop*)node;
+
+				if (op->operand->type != A_VAR)
+					throw MyException{"post inc/decrement can only operate on variables", node->source};
+
+				Value& operand_val = stack.get((AST_var*)op->operand.get());
+				*retval = unop(operand_val, op);
+			} break;
 
 			// binary operators
 			case A_ADD: case A_SUB: case A_MUL: case A_DIV:
 			case A_LESS: case A_LESSEQ: case A_GREATER: case A_GREATEREQ:
 			case A_EQUALS: case A_NOT_EQUALS: {
-				AST* lhs = node->child.get();
-				AST* rhs = lhs->next.get();
-				assert(!rhs->next);
+				auto* op = (AST_binop*)node;
 
-				Value l = execute(lhs, depth+1);
-				Value r = execute(rhs, depth+1);
+				Value l, r;
+				execute(op->lhs.get(), &l, depth+1);
+				execute(op->rhs.get(), &r, depth+1);
 
-				return binop(l, r, node->type, node);
-			}
+				*retval = binop(l, r, op->type, op);
+			} break;
 
-			// unary operators
-			case A_NEGATE: case A_NOT:
-			case A_INC: case A_DEC: {
-				AST* operand = node->child.get();
-				assert(!operand->next);
+			case A_IF: {
+				auto* aif = (AST_if*)node;
 
-				if (node->type == A_INC || node->type == A_DEC) {
-					if (operand->type != A_VAR)
-						throw MyException{"post inc/decrement can only operate on variables", node->source};
+				Value condval;
+				execute(aif->cond.get(), &condval, depth+1);
+				if (condval.type != BOOL)
+					throw MyException{"if condition must be bool", aif->cond->source};
 
-					Value& operand_val = stack.get(operand);
-					return unop(operand_val, node);
-				}
-				else {
-					Value operand_val = execute(operand, depth+1);
-					return unop(operand_val, node);
-				}
-			}
+				auto& body = condval.u.b ? aif->true_body : aif->false_body;
+				if (body)
+					execute(body.get(), retval, depth+1);
+			} break;
+			// ternary operator
+			case A_SELECT: {
+				auto* aif = (AST_if*)node;
 
-			case A_CALL: {
-				std::vector<Value> args;
-				args.resize(node->call.argc);
+				Value condval;
+				execute(aif->cond.get(), &condval, depth+1);
+				if (condval.type != BOOL)
+					throw MyException{"select condition must be bool", aif->cond->source};
 
-				size_t i = 0;
-				for (auto* n=node->child.get(); n != nullptr; n = n->next.get()) {
-					Value val = execute(n, depth+1);
-					args[i++] = std::move(val);
-
-					// compiler is too dumb to understand that the moved-from Value is NULL
-					// and generates dtor code for no reason, help it understand
-					assert(val.type == NULL);
-					_ASSUME(val.type == NULL);
-				}
-
-				return call_function(node->call.ident, args.data(), args.size(), node);
-			}
+				auto& body = condval.u.b ? aif->true_body : aif->false_body;
+				execute(body.get(), retval, depth+1);
+			} break;
 
 			// flow control
 			case A_LOOP: {
-				AST* begin = node->child.get();
-				AST* cond  = begin->next.get();
-				AST* end   = cond ->next.get();
-				AST* body  = end  ->next.get();
-				assert(!body->next);
+				auto* loop = (AST_loop*)node;
 
 				// need a scope for the variables declared in <begin> and used in <cond> and <end>
 				stack.begin_scope();
 
-				execute(begin, depth+1);
+				Value startret;
+				execute(loop->start.get(), &startret, depth+1);
 
 				for (;;) {
-					Value condval = execute(cond, depth+1);
+					Value condval;
+					execute(loop->cond.get(), &condval, depth+1);
 					if (condval.type != BOOL)
-						throw MyException{"loop condition must be bool", cond->source};
+						throw MyException{"loop condition must be bool", loop->cond->source};
 					if (!condval.u.b)
 						break;
 
-					execute(body, depth+1);
-
-					execute(end, depth+1);
+					Value bodyret;
+					execute(loop->body.get(), &bodyret, depth+1);
+					Value endret;
+					execute(loop->end.get(), &endret, depth+1);
 				}
 
 				stack.end_scope();
+			} break;
 
-				return NULLVAL;
-			}
-			case A_IF: {
-				AST* cond       = node     ->child.get();
-				AST* true_body  = cond     ->next .get();
-				AST* false_body = true_body->next .get();
-				assert(!false_body->next);
+			case A_CALL: {
+				auto* call = (AST_call*)node;
 
-				Value condval = execute(cond, depth+1);
-				if (condval.type != BOOL)
-					throw MyException{"loop condition must be bool", cond->source};
-				
-				AST* body = condval.u.b ? true_body : false_body;
-				if (body)
-					execute(body, depth+1);
+				std::vector<Value> args;
+				args.resize(call->argc);
 
-				return NULLVAL;
-			}
-			// ternary operator
-			case A_SELECT: {
-				AST* cond       = node     ->child.get();
-				AST* true_expr  = cond     ->next .get();
-				AST* false_expr = true_expr->next .get();
-				assert(!false_expr->next);
+				size_t i = 0;
+				for (auto* n=call->args.get(); n != nullptr; n = n->next.get()) {
+					auto& arg = args[i++];
+					execute(n, &arg, depth+1);
+				}
 
-				Value condval = execute(cond, depth+1);
-				if (condval.type != BOOL)
-					throw MyException{"loop condition must be bool", cond->source};
+				*retval = call_function(call->ident, args.data(), args.size(), call);
+			} break;
 
-				AST* body = condval.u.b ? true_expr : false_expr;
-				return execute(body, depth+1);
-			}
+			case A_BLOCK: {
+				auto* block = (AST_block*)node;
+
+				stack.begin_scope();
+
+				for (auto* n=block->statements.get(); n != nullptr; n = n->next.get()) {
+					Value ignore;
+					execute(n, &ignore, depth+1);
+				}
+
+				stack.end_scope();
+			} break;
+
+			default:
+				assert(false);
+				_UNREACHABLE;
 		}
-		assert(false);
-		_UNREACHABLE;
+		return;
 	}
 };

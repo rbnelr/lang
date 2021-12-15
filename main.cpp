@@ -36,7 +36,7 @@ int main (int argc, const char** argv) {
 			parser.tok = &tokens[0];
 			ast = parser.file();
 
-			//dbg_print(ast.get());
+			ast->dbg_print(0);
 
 			{
 				ZoneScopedN("map_vars");
@@ -45,13 +45,15 @@ int main (int argc, const char** argv) {
 			}
 		}
 
-		//printf("--------------------\n");
-		//
-		//{
-		//	ZoneScopedN("interpret AST");
-		//	Interpreter interp;
-		//	interp.execute(ast.get());
-		//}
+		printf("--------------------\n");
+		
+		{
+			ZoneScopedN("interpret AST");
+			Interpreter interp;
+
+			Value retval;
+			interp.execute(ast.get(), &retval);
+		}
 	}
 	catch (MyException& ex) {
 		ex.print(filename.c_str(), lines);

@@ -49,13 +49,11 @@ struct Value {
 		memcpy(this, &r, sizeof(Value));
 		memset(&r, 0, sizeof(Value));
 	}
-	// manual overwriting of values is possible with manual assignment
-	_FORCEINLINE void assign (Value&& r) {
+
+	_FORCEINLINE void set_null () {
 		if (type == STR)
 			free(u.str);
-
-		memcpy(this, &r, sizeof(Value));
-		memset(&r, 0, sizeof(Value));
+		memset(this, 0, sizeof(Value));
 	}
 
 	// no automatic copy for this class

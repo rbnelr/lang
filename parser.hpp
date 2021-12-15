@@ -195,135 +195,134 @@ inline constexpr ASTType assignop2binop (ASTType type) {
 	return (ASTType)( type + (A_ADD - A_ADDEQ) );
 }
 
-void indent (int depth) {
-	for (int i=0; i<depth; ++i)
-		printf("  ");
-}
-
 template <typename T>
 T* ast_alloc (ASTType type) {
-
 	T* ret = g_allocator.alloc<T>();
-	new (ret) T ();
+	// leave uninitialized, we always initialize every member
 
-	ret->type = type;
+	ret->a.type = type;
 	return ret;
 }
-
-struct AST;
-typedef AST* ast_ptr;
 
 struct AST {
 	ASTType      type;
 	source_range source;
 
 	AST*         next;
-
-	virtual void dbg_print (int depth) {
-		indent(depth);
-		printf("%s ", ASTType_str[type]);
-	}
 };
 
-struct AST_literal : public AST {
+struct AST_literal { AST a;
 	Value        value;
-
-	virtual void dbg_print (int depth) {
-		AST::dbg_print(depth);
-		std::string str(source.text());
-		printf("%s\n", str.c_str());
-	}
 };
-struct AST_var : public AST {
+struct AST_var { AST a;
 	strview  ident;
 	size_t   addr;
-
-	virtual void dbg_print (int depth) {
-		AST::dbg_print(depth);
-		std::string str(ident);
-		printf("%s\n", str.c_str());
-	}
 };
-struct AST_unop : public AST {
+struct AST_unop { AST a;
 	AST* operand;
-
-	virtual void dbg_print (int depth) {
-		AST::dbg_print(depth);
-		printf("(\n");
-		operand->dbg_print(depth+1);
-		indent(depth); printf(")\n");
-	}
 };
-struct AST_binop : public AST {
+struct AST_binop { AST a;
 	AST* lhs;
 	AST* rhs;
-
-	virtual void dbg_print (int depth) {
-		AST::dbg_print(depth);
-		printf("(\n");
-		lhs->dbg_print(depth+1);
-		rhs->dbg_print(depth+1);
-		indent(depth); printf(")\n");
-	}
 };
-struct AST_call : public AST {
+struct AST_call { AST a;
 	strview  ident;
 
 	size_t   argc;
 	AST*     args;
-
-	virtual void dbg_print (int depth) {
-		AST::dbg_print(depth);
-		std::string str(ident);
-		printf("%s", str.c_str());
-
-		printf("(\n");
-		for (auto* n=args; n != nullptr; n = n->next)
-			n->dbg_print(depth+1);
-		indent(depth); printf(")\n");
-	}
 };
-struct AST_block : public AST {
+struct AST_block { AST a;
 	AST* statements;
-
-	virtual void dbg_print (int depth) {
-		AST::dbg_print(depth);
-		printf("(\n");
-		for (auto* n=statements; n != nullptr; n = n->next)
-			n->dbg_print(depth+1);
-		indent(depth); printf(")\n");
-	}
 };
-struct AST_if : public AST {
+struct AST_if { AST a;
 	AST* cond;
 	AST* true_body;
 	AST* false_body;
-
-	virtual void dbg_print (int depth) {
-		AST::dbg_print(depth);
-		printf("(\n");
-		cond      ->dbg_print(depth+1);
-		true_body ->dbg_print(depth+1);
-		false_body->dbg_print(depth+1);
-		indent(depth); printf(")\n");
-	}
 };
-struct AST_loop : public AST {
+struct AST_loop { AST a;
 	AST* start;
 	AST* cond;
 	AST* body;
 	AST* end;
-
-	virtual void dbg_print (int depth) {
-		AST::dbg_print(depth);
-		printf("(\n");
-		start->dbg_print(depth+1);
-		cond ->dbg_print(depth+1);
-		body ->dbg_print(depth+1);
-		end  ->dbg_print(depth+1);
-		indent(depth); printf(")\n");
-	}
 };
+
+// helper function to iterate all child AST nodes and call a func on them
+template <typename FUNC>
+void visit (AST* node, FUNC func) {
+	switch (node->type) {
+		case A_NEGATE: case A_NOT:
+		case A_INC: case A_DEC: { auto* op = (AST_unop*)node;
+			func(op->operand);
+		} break;
+
+		case A_ADD: case A_SUB: case A_MUL: case A_DIV:
+		case A_LESS: case A_LESSEQ: case A_GREATER: case A_GREATEREQ:
+		case A_EQUALS: case A_NOT_EQUALS:
+		case A_ASSIGN:
+		case A_ADDEQ: case A_SUBEQ: case A_MULEQ: case A_DIVEQ: {
+			auto* op = (AST_binop*)node;
+			func(op->lhs);
+			func(op->rhs);
+		} break;
+
+		case A_CALL: { auto* call = (AST_call*)node;
+			for (auto* n=call->args; n != nullptr; n = n->next)
+				func(n);
+		} break;
+
+		case A_BLOCK: { auto* block = (AST_block*)node;
+			for (auto* n=block->statements; n != nullptr; n = n->next)
+				func(n);
+		} break;
+
+		case A_IF:
+		case A_SELECT: { auto* aif = (AST_if*)node;
+			func(aif->cond      );
+			func(aif->true_body );
+			func(aif->false_body);
+		} break;
+
+		case A_LOOP: { auto* loop = (AST_loop*)node;
+			func(loop->start);
+			func(loop->cond );
+			func(loop->body );
+			func(loop->end  );
+		} break;
+
+		default:
+			assert(false);
+			_UNREACHABLE;
+	}
+}
+
+void dbg_print (AST* node, int depth=0) {
+	auto indent = [] (int depth) {
+		for (int i=0; i<depth; ++i)
+			printf("  ");
+	};
+
+	indent(depth);
+	printf("%s ", ASTType_str[node->type]);
+
+	switch (node->type) {
+		case A_LITERAL: { auto* lit = (AST_literal*)node;
+			std::string str(lit->a.source.text());
+			printf("%s\n", str.c_str());
+		} break;
+
+		case A_VAR_DECL:
+		case A_VAR: { auto* var = (AST_var*)node;
+			std::string str(var->ident);
+			printf("%s\n", str.c_str());
+		} break;
+
+		default: {
+			printf("(\n");
+			visit(node, [=] (AST* node) { dbg_print(node, depth+1); });
+			indent(depth); printf(")\n");
+		} break;
+	}
+}
 
 struct Parser {
 	Token* tok;
@@ -344,14 +343,14 @@ struct Parser {
 		tok++;
 	}
 
-	ast_ptr atom () {
+	AST* atom () {
 		switch (tok->type) {
 
 			case T_PAREN_OPEN: {
 				// expression in parentheses
 				tok++;
 
-				ast_ptr result = expression(0);
+				AST* result = expression(0);
 
 				if (tok->type != T_PAREN_CLOSE)
 					throw_error_after("syntax error, parenthesis '(' not closed", tok[-1]);
@@ -365,14 +364,14 @@ struct Parser {
 				if (tok[1].type == T_PAREN_OPEN) {
 
 					auto* call = ast_alloc<AST_call>(A_CALL);
-					call->source.start = tok->source.start;
+					call->a.source.start = tok->source.start;
 					call->ident = tok->source.text();
 
 					tok+=2;
 
 					call->argc = 0;
 
-					ast_ptr* link = &call->args;
+					AST** link = &call->args;
 					while (tok->type != T_PAREN_CLOSE) {
 						*link = expression(0);
 						link = &(*link)->next;
@@ -387,27 +386,27 @@ struct Parser {
 						}
 					}
 
-					call->source.end = tok->source.end;
+					call->a.source.end = tok->source.end;
 					tok++;
-					return ast_ptr(call);
+					return (AST*)call;
 				}
 				// variable
 				else {
 					auto* var = ast_alloc<AST_var>(A_VAR);
-					var->source = tok->source;
+					var->a.source = tok->source;
 					var->ident = tok->source.text();
 
 					tok++;
-					return ast_ptr(var);
+					return (AST*)var;
 				}
 			}
 
 			case T_LITERAL: {
 				auto* lit = ast_alloc<AST_literal>(A_LITERAL);
-				lit->source = tok->source;
+				lit->a.source = tok->source;
 				lit->value = tok->val;
 				tok++;
-				return ast_ptr(lit);
+				return (AST*)lit;
 			}
 			
 			default: {
@@ -417,23 +416,23 @@ struct Parser {
 		}
 	}
 
-	ast_ptr expression (unsigned min_prec) {
+	AST* expression (unsigned min_prec) {
 
 		// unary prefix operators
 		if (tok->type == T_ADD)
 			tok++; // unary plus is no-op
 
-		ast_ptr lhs;
+		AST* lhs;
 
 		if (is_unary_prefix_op(tok->type)) {
 			auto* unary_op = ast_alloc<AST_unop>(tok2unop(tok->type));
-			unary_op->source = tok->source;
+			unary_op->a.source = tok->source;
 
 			unsigned prec = un_prec(tok->type);
 			tok++;
 
 			unary_op->operand = expression(prec);
-			lhs = ast_ptr(unary_op);
+			lhs = (AST*)unary_op;
 		}
 		else {
 			lhs = atom();
@@ -446,12 +445,12 @@ struct Parser {
 				return lhs;
 
 			auto* post_op = ast_alloc<AST_unop>(tok2unop(tok->type));
-			post_op->source = tok->source;
+			post_op->a.source = tok->source;
 
 			tok++;
 
-			post_op->operand = std::move(lhs);
-			lhs = ast_ptr(post_op);
+			post_op->operand = lhs;
+			lhs = (AST*)post_op;
 		}
 
 		// binary and ternary operators
@@ -464,7 +463,7 @@ struct Parser {
 
 			Token& op_tok = *tok++;
 
-			ast_ptr rhs = expression(assoc == LEFT_ASSOC ? prec+1 : prec);
+			AST* rhs = expression(assoc == LEFT_ASSOC ? prec+1 : prec);
 
 			if (op_tok.type == T_QUESTIONMARK) {
 				if (tok->type != T_COLON)
@@ -472,37 +471,37 @@ struct Parser {
 				tok++;
 
 				auto* op = ast_alloc<AST_if>(tok2btop(op_tok.type));
-				op->cond       = std::move(lhs);
-				op->true_body  = std::move(rhs);
+				op->cond       = lhs;
+				op->true_body  = rhs;
 
 				assert(assoc == RIGHT_ASSOC);
 				op->false_body = expression(prec);
 
-				lhs = ast_ptr(op);
+				lhs = (AST*)op;
 			}
 			else {
 				auto* op = ast_alloc<AST_binop>(tok2btop(op_tok.type));
-				op->source = op_tok.source;
+				op->a.source = op_tok.source;
 
-				op->lhs = std::move(lhs);
-				op->rhs = std::move(rhs);
-				lhs = ast_ptr(op);
+				op->lhs = lhs;
+				op->rhs = rhs;
+				lhs = (AST*)op;
 			}
 		}
 
 		return lhs;
 	}
 
-	ast_ptr assign_expr () {
-		ast_ptr lhs;
+	AST* assign_expr () {
+		AST* lhs;
 
 		// lhs declaration in potential assignment
 		if (tok[0].type == T_IDENTIFIER && tok[1].type == T_COLON) {
 			auto* var = ast_alloc<AST_var>(A_VAR_DECL);
-			var->source.start = tok[0].source.start;
-			var->source.end   = tok[1].source.end;
+			var->a.source.start = tok[0].source.start;
+			var->a.source.end   = tok[1].source.end;
 			var->ident = tok[0].source.text();
-			lhs = ast_ptr(var);
+			lhs = (AST*)var;
 
 			tok+=2;
 		}
@@ -517,20 +516,20 @@ struct Parser {
 				throw_error("syntax error, cannot modify variable during declaration", *tok);
 
 			auto* op = ast_alloc<AST_binop>(tok2assign(tok->type));
-			op->source = tok->source;
+			op->a.source = tok->source;
 			tok++;
 
-			ast_ptr rhs = expression(0);
+			AST* rhs = expression(0);
 
-			op->lhs = std::move(lhs);
-			op->rhs = std::move(rhs);
-			lhs = ast_ptr(op);
+			op->lhs = lhs;
+			op->rhs = rhs;
+			lhs = (AST*)op;
 		}
 
 		return lhs;
 	}
 
-	ast_ptr for_loop () {
+	AST* for_loop () {
 		Token* loop_tok = tok++;
 		auto* loop = ast_alloc<AST_loop>(A_LOOP);
 
@@ -542,31 +541,31 @@ struct Parser {
 
 		loop->end   = assign_expr();
 
-		loop->source.start = loop_tok->source.start;
-		loop->source.end   = tok[-1].source.end;
+		loop->a.source.start = loop_tok->source.start;
+		loop->a.source.end   = tok[-1].source.end;
 
 		loop->body = block();
 
-		return ast_ptr(loop);
+		return (AST*)loop;
 	}
 
 	// parses  if <cond> {} elif <cond> {} elif <cond> else {}
 	// where each elif and else is optional
-	ast_ptr if_statement () {
+	AST* if_statement () {
 		auto* aif = ast_alloc<AST_if>(A_IF); 
-		aif->source.start = tok->source.start;
+		aif->a.source.start = tok->source.start;
 		tok++;
 
 		aif->cond       = expression(0);
 
-		aif->source.end = tok[-1].source.end;
+		aif->a.source.end = tok[-1].source.end;
 
 		aif->true_body  = block();
 		aif->false_body = elif_statement();
 
-		return ast_ptr(aif);
+		return (AST*)aif;
 	}
-	ast_ptr elif_statement () {
+	AST* elif_statement () {
 		if (tok->type == T_ELIF) {
 			// code is same as if except that keyword happens to be elif instead of if (this is why C++ does else if)
 			// solve via recurse
@@ -579,7 +578,7 @@ struct Parser {
 		return nullptr;
 	}
 
-	ast_ptr statement () {
+	AST* statement () {
 
 		auto eat_semicolon = [this] () {
 			if (tok->type != T_SEMICOLON)
@@ -611,23 +610,23 @@ struct Parser {
 			}
 
 			default: {
-				ast_ptr statement = assign_expr();
+				AST* statement = assign_expr();
 				eat_semicolon();
 				return statement;
 			}
 		}
 	}
 
-	ast_ptr block () {
+	AST* block () {
 		if (tok->type != T_BLOCK_OPEN)
 			throw_error("syntax error, '{' expected", *tok);
 
 		auto* block = ast_alloc<AST_block>(A_BLOCK);
-		block->source = tok->source;
+		block->a.source = tok->source;
 
 		tok++;
 
-		ast_ptr* link = &block->statements;
+		AST** link = &block->statements;
 		while (tok->type != T_BLOCK_CLOSE) {
 			*link = statement();
 			link = &(*link)->next;
@@ -636,21 +635,21 @@ struct Parser {
 		//if (tok->type != T_BLOCK_CLOSE)
 		//	throw_error("syntax error, '}' expected", *tok);
 		tok++;
-		return ast_ptr(block);
+		return (AST*)block;
 	}
 
-	ast_ptr file () {
+	AST* file () {
 		ZoneScoped;
 
 		auto* block = ast_alloc<AST_block>(A_BLOCK);
-		block->source.start = tok[0].source.start;
+		block->a.source.start = tok[0].source.start;
 
-		ast_ptr* link = &block->statements;
+		AST** link = &block->statements;
 		while (tok->type != T_EOF) {
-			ast_ptr expr = statement();
+			AST* expr = statement();
 
 			if (expr) {
-				*link = std::move(expr);
+				*link = expr;
 				link = &(*link)->next;
 			}
 		}
@@ -658,7 +657,7 @@ struct Parser {
 		if (tok->type != T_EOF)
 			throw_error("syntax error, end of input expected", *tok);
 
-		block->source.end = tok->source.end;
-		return ast_ptr(block);
+		block->a.source.end = tok->source.end;
+		return (AST*)block;
 	}
 };

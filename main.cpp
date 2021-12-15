@@ -42,7 +42,7 @@ int main (int argc, const char** argv) {
 			parser.tok = &tokens[0];
 			ast = parser.file();
 
-			//ast->dbg_print(0);
+			//dbg_print(ast);
 
 			{
 				ZoneScopedN("map_vars");

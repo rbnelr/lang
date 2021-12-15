@@ -33,7 +33,7 @@ struct VariableMapper {
 
 		auto res = vars_map.try_emplace({ scope_idx, var->ident }, addr);
 		if (!res.second)
-			throw MyException{"variable already declared in this scope", var->source};
+			throw MyException{"variable already declared in this scope", var->a.source};
 
 		vars_stack.emplace_back(var->ident);
 
@@ -48,7 +48,7 @@ struct VariableMapper {
 			if (it != vars_map.end())
 				return it->second;
 		}
-		throw MyException{"unknown variable", var->source};
+		throw MyException{"unknown variable", var->a.source};
 	}
 
 	void begin_scope () {

@@ -70,13 +70,13 @@ Value call_function (strview const& ident, Value* args, size_t argc, AST_call* c
 		return (double)(end - args[0].u.i) / (double)timestamp_freq;
 	}
 	else {
-		throw MyException{"unknown function", call->source};
+		throw MyException{"unknown function", call->a.source};
 	}
 
 	return NULLVAL;
 
 mismatch:
-	throw MyException{"no matching function overload", call->source};
+	throw MyException{"no matching function overload", call->a.source};
 }
 
 struct Stack {
@@ -121,7 +121,7 @@ struct Interpreter {
 		}
 
 		if (lt != rt) {
-			throw MyException{"types do not match", op->source};
+			throw MyException{"types do not match", op->a.source};
 		}
 		switch (lt) {
 			case INT: {
@@ -166,12 +166,12 @@ struct Interpreter {
 					case A_SUB:
 					case A_MUL:
 					case A_DIV:
-						throw MyException{"can't do math with bool", op->source};
+						throw MyException{"can't do math with bool", op->a.source};
 					case A_LESS:
 					case A_LESSEQ:
 					case A_GREATER:
 					case A_GREATEREQ:
-						throw MyException{"can't compare bools", op->source};
+						throw MyException{"can't compare bools", op->a.source};
 				}
 			} break;
 			case STR: {
@@ -198,7 +198,7 @@ struct Interpreter {
 					case A_SUB:
 					case A_MUL:
 					case A_DIV:
-						throw MyException{"can't do math with str", op->source};
+						throw MyException{"can't do math with str", op->a.source};
 				}
 			} break;
 			case NULL: {
@@ -207,12 +207,12 @@ struct Interpreter {
 					case A_SUB:
 					case A_MUL:
 					case A_DIV:
-						throw MyException{"can't do math with null", op->source};
+						throw MyException{"can't do math with null", op->a.source};
 					case A_LESS:
 					case A_LESSEQ:
 					case A_GREATER:
 					case A_GREATEREQ:
-						throw MyException{"null can't be larger or smaller", op->source};
+						throw MyException{"null can't be larger or smaller", op->a.source};
 				}
 			} break;
 		}
@@ -222,26 +222,26 @@ struct Interpreter {
 	Value unop (Value& rhs, AST_unop* op) {
 		switch (rhs.type) {
 			case BOOL:
-				switch (op->type) {
+				switch (op->a.type) {
 					case A_NOT    : return !rhs.u.b;
 				}
 				break;
 			case INT:
-				switch (op->type) {
+				switch (op->a.type) {
 					case A_NEGATE : return -rhs.u.i;
 					case A_INC    : return rhs.u.i++;
 					case A_DEC    : return rhs.u.i--;
 				}
 				break;
 			case FLT:
-				switch (op->type) {
+				switch (op->a.type) {
 					case A_NEGATE : return -rhs.u.f;
 					case A_INC    : return rhs.u.f++;
 					case A_DEC    : return rhs.u.f--;
 				}
 				break;
-			case NULL: throw MyException{"can't do math with null", op->source};
-			case STR:  throw MyException{"can't do math with str", op->source};
+			case NULL: throw MyException{"can't do math with null", op->a.source};
+			case STR:  throw MyException{"can't do math with str", op->a.source};
 		}
 		assert(false);
 		_UNREACHABLE;
@@ -322,7 +322,7 @@ struct Interpreter {
 				execute(op->lhs, &l, depth+1);
 				execute(op->rhs, &r, depth+1);
 
-				*retval = binop(l, r, op->type, op);
+				*retval = binop(l, r, op->a.type, op);
 			} break;
 
 			case A_IF: {
@@ -409,6 +409,5 @@ struct Interpreter {
 				assert(false);
 				_UNREACHABLE;
 		}
-		return;
 	}
 };

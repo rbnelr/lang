@@ -62,6 +62,7 @@ struct Interpreter {
 					case A_SUB:        return l -  r;
 					case A_MUL:        return l *  r;
 					case A_DIV:        return l /  r;
+					case A_REMAINDER:  return l %  r;
 
 					case A_LESS:       return l <  r;
 					case A_LESSEQ:     return l <= r;
@@ -85,6 +86,9 @@ struct Interpreter {
 					case A_GREATEREQ:  return l >= r;
 					case A_EQUALS:     return l == r;
 					case A_NOT_EQUALS: return l != r;
+
+					case A_REMAINDER:
+						throw MyException{"% operator not valid for floats", op->a.source};
 				}
 			} break;
 			case BOOL: {
@@ -97,6 +101,7 @@ struct Interpreter {
 					case A_SUB:
 					case A_MUL:
 					case A_DIV:
+					case A_REMAINDER:
 						throw MyException{"can't do math with bool", op->a.source};
 					case A_LESS:
 					case A_LESSEQ:
@@ -129,6 +134,7 @@ struct Interpreter {
 					case A_SUB:
 					case A_MUL:
 					case A_DIV:
+					case A_REMAINDER:
 						throw MyException{"can't do math with str", op->a.source};
 				}
 			} break;
@@ -138,6 +144,7 @@ struct Interpreter {
 					case A_SUB:
 					case A_MUL:
 					case A_DIV:
+					case A_REMAINDER:
 						throw MyException{"can't do math with null", op->a.source};
 					case A_LESS:
 					case A_LESSEQ:
@@ -200,7 +207,10 @@ struct Interpreter {
 		return stack[addr];
 	}
 
-	Value call_function (AST_call* call, size_t stack_ptr) {
+	typedef AST* Jump_t;
+	static inline constexpr AST* JUMP_NORMAL = nullptr;
+
+	Jump_t call_function (AST_call* call, Value* retval, size_t stack_ptr) {
 		auto* func_ast  = call->decl;
 		auto& func_decl = ((AST_funcdef*)func_ast)->decl;
 
@@ -213,7 +223,7 @@ struct Interpreter {
 		// alloc stack space for args and fill them
 		for (auto* n=call->args; n != nullptr; n = n->next) {
 			Value val;
-			execute(n, &val, stack_ptr); // read variables while still in old stack frame
+			_execute(n, &val, stack_ptr); // read variables while still in old stack frame
 			stack_push(val);
 		}
 		
@@ -229,7 +239,11 @@ struct Interpreter {
 
 			for (auto* n=body->statements; n != nullptr; n = n->next) {
 				Value ignore;
-				execute(n, &ignore, call_frame);
+				auto jmp = _execute(n, &ignore, call_frame);
+				if (jmp) {
+					if (jmp->type != A_RETURN) return jmp;
+					break;
+				}
 			}
 		}
 		else {
@@ -240,15 +254,15 @@ struct Interpreter {
 		}
 
 		// get (first) return value from stack
-		Value ret = func_decl.retc != 0 ? vals[0] : NULLVAL;
+		*retval = func_decl.retc != 0 ? vals[0] : NULLVAL;
 
 		// reset stack to before the call
 		stack_reset(call_frame);
 
-		return ret;
+		return JUMP_NORMAL;
 	}
 
-	void execute (AST* node, Value* retval, size_t stack_ptr) {
+	Jump_t _execute (AST* node, Value* retval, size_t stack_ptr) {
 		//assert(retval->type == NULL);
 		//_ASSUME(retval->type == NULL);
 
@@ -262,7 +276,8 @@ struct Interpreter {
 
 				for (auto* n=block->statements; n != nullptr; n = n->next) {
 					Value ignore;
-					execute(n, &ignore, stack_ptr);
+					auto jmp = _execute(n, &ignore, stack_ptr);
+					if (jmp) return jmp;
 				}
 
 				// reset the stack to before the block
@@ -286,24 +301,26 @@ struct Interpreter {
 				auto* aif = (AST_if*)node;
 
 				Value condval;
-				execute(aif->cond, &condval, stack_ptr);
+				_execute(aif->cond, &condval, stack_ptr);
 				if (condval.type != BOOL)
 					throw MyException{"if condition must be bool", aif->cond->source};
 
 				auto& body = condval.u.b ? aif->true_body : aif->false_body;
-				if (body)
-					execute(body, retval, stack_ptr);
+				if (body) {
+					auto jmp = _execute(body, retval, stack_ptr);
+					if (jmp) return jmp;
+				}
 			} break;
 			case A_SELECT: {
 				auto* aif = (AST_if*)node;
 
 				Value condval;
-				execute(aif->cond, &condval, stack_ptr);
+				_execute(aif->cond, &condval, stack_ptr);
 				if (condval.type != BOOL)
 					throw MyException{"select condition must be bool", aif->cond->source};
 
 				auto& body = condval.u.b ? aif->true_body : aif->false_body;
-				execute(body, retval, stack_ptr);
+				_execute(body, retval, stack_ptr);
 			} break;
 
 
@@ -312,7 +329,8 @@ struct Interpreter {
 			} break;
 
 			case A_CALL: {
-				*retval = call_function((AST_call*)node, stack_ptr);
+				auto jmp = call_function((AST_call*)node, retval, stack_ptr);
+				if (jmp) return jmp;
 			} break;
 
 			case A_LOOP: {
@@ -323,14 +341,14 @@ struct Interpreter {
 				stack_ptr = stack.size();
 
 				Value startret;
-				execute(loop->start, &startret, stack_ptr);
+				_execute(loop->start, &startret, stack_ptr);
 
 				// stack_ptr to rest loop body variables is the top of the stack after loop <start>
 				size_t loop_stack_ptr = stack.size();
 
 				for (;;) {
 					Value condval;
-					execute(loop->cond, &condval, stack_ptr);
+					_execute(loop->cond, &condval, stack_ptr);
 					if (condval.type != BOOL)
 						throw MyException{"loop condition must be bool", loop->cond->source};
 					if (!condval.u.b)
@@ -338,25 +356,39 @@ struct Interpreter {
 
 					for (auto* n=body->statements; n != nullptr; n = n->next) {
 						Value ignore;
-						execute(n, &ignore, stack_ptr);
+						auto jmp = _execute(n, &ignore, stack_ptr);
+						if (jmp) {
+							switch (jmp->type) {
+								case A_BREAK:    goto loop_break;
+								case A_CONTINUE: goto loop_continue;
+							}
+						}
 					}
 
+				loop_continue:
 					// pop variables from loop body
 					stack.resize(loop_stack_ptr);
 
 					Value endret;
-					execute(loop->end, &endret, stack_ptr);
+					_execute(loop->end, &endret, stack_ptr);
 				}
+			loop_break:
 
 				// pop variables from loop <start>
 				stack.resize(stack_ptr);
+			} break;
+
+			case A_RETURN:
+			case A_BREAK:
+			case A_CONTINUE: {
+				return node;
 			} break;
 
 			case A_NEGATE: case A_NOT: {
 				auto* op = (AST_unop*)node;
 
 				Value operand_val;
-				execute(op->operand, &operand_val, stack_ptr);
+				_execute(op->operand, &operand_val, stack_ptr);
 				*retval = unop(operand_val, op);
 			} break;
 			case A_INC: case A_DEC: {
@@ -373,7 +405,7 @@ struct Interpreter {
 				auto* op = (AST_binop*)node;
 
 				Value tmp;
-				execute(op->rhs, &tmp, stack_ptr);
+				_execute(op->rhs, &tmp, stack_ptr);
 
 				assert(op->lhs->type == A_VAR || op->lhs->type == A_VARDECL);
 				auto* lhs = (AST_var*)op->lhs;
@@ -384,11 +416,11 @@ struct Interpreter {
 					stack_get(lhs, stack_ptr) = tmp;
 			} break;
 
-			case A_ADDEQ: case A_SUBEQ: case A_MULEQ: case A_DIVEQ: {
+			case A_ADDEQ: case A_SUBEQ: case A_MULEQ: case A_DIVEQ: case A_REMAINDEREQ: {
 				auto* op = (AST_binop*)node;
 
 				Value tmp;
-				execute(op->rhs, &tmp, stack_ptr);
+				_execute(op->rhs, &tmp, stack_ptr);
 
 				assert(op->lhs->type == A_VAR);
 				auto* lhs = (AST_var*)op->lhs;
@@ -397,14 +429,14 @@ struct Interpreter {
 				val = binop(val, tmp, assignop2binop(node->type), op); // execute the += as +
 			} break;
 
-			case A_ADD: case A_SUB: case A_MUL: case A_DIV:
+			case A_ADD: case A_SUB: case A_MUL: case A_DIV: case A_REMAINDER:
 			case A_LESS: case A_LESSEQ: case A_GREATER: case A_GREATEREQ:
 			case A_EQUALS: case A_NOT_EQUALS: {
 				auto* op = (AST_binop*)node;
 
 				Value l, r;
-				execute(op->lhs, &l, stack_ptr);
-				execute(op->rhs, &r, stack_ptr);
+				_execute(op->lhs, &l, stack_ptr);
+				_execute(op->rhs, &r, stack_ptr);
 
 				*retval = binop(l, r, op->a.type, op);
 			} break;
@@ -412,6 +444,25 @@ struct Interpreter {
 			default:
 				assert(false);
 				_UNREACHABLE;
+		}
+
+		return JUMP_NORMAL;
+	}
+
+	void execute (AST* node, Value* retval) {
+		auto jmp = _execute(node, retval, 0);
+		if (jmp) {
+			switch (jmp->type) {
+				case A_RETURN:
+					throw MyException{"error: return keyword is invalid outside of function", jmp->source};
+				case A_BREAK:
+					throw MyException{"error: break keyword is invalid outside of loop", jmp->source};
+				case A_CONTINUE:
+					throw MyException{"error: continue keyword is invalid outside of loop", jmp->source};
+				default:
+					assert(false);
+					_UNREACHABLE;
+			}
 		}
 	}
 };

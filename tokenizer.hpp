@@ -62,6 +62,7 @@ enum TokenType {
 	T_SUB,           // -   binary operator   OR   unary (prefix operator)
 	T_MUL,           // *
 	T_DIV,           // /
+	T_REMAINDER,     // /
 
 	T_LESS,          // <
 	T_LESSEQ,        // <=
@@ -81,6 +82,7 @@ enum TokenType {
 	T_SUBEQ,         // -=
 	T_MULEQ,         // *=
 	T_DIVEQ,         // /=
+	T_REMAINDEREQ,   // /=
 
 	T_COLON,         // :
 	T_SEMICOLON,     // ;
@@ -104,7 +106,13 @@ enum TokenType {
 	T_ELIF,
 	T_ELSE,
 	T_FOR,
+
 	T_FUNC,
+
+	T_RETURN,
+	T_BREAK,
+	T_CONTINUE,
+	T_GOTO,
 };
 inline constexpr const char* TokenType_str[] = {
 	"T_EOF",
@@ -113,6 +121,7 @@ inline constexpr const char* TokenType_str[] = {
 	"T_SUB",
 	"T_MUL",
 	"T_DIV",
+	"T_REMAINDER",
 
 	"T_LESS",
 	"T_LESSEQ",
@@ -132,6 +141,7 @@ inline constexpr const char* TokenType_str[] = {
 	"T_SUBEQ",
 	"T_MULEQ",
 	"T_DIVEQ",
+	"T_REMAINDEREQ",
 
 	"T_COLON",
 	"T_SEMICOLON",
@@ -152,7 +162,13 @@ inline constexpr const char* TokenType_str[] = {
 	"T_ELIF",
 	"T_ELSE",
 	"T_FOR",
+
 	"T_FUNC",
+
+	"T_RETURN",
+	"T_BREAK",
+	"T_CONTINUE",
+	"T_GOTO",
 };
 /*
 inline constexpr const char* TokenType_char[] = {
@@ -162,6 +178,7 @@ inline constexpr const char* TokenType_char[] = {
 	"-",
 	"*",
 	"/",
+	"%",
 
 	"<",
 	"<=",
@@ -181,6 +198,7 @@ inline constexpr const char* TokenType_char[] = {
 	"-=",
 	"*=",
 	"/=",
+	"%=",
 
 	":",
 	";",
@@ -200,7 +218,13 @@ inline constexpr const char* TokenType_char[] = {
 	"if",
 	"elif",
 	"else",
+
 	"for",
+
+	"return",
+	"break",
+	"continue",
+	"goto",
 };
 */
 
@@ -333,32 +357,37 @@ std::vector<Token> tokenize (const char* src, IdentiferIDs& ident_ids) {
 
 			case '*':
 				if (cur[1] != '=') tok.type = T_MUL;
-				else {             tok.type = T_MULEQ;      cur++; }
+				else {             tok.type = T_MULEQ;       cur++; }
 				break;
 
 			case '/':
 				if (cur[1] != '=') tok.type = T_DIV;
-				else {             tok.type = T_DIVEQ;      cur++; }
+				else {             tok.type = T_DIVEQ;       cur++; }
+				break;
+
+			case '%':
+				if (cur[1] != '=') tok.type = T_REMAINDER;
+				else {             tok.type = T_REMAINDEREQ; cur++; }
 				break;
 
 			case '<':
 				if (cur[1] != '=') tok.type = T_LESS;
-				else {             tok.type = T_LESSEQ;     cur++; }
+				else {             tok.type = T_LESSEQ;      cur++; }
 				break;
 
 			case '>':
 				if (cur[1] != '=') tok.type = T_GREATER;
-				else {             tok.type = T_GREATEREQ;  cur++; }
+				else {             tok.type = T_GREATEREQ;   cur++; }
 				break;
 
 			case '!':
 				if (cur[1] != '=') tok.type = T_NOT;
-				else {             tok.type = T_NOT_EQUALS; cur++; }
+				else {             tok.type = T_NOT_EQUALS;  cur++; }
 				break;
 
 			case '=':
 				if (cur[1] != '=') tok.type = T_ASSIGN;
-				else {             tok.type = T_EQUALS;     cur++; }
+				else {             tok.type = T_EQUALS;      cur++; }
 				break;
 
 			case ':': tok.type = T_COLON;         break;
@@ -464,14 +493,22 @@ std::vector<Token> tokenize (const char* src, IdentiferIDs& ident_ids) {
 					continue;
 				#else
 					auto text = tok.source.text();
-					if      (text == "if"   ) { tok.type = T_IF;                           }
-					else if (text == "elif" ) { tok.type = T_ELIF;                         }
-					else if (text == "else" ) { tok.type = T_ELSE;                         }
-					else if (text == "for"  ) { tok.type = T_FOR;                          }
-					else if (text == "null" ) { tok.type = T_LITERAL; tok.val = {};        }
-					else if (text == "true" ) { tok.type = T_LITERAL; tok.val = { true };  }
-					else if (text == "false") { tok.type = T_LITERAL; tok.val = { false }; }
-					else if (text == "func" ) { tok.type = T_FUNC;                         }
+					if      (text == "if"       ) { tok.type = T_IF;                           }
+					else if (text == "elif"     ) { tok.type = T_ELIF;                         }
+					else if (text == "else"     ) { tok.type = T_ELSE;                         }
+					else if (text == "for"      ) { tok.type = T_FOR;                          }
+
+					else if (text == "null"     ) { tok.type = T_LITERAL; tok.val = {};        }
+					else if (text == "true"     ) { tok.type = T_LITERAL; tok.val = { true };  }
+					else if (text == "false"    ) { tok.type = T_LITERAL; tok.val = { false }; }
+
+					else if (text == "func"     ) { tok.type = T_FUNC;                         }
+
+					else if (text == "return"   ) { tok.type = T_RETURN;                       }
+					else if (text == "break"    ) { tok.type = T_BREAK;                        }
+					else if (text == "continue" ) { tok.type = T_CONTINUE;                     }
+					else if (text == "goto"     ) { tok.type = T_GOTO;                         }
+
 					else {
 						tok.type = T_IDENTIFIER;
 					}

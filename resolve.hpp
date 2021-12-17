@@ -32,30 +32,33 @@ struct IdentiferStack {
 		// index of first variable of each scope in <funcs_stack>
 		size_t funcs_base;
 	};
-	Scope cur_scope;
+	Scope cur_scope = {0,0};
 
 	Scope push_scope () {
-		Scope s;
-		s.vars_base  = vars_stack .size();
-		s.funcs_base = funcs_stack.size();
-		scope_depth++;
-		cur_scope = s;
-		return s;
-	}
-	void reset_scope (Scope& s) {
-		assert(scope_depth > 0);
-		scope_depth--;
-		cur_scope = s;
+		Scope old_scope = cur_scope;
 
-		for (size_t i=s.vars_base; i<vars_stack.size(); ++i) {
+		cur_scope.vars_base  = vars_stack .size();
+		cur_scope.funcs_base = funcs_stack.size();
+		scope_depth++;
+
+		return old_scope;
+	}
+	void reset_scope (Scope& old_scope) {
+		assert(scope_depth > 0);
+
+		scope_depth--;
+
+		for (size_t i=cur_scope.vars_base; i<vars_stack.size(); ++i) {
 			ident_map.erase({ scope_depth, vars_stack[i] });
 		}
-		for (size_t i=s.funcs_base; i<funcs_stack.size(); ++i) {
+		for (size_t i=cur_scope.funcs_base; i<funcs_stack.size(); ++i) {
 			ident_map.erase({ scope_depth, funcs_stack[i] });
 		}
 
-		vars_stack .resize(s.vars_base);
-		funcs_stack.resize(s.funcs_base);
+		vars_stack .resize(cur_scope.vars_base);
+		funcs_stack.resize(cur_scope.funcs_base);
+
+		cur_scope = old_scope;
 	}
 
 	void declare_ident (AST* ast, strview const& ident) {
@@ -129,16 +132,16 @@ struct IdentifierResolve {
 			case A_BLOCK: {
 				auto* block = (AST_block*)node;
 
-				auto scope = stack.push_scope();
+				auto old_scope = stack.push_scope();
 
 				for (auto* n=block->statements; n != nullptr; n = n->next)
 					_resolve(n);
 
-				stack.reset_scope(scope);
+				stack.reset_scope(old_scope);
 			} break;
 
 			case A_LITERAL: {
-				// do nothing
+				// nothing to resolve
 			} break;
 
 			case A_VARDECL: {
@@ -188,7 +191,7 @@ struct IdentifierResolve {
 				auto* loop = (AST_loop*)node;
 				auto* body = (AST_block*)loop->body;
 
-				auto scope = stack.push_scope();
+				auto old_scope = stack.push_scope();
 
 				// resolve control header of for loop first, so that it can't access variables from within the body
 				_resolve(loop->start);
@@ -198,7 +201,13 @@ struct IdentifierResolve {
 				for (auto* n=body->statements; n != nullptr; n = n->next)
 					_resolve(n);
 
-				stack.reset_scope(scope);
+				stack.reset_scope(old_scope);
+			} break;
+
+			case A_RETURN:
+			case A_BREAK:
+			case A_CONTINUE: {
+				// nothing to resolve
 			} break;
 
 			case A_NEGATE: case A_NOT: case A_INC: case A_DEC: {
@@ -206,10 +215,10 @@ struct IdentifierResolve {
 				_resolve(unop->operand);
 			} break;
 
-			case A_ADD: case A_SUB: case A_MUL: case A_DIV:
+			case A_ADD: case A_SUB: case A_MUL: case A_DIV: case A_REMAINDER:
 			case A_LESS: case A_LESSEQ: case A_GREATER: case A_GREATEREQ: case A_EQUALS: case A_NOT_EQUALS:
 			case A_ASSIGN:
-			case A_ADDEQ: case A_SUBEQ: case A_MULEQ: case A_DIVEQ: {
+			case A_ADDEQ: case A_SUBEQ: case A_MULEQ: case A_DIVEQ: case A_REMAINDEREQ: {
 				auto* binop = (AST_binop*)node;
 				_resolve(binop->lhs);
 				_resolve(binop->rhs);

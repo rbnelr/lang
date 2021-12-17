@@ -7,7 +7,6 @@
 	/* blah */
 */
 
-
 //// Variable declarations
 //l = 7; // error: unknown variable.
 l :;
@@ -191,6 +190,27 @@ for y:=0; y<4; y++ {
 		printf("{}{} ", y,x);
 	}
 	printf("\n");
+}
+
+printf("\n");
+printf("---------------\n");
+
+// 
+sqr := 625; // 25^2
+sqrt :;
+for i:=0; i<100; i++ {
+	if i*i == sqr {
+		sqrt = i;
+		break;
+	}
+}
+printf("sqrt({}) is {}\n", sqr, sqrt);
+
+for i:=0; i<10; i++ {
+	if i % 2 != 0 {
+		continue; // skip odd numbers
+	}
+	printf("{} is even\n", i);
 }
 
 printf("---------------\n");

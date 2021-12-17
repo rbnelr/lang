@@ -10,7 +10,7 @@ inline constexpr bool is_binary_or_ternary_op (TokenType tok) {
 	return tok >= T_ADD && tok <= T_QUESTIONMARK;
 }
 inline constexpr bool is_binary_assignemnt_op (TokenType tok) {
-	return tok >= T_ASSIGN && tok <= T_DIVEQ;
+	return tok >= T_ASSIGN && tok <= T_REMAINDEREQ;
 }
 
 inline constexpr bool is_unary_op         (TokenType tok) {
@@ -28,6 +28,7 @@ inline constexpr uint8_t BINARY_OP_PRECEDENCE[] = {
 	3, // T_SUB
 	5, // T_MUL
 	5, // T_DIV
+	5, // T_REMAINDER
 
 	2, // T_LESS
 	2, // T_LESSEQ
@@ -47,6 +48,7 @@ inline constexpr uint8_t UNARY_OP_PRECEDENCE[] = {
 	4,   // T_SUB
 	255, // T_MUL
 	255, // T_DIV
+	255, // T_REMAINDER
 
 	255, // T_LESS
 	255, // T_LESSEQ
@@ -71,6 +73,7 @@ inline constexpr Associativity BINARY_OP_ASSOCIATIVITY[] = { // 0 = left (left t
 	LEFT_ASSOC, // T_SUB
 	LEFT_ASSOC, // T_MUL
 	LEFT_ASSOC, // T_DIV
+	LEFT_ASSOC, // T_REMAINDER
 
 	LEFT_ASSOC, // T_LESS
 	LEFT_ASSOC, // T_LESSEQ
@@ -118,11 +121,16 @@ enum ASTType {
 	A_IF,
 	A_LOOP,
 
+	A_RETURN,
+	A_BREAK,
+	A_CONTINUE,
+
 	// binary operators
 	A_ADD,
 	A_SUB,
 	A_MUL,
 	A_DIV,
+	A_REMAINDER,
 
 	A_LESS,
 	A_LESSEQ,
@@ -145,6 +153,7 @@ enum ASTType {
 	A_SUBEQ,
 	A_MULEQ,
 	A_DIVEQ,
+	A_REMAINDEREQ,
 };
 inline const char* ASTType_str[] = {
 	"A_BLOCK",
@@ -160,13 +169,18 @@ inline const char* ASTType_str[] = {
 	"A_FUNCDEF_BUILTIN",
 	"A_CALL",
 
-	"A_LOOP",
 	"A_IF",
+	"A_LOOP",
+
+	"A_RETURN",
+	"A_BREAK",
+	"A_CONTINUE",
 
 	"A_ADD",
 	"A_SUB",
 	"A_MUL",
 	"A_DIV",
+	"A_REMAINDER",
 
 	"A_LESS",
 	"A_LESSEQ",
@@ -187,6 +201,7 @@ inline const char* ASTType_str[] = {
 	"A_SUBEQ",
 	"A_MULEQ",
 	"A_DIVEQ",
+	"A_REMAINDEREQ",
 };
 
 inline constexpr ASTType tok2btop (TokenType tok) {
@@ -203,19 +218,8 @@ inline constexpr ASTType tok2assign (TokenType tok) {
 }
 
 inline constexpr ASTType assignop2binop (ASTType type) {
-	assert(type >= A_ADDEQ && type <= A_DIVEQ);
+	assert(type >= A_ADDEQ && type <= A_REMAINDEREQ);
 	return (ASTType)( type + (A_ADD - A_ADDEQ) );
-}
-
-template <typename T>
-T* ast_alloc (ASTType type) {
-	T* ret = g_allocator.alloc<T>();
-	
-	memset(ret, 0, sizeof(T));
-
-	ret->a.type = type;
-	ret->a.next = nullptr;
-	return ret;
 }
 
 struct AST {
@@ -224,6 +228,27 @@ struct AST {
 
 	AST*         next;
 };
+
+template <typename T>
+inline T* ast_alloc (ASTType type) {
+	T* ret = g_allocator.alloc<T>();
+	
+	memset(ret, 0, sizeof(T));
+
+	ret->a.type = type;
+	ret->a.next = nullptr;
+	return ret;
+}
+template <>
+inline AST* ast_alloc<AST> (ASTType type) {
+	AST* ret = g_allocator.alloc<AST>();
+
+	memset(ret, 0, sizeof(AST));
+
+	ret->type = type;
+	ret->next = nullptr;
+	return ret;
+}
 
 struct AST_block { AST a;
 	AST*         statements;
@@ -304,12 +329,6 @@ void visit (AST* node, FUNC func) {
 				func(n);
 		} break;
 
-		case A_LITERAL:
-		case A_VARDECL:
-		case A_VAR: {
-			func(node);
-		} break;
-
 		case A_FUNCDEF: { auto* f = (AST_funcdef*)node;
 			for (auto* n=f->decl.args; n != nullptr; n = n->next)
 				func(n);
@@ -342,23 +361,24 @@ void visit (AST* node, FUNC func) {
 			func(op->operand);
 		} break;
 
-		case A_ADD: case A_SUB: case A_MUL: case A_DIV:
+		case A_ADD: case A_SUB: case A_MUL: case A_DIV: case A_REMAINDER:
 		case A_LESS: case A_LESSEQ: case A_GREATER: case A_GREATEREQ:
 		case A_EQUALS: case A_NOT_EQUALS:
 		case A_ASSIGN:
-		case A_ADDEQ: case A_SUBEQ: case A_MULEQ: case A_DIVEQ: {
+		case A_ADDEQ: case A_SUBEQ: case A_MULEQ: case A_DIVEQ: case A_REMAINDEREQ: {
 			auto* op = (AST_binop*)node;
 			func(op->lhs);
 			func(op->rhs);
 		} break;
 
 		default:
-			assert(false);
-			_UNREACHABLE;
+			func(node);
 	}
 }
 
 void dbg_print (AST* node, int depth=0) {
+	if (!node) return;
+	
 	auto indent = [] (int depth) {
 		for (int i=0; i<depth; ++i)
 			printf("  ");
@@ -376,12 +396,12 @@ void dbg_print (AST* node, int depth=0) {
 
 		case A_VARDECL: { auto* var = (AST_vardecl*)node;
 			std::string str(var->ident);
-			printf(" %s\n", str.c_str());
+			printf(" %s (%" PRIuMAX ")\n", str.c_str(), var->resolve_addr);
 		} break;
 
 		case A_VAR: { auto* var = (AST_var*)node;
 			std::string str(var->ident);
-			printf(" %s\n", str.c_str());
+			printf(" %s (%" PRIiMAX ")\n", str.c_str(), var->stack_offs);
 		} break;
 
 		case A_FUNCDEF: { auto* f = (AST_funcdef*)node;
@@ -415,6 +435,12 @@ void dbg_print (AST* node, int depth=0) {
 			std::string str(call->ident);
 			printf(" %s", str.c_str());
 			children = true;
+		} break;
+		
+		case A_RETURN:
+		case A_BREAK:
+		case A_CONTINUE: {
+			printf("\n");
 		} break;
 
 		default:
@@ -766,6 +792,21 @@ struct Parser {
 
 			case T_FOR: {
 				return for_loop();
+			}
+
+			case T_RETURN:
+			case T_BREAK:
+			case T_CONTINUE: {
+				ASTType type;
+				switch (tok->type) {
+					case T_RETURN:   type = A_RETURN;   break;
+					case T_BREAK:    type = A_BREAK;    break;
+					case T_CONTINUE: type = A_CONTINUE; break;
+				}
+				auto* ast = ast_alloc<AST>(type);
+				ast->source = tok->source;
+				tok++;
+				return ast;
 			}
 
 			case T_FUNC: {

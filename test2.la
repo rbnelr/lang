@@ -8,7 +8,7 @@ printf("f? t?0:1 : t?2:3 = {}\n", f? t?0:1 : t?2:3);
 printf("f? f?0:1 : f?2:3 = {}\n", f? f?0:1 : f?2:3);
 
 
-printfhg("{}\n", - - - a ++ ++);
+printf("{}\n", - - - a ++ ++);
 
 printf("{}\n", a - - b + c);
 printf("{}\n", a - - b * c);

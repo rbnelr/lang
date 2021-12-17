@@ -50,13 +50,13 @@ int main (int argc, const char** argv) {
 				ast = parser.file();
 			}
 
-			dbg_print(ast);
-
 			{
 				ZoneScopedN("resolve_idents");
 				IdentifierResolve ires;
 				ires.resolve_idents(ast);
 			}
+
+			dbg_print(ast);
 		}
 
 	#ifndef TRACY_ENABLE
@@ -67,7 +67,7 @@ int main (int argc, const char** argv) {
 			Interpreter interp;
 		
 			Value retval;
-			interp.execute(ast, &retval, 0);
+			interp.execute(ast, &retval);
 		}
 	#endif
 	}

@@ -2,13 +2,13 @@
 #include "errors.hpp"
 #include "tokenizer.hpp"
 #include "parser.hpp"
-#include "optimize.hpp"
+#include "resolve.hpp"
 #include "ast_exec.hpp"
 
 int main (int argc, const char** argv) {
 	enable_console_ansi_color_codes();
 
-	std::string filename = "test.la";
+	std::string filename = "test3.la";
 	std::string source;
 	{
 		ZoneScopedN("load_text_file");
@@ -34,20 +34,28 @@ int main (int argc, const char** argv) {
 		IdentiferIDs ident_ids;
 		{
 			ZoneScopedN("compile");
-			lines.parse_lines(source.c_str());
+			{
+				lines.parse_lines(source.c_str());
+			}
 
-			auto tokens = tokenize(source.c_str(), ident_ids);
-
-			Parser parser;
-			parser.tok = &tokens[0];
-			ast = parser.file();
-
-			//dbg_print(ast);
+			std::vector<Token> tokens;
+			{
+				tokens = tokenize(source.c_str(), ident_ids);
+			}
 
 			{
-				ZoneScopedN("map_vars");
-				OptimizePasses opt;
-				opt.map_vars(ast);
+				ZoneScopedN("parse");
+				Parser parser;
+				parser.tok = &tokens[0];
+				ast = parser.file();
+			}
+
+			dbg_print(ast);
+
+			{
+				ZoneScopedN("resolve_idents");
+				IdentifierResolve ires;
+				ires.resolve_idents(ast);
 			}
 		}
 
@@ -59,7 +67,7 @@ int main (int argc, const char** argv) {
 			Interpreter interp;
 		
 			Value retval;
-			interp.execute(ast, &retval);
+			interp.execute(ast, &retval, 0);
 		}
 	#endif
 	}

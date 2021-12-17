@@ -1,11 +1,73 @@
 
-func B () {
-	printf("B!\n");
+// Comment
+/*
+	Comment
+	word
+	/*
+		
+	*/
+	// blah
+*/
+
+h := "foo";
+h2 := "bar";
+
+printf("start {} {}\n", h, h2);
+
+capt2 := "cap2";
+
+depth := 0;
+func B (msg) {
+	depth++;
+
+	printf("B {{\n");
+	printf("{}!\n", msg);
+
+	printf("does not work!\nthis should say \"cap2\" -> \"{capt2}\"\n\n", capt2);
+
+	printf("}\n");
+
+	depth--;
 }
 
+capt1 := "cap1";
+
+//A(); does not work yet, resolver would have to do a prescan
+
 func A () {
-	printf("A!\n");
-	B();
+	depth++;
+
+	printf("A {{\n");
+
+	mymsg := "Hello from A";
+	B("test");
+	B(mymsg);
+
+	printf("\nshould not work! {capt1}\n", capt1);
+
+	printf("}\n");
+
+	depth--;
 }
 
 A();
+
+func myprint (msg) {
+	printf(" prin {}", msg);
+}
+
+printf("-----------\n");
+for i:=0; i<10; i++ {
+	myprint(i);
+	
+	func get_msg () = (msg) {
+		msg = "---";
+	} 
+	mymsg := get_msg();
+
+	{
+		myprint(mymsg);
+	}
+
+	printf("\n");
+}

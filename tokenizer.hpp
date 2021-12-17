@@ -1,7 +1,7 @@
 #pragma once
 #include "common.hpp"
 #include "errors.hpp"
-#include "types.hpp"
+#include "value.hpp"
 #include "line_map.hpp"
 #include "ident_ids.hpp"
 
@@ -104,6 +104,7 @@ enum TokenType {
 	T_ELIF,
 	T_ELSE,
 	T_FOR,
+	T_FUNC,
 };
 inline constexpr const char* TokenType_str[] = {
 	"T_EOF",
@@ -151,6 +152,7 @@ inline constexpr const char* TokenType_str[] = {
 	"T_ELIF",
 	"T_ELSE",
 	"T_FOR",
+	"T_FUNC",
 };
 /*
 inline constexpr const char* TokenType_char[] = {
@@ -469,6 +471,7 @@ std::vector<Token> tokenize (const char* src, IdentiferIDs& ident_ids) {
 					else if (text == "null" ) { tok.type = T_LITERAL; tok.val = {};        }
 					else if (text == "true" ) { tok.type = T_LITERAL; tok.val = { true };  }
 					else if (text == "false") { tok.type = T_LITERAL; tok.val = { false }; }
+					else if (text == "func" ) { tok.type = T_FUNC;                         }
 					else {
 						tok.type = T_IDENTIFIER;
 					}

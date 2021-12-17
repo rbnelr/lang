@@ -16,10 +16,10 @@ l :;
 l = 4;
 
 s := "blah";
-println(s);
+printf("{}\n", s);
 
 s = "foo";
-println(s);
+printf("{}\n", s);
 
 //// Math
 c := -0 + 1;
@@ -40,10 +40,10 @@ printf("a: {}  b: {}  c: {}\n", a, b, c);
 c = -c;
 printf("c: {}\n", c);
 
-println(1 * a - 2);
+printf("{}\n", 1 * a - 2);
 
-println(1 * 5 * 2);
-println(1 - 5 * 2);
+printf("{}\n", 1 * 5 * 2);
+printf("{}\n", 1 - 5 * 2);
 
 //// Post inc/decrement
 h := 0;
@@ -54,9 +54,9 @@ k := 6;
 
 // error: post inc/decrement can only operate on variables.
 // (because after returned value of first increment is a rvalue)
-//println(- - - k ++ ++);
-println(- - - k ++);
-println(k);
+//printf("{}\n", - - - k ++ ++);
+printf("{}\n", - - - k ++);
+printf("{}\n", k);
 
 //// Empty statements (TODO: disallow?)
 ;
@@ -64,7 +64,7 @@ println(k);
 {}
 {;}
 
-println("");
+printf("\n");
 
 //// Scoped variables
 printf("---------------\n");
@@ -94,10 +94,10 @@ for i:=0; i<2; i++ {}
 //// Comparisons and booleans
 printf("---------------\n");
 
-//println(null + 1); // error: types do not match.
-//println(null > 1); // error: types do not match.
-//println(null + null); // error: can't do math with null.
-//println(null > null); // error: null can't be larger or smaller.
+//printf("{}\n", null + 1); // error: types do not match.
+//printf("{}\n", null > 1); // error: types do not match.
+//printf("{}\n", null + null); // error: can't do math with null.
+//printf("{}\n", null > null); // error: null can't be larger or smaller.
 
 printf("false             : {}\n", false          );
 printf("true              : {}\n", true           );

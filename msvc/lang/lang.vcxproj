@@ -143,14 +143,15 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\..\common\tracy\Tracy.hpp" />
+    <ClInclude Include="..\..\builtins.hpp" />
     <ClInclude Include="..\..\common.hpp" />
     <ClInclude Include="..\..\errors.hpp" />
     <ClInclude Include="..\..\ast_exec.hpp" />
     <ClInclude Include="..\..\line_map.hpp" />
-    <ClInclude Include="..\..\optimize.hpp" />
+    <ClInclude Include="..\..\resolve.hpp" />
     <ClInclude Include="..\..\parser.hpp" />
     <ClInclude Include="..\..\tokenizer.hpp" />
-    <ClInclude Include="..\..\types.hpp" />
+    <ClInclude Include="..\..\value.hpp" />
     <ClInclude Include="..\..\util\console_colors.hpp" />
     <ClInclude Include="..\..\util\file_io.hpp" />
     <ClInclude Include="..\..\util\smhasher\MurmurHash1.h" />
@@ -163,6 +164,9 @@
     <None Include="..\..\test.la" />
     <None Include="..\..\test2.la" />
     <None Include="..\..\test3.la" />
+  </ItemGroup>
+  <ItemGroup>
+    <Natvis Include="compiler.natvis" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

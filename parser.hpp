@@ -2,7 +2,9 @@
 #include "common.hpp"
 #include "tokenizer.hpp"
 #include "errors.hpp"
-#include "types.hpp"
+#include "value.hpp"
+
+typedef void (*builtin_func_t)(Value* vals, size_t valc);
 
 inline constexpr bool is_binary_or_ternary_op (TokenType tok) {
 	return tok >= T_ADD && tok <= T_QUESTIONMARK;
@@ -11,10 +13,10 @@ inline constexpr bool is_binary_assignemnt_op (TokenType tok) {
 	return tok >= T_ASSIGN && tok <= T_DIVEQ;
 }
 
-inline constexpr bool is_unary_op (TokenType tok) {
+inline constexpr bool is_unary_op         (TokenType tok) {
 	return (tok >= T_ADD && tok <= T_SUB) || (tok >= T_NOT && tok <= T_DEC);
 }
-inline constexpr bool is_unary_prefix_op (TokenType tok) {
+inline constexpr bool is_unary_prefix_op  (TokenType tok) {
 	return (tok >= T_ADD && tok <= T_SUB) || tok == T_NOT;
 }
 inline constexpr bool is_unary_postfix_op (TokenType tok) {
@@ -102,9 +104,14 @@ enum ASTType {
 
 	// values
 	A_LITERAL,
-	A_VAR,
-	A_VAR_DECL,
 
+	A_VARDECL,
+	A_VAR,
+
+	A_VARARGS,
+
+	A_FUNCDEF,
+	A_FUNCDEF_BUILTIN,
 	A_CALL,
 
 	// flow control
@@ -143,9 +150,14 @@ inline const char* ASTType_str[] = {
 	"A_BLOCK",
 
 	"A_LITERAL",
-	"A_VAR",
-	"A_VAR_DECL",
 
+	"A_VARDECL",
+	"A_VAR",
+
+	"A_VARARGS",
+
+	"A_FUNCDEF",
+	"A_FUNCDEF_BUILTIN",
 	"A_CALL",
 
 	"A_LOOP",
@@ -198,9 +210,11 @@ inline constexpr ASTType assignop2binop (ASTType type) {
 template <typename T>
 T* ast_alloc (ASTType type) {
 	T* ret = g_allocator.alloc<T>();
-	// leave uninitialized, we always initialize every member
+	
+	memset(ret, 0, sizeof(T));
 
 	ret->a.type = type;
+	ret->a.next = nullptr;
 	return ret;
 }
 
@@ -211,67 +225,101 @@ struct AST {
 	AST*         next;
 };
 
+struct AST_block { AST a;
+	AST*         statements;
+};
+
 struct AST_literal { AST a;
 	Value        value;
 };
-struct AST_var { AST a;
-	strview  ident;
-	size_t   addr;
-};
-struct AST_unop { AST a;
-	AST* operand;
-};
-struct AST_binop { AST a;
-	AST* lhs;
-	AST* rhs;
-};
-struct AST_call { AST a;
-	strview  ident;
 
-	size_t   argc;
-	AST*     args;
+struct AST_vardecl { AST a;
+	strview      ident;
+	size_t       resolve_addr; // position on stack during resolving
 };
-struct AST_block { AST a;
-	AST* statements;
+
+struct AST_var { AST a;
+	strview      ident;
+	AST*         decl;
+	intptr_t     stack_offs; // position at runtime relative to stack frame
 };
+
+struct AST_funcdecl {
+	strview      ident;
+
+	size_t       argc;
+	AST*         args;
+
+	size_t       retc;
+	AST*         rets;
+};
+struct AST_funcdef { AST a;
+	AST_funcdecl decl;
+
+	AST*         body;
+};
+struct AST_funcdef_builtin { AST a;
+	AST_funcdecl decl;
+
+	builtin_func_t func_ptr;
+};
+
+struct AST_call { AST a;
+	strview      ident;
+
+	size_t       argc;
+	AST*         args;
+
+	AST*         decl; // either points to AST_funcdef or AST_funcdef_builtin, check via AST.type
+};
+
 struct AST_if { AST a;
-	AST* cond;
-	AST* true_body;
-	AST* false_body;
+	AST*         cond;
+	AST*         true_body;
+	AST*         false_body;
 };
 struct AST_loop { AST a;
-	AST* start;
-	AST* cond;
-	AST* body;
-	AST* end;
+	AST*         start;
+	AST*         cond;
+	AST*         body;
+	AST*         end;
+};
+
+struct AST_unop { AST a;
+	AST*         operand;
+};
+struct AST_binop { AST a;
+	AST*         lhs;
+	AST*         rhs;
 };
 
 // helper function to iterate all child AST nodes and call a func on them
 template <typename FUNC>
 void visit (AST* node, FUNC func) {
+	if (!node) return;
+
 	switch (node->type) {
-		case A_NEGATE: case A_NOT:
-		case A_INC: case A_DEC: { auto* op = (AST_unop*)node;
-			func(op->operand);
+		case A_BLOCK: { auto* block = (AST_block*)node;
+			for (auto* n=block->statements; n != nullptr; n = n->next)
+				func(n);
 		} break;
 
-		case A_ADD: case A_SUB: case A_MUL: case A_DIV:
-		case A_LESS: case A_LESSEQ: case A_GREATER: case A_GREATEREQ:
-		case A_EQUALS: case A_NOT_EQUALS:
-		case A_ASSIGN:
-		case A_ADDEQ: case A_SUBEQ: case A_MULEQ: case A_DIVEQ: {
-			auto* op = (AST_binop*)node;
-			func(op->lhs);
-			func(op->rhs);
+		case A_LITERAL:
+		case A_VARDECL:
+		case A_VAR: {
+			func(node);
+		} break;
+
+		case A_FUNCDEF: { auto* f = (AST_funcdef*)node;
+			for (auto* n=f->decl.args; n != nullptr; n = n->next)
+				func(n);
+			for (auto* n=f->decl.rets; n != nullptr; n = n->next)
+				func(n);
+			func(f->body);
 		} break;
 
 		case A_CALL: { auto* call = (AST_call*)node;
 			for (auto* n=call->args; n != nullptr; n = n->next)
-				func(n);
-		} break;
-
-		case A_BLOCK: { auto* block = (AST_block*)node;
-			for (auto* n=block->statements; n != nullptr; n = n->next)
 				func(n);
 		} break;
 
@@ -289,6 +337,21 @@ void visit (AST* node, FUNC func) {
 			func(loop->end  );
 		} break;
 
+		case A_NEGATE: case A_NOT:
+		case A_INC: case A_DEC: { auto* op = (AST_unop*)node;
+			func(op->operand);
+		} break;
+
+		case A_ADD: case A_SUB: case A_MUL: case A_DIV:
+		case A_LESS: case A_LESSEQ: case A_GREATER: case A_GREATEREQ:
+		case A_EQUALS: case A_NOT_EQUALS:
+		case A_ASSIGN:
+		case A_ADDEQ: case A_SUBEQ: case A_MULEQ: case A_DIVEQ: {
+			auto* op = (AST_binop*)node;
+			func(op->lhs);
+			func(op->rhs);
+		} break;
+
 		default:
 			assert(false);
 			_UNREACHABLE;
@@ -302,25 +365,66 @@ void dbg_print (AST* node, int depth=0) {
 	};
 
 	indent(depth);
-	printf("%s ", ASTType_str[node->type]);
+	printf("%s", ASTType_str[node->type]);
 
+	bool children = false;
 	switch (node->type) {
 		case A_LITERAL: { auto* lit = (AST_literal*)node;
 			std::string str(lit->a.source.text());
-			printf("%s\n", str.c_str());
+			printf(" %s\n", str.c_str());
 		} break;
 
-		case A_VAR_DECL:
+		case A_VARDECL: { auto* var = (AST_vardecl*)node;
+			std::string str(var->ident);
+			printf(" %s\n", str.c_str());
+		} break;
+
 		case A_VAR: { auto* var = (AST_var*)node;
 			std::string str(var->ident);
-			printf("%s\n", str.c_str());
+			printf(" %s\n", str.c_str());
 		} break;
 
-		default: {
-			printf("(\n");
-			visit(node, [=] (AST* node) { dbg_print(node, depth+1); });
+		case A_FUNCDEF: { auto* f = (AST_funcdef*)node;
+			std::string str(f->decl.ident);
+			printf(" %s\n", str.c_str());
+
+			depth++;
+
+			if (f->decl.args) {
+				indent(depth); printf("args: (\n");
+				visit((AST*)f->decl.args, [=] (AST* node) { dbg_print(node, depth+1); });
+				indent(depth); printf(")\n");
+			} else {
+				indent(depth); printf("args: ()\n");
+			}
+
+			if (f->decl.rets) {
+				indent(depth); printf("rets: (\n");
+				visit((AST*)f->decl.rets, [=] (AST* node) { dbg_print(node, depth+1); });
+				indent(depth); printf(")\n");
+			} else {
+				indent(depth); printf("rets: ()\n");
+			}
+
+			indent(depth); printf("(\n");
+			visit(f->body, [=] (AST* node) { dbg_print(node, depth+1); });
 			indent(depth); printf(")\n");
 		} break;
+
+		case A_CALL: { auto* call = (AST_var*)node;
+			std::string str(call->ident);
+			printf(" %s", str.c_str());
+			children = true;
+		} break;
+
+		default:
+			children = true;
+	}
+
+	if (children) {
+		printf(" (\n");
+		visit(node, [=] (AST* node) { dbg_print(node, depth+1); });
+		indent(depth); printf(")\n");
 	}
 }
 
@@ -341,6 +445,31 @@ struct Parser {
 		if (tok->type != T_SEMICOLON)
 			throw_error_after("syntax error, ';' expected", tok[-1]);
 		tok++;
+	}
+
+	template <typename FUNC>
+	size_t comma_seperated_list (AST** link, FUNC element) {
+		assert(tok->type == T_PAREN_OPEN);
+		tok++;
+
+		*link = nullptr;
+
+		size_t count = 0;
+		while (tok->type != T_PAREN_CLOSE) {
+			*link = element();
+
+			link = &(*link)->next;
+			count++;
+
+			if (tok->type == T_COMMA) {
+				tok++;
+			}
+			else if (tok->type != T_PAREN_CLOSE) {
+				throw_error_after("syntax error, ',' or ')' expected!", tok[-1]);
+			}
+		}
+		tok++; // T_PAREN_CLOSE
+		return count;
 	}
 
 	AST* atom () {
@@ -366,28 +495,13 @@ struct Parser {
 					auto* call = ast_alloc<AST_call>(A_CALL);
 					call->a.source.start = tok->source.start;
 					call->ident = tok->source.text();
-
-					tok+=2;
-
-					call->argc = 0;
-
-					AST** link = &call->args;
-					while (tok->type != T_PAREN_CLOSE) {
-						*link = expression(0);
-						link = &(*link)->next;
-
-						call->argc++;
-
-						if (tok->type == T_COMMA) {
-							tok++;
-						}
-						else if (tok->type != T_PAREN_CLOSE) {
-							throw_error_after("syntax error, ',' or ')' expected!", tok[-1]);
-						}
-					}
-
-					call->a.source.end = tok->source.end;
 					tok++;
+
+					call->argc = comma_seperated_list(&call->args, [this] () {
+						return expression(0);
+					});
+
+					call->a.source.end = tok[-1].source.end;
 					return (AST*)call;
 				}
 				// variable
@@ -495,9 +609,9 @@ struct Parser {
 	AST* assign_expr () {
 		AST* lhs;
 
-		// lhs declaration in potential assignment
+		// lhs is var decl
 		if (tok[0].type == T_IDENTIFIER && tok[1].type == T_COLON) {
-			auto* var = ast_alloc<AST_var>(A_VAR_DECL);
+			auto* var = ast_alloc<AST_vardecl>(A_VARDECL);
 			var->a.source.start = tok[0].source.start;
 			var->a.source.end   = tok[1].source.end;
 			var->ident = tok[0].source.text();
@@ -505,14 +619,14 @@ struct Parser {
 
 			tok+=2;
 		}
-		// lhs expression in potential assignment
+		// lhs is expression
 		else {
 			lhs = expression(0);
 		}
 
 		// lhs = rhs   or  lhs += rhs  etc.
 		if (is_binary_assignemnt_op(tok->type)) {
-			if (lhs->type == A_VAR_DECL && tok->type != T_ASSIGN)
+			if (lhs->type == A_VARDECL && tok->type != T_ASSIGN)
 				throw_error("syntax error, cannot modify variable during declaration", *tok);
 
 			auto* op = ast_alloc<AST_binop>(tok2assign(tok->type));
@@ -578,6 +692,60 @@ struct Parser {
 		return nullptr;
 	}
 
+	AST* function_def () {
+		auto* func = ast_alloc<AST_funcdef>(A_FUNCDEF); 
+		func->a.source.start = tok->source.start;
+		tok++;
+
+		if (tok->type != T_IDENTIFIER)
+			throw_error_after("syntax error, function identifer expected!", tok[-1]);
+		func->decl.ident = tok->source.text();
+		tok++;
+
+		if (tok->type != T_PAREN_OPEN)
+			throw_error_after("syntax error, '(' expected after function identifer!", tok[-1]);
+		
+		func->decl.argc = comma_seperated_list(&func->decl.args, [this] () {
+			if (tok->type != T_IDENTIFIER)
+				throw_error_after("syntax error, function argument identifer expected!", tok[-1]);
+
+			auto* arg = ast_alloc<AST_vardecl>(A_VARDECL);
+			arg->a.source = tok->source;
+			arg->ident = tok->source.text();
+			tok++;
+
+			return (AST*)arg;
+		});
+
+		// implicit (void) return list
+		if (tok->type != T_ASSIGN) {
+			func->decl.retc = 0;
+			func->decl.rets = nullptr;
+		}
+		// explicit return list
+		else {
+			tok++;
+
+			func->decl.retc = comma_seperated_list(&func->decl.rets, [this] () {
+				if (tok->type != T_IDENTIFIER)
+					throw_error_after("syntax error, function return identifer expected!", tok[-1]);
+
+				auto* arg = ast_alloc<AST_vardecl>(A_VARDECL);
+				arg->a.source = tok->source;
+				arg->ident = tok->source.text();
+				tok++;
+
+				return (AST*)arg;
+			});
+		}
+
+		func->a.source.end = tok[-1].source.end;
+
+		func->body = block();
+
+		return (AST*)func;
+	}
+
 	AST* statement () {
 
 		auto eat_semicolon = [this] () {
@@ -588,19 +756,20 @@ struct Parser {
 
 		switch (tok[0].type) {
 
-			// block
 			case T_BLOCK_OPEN: {
 				return block();
 			}
 
-			// for loop
 			case T_IF: {
 				return if_statement();
 			}
 
-			// for loop
 			case T_FOR: {
 				return for_loop();
+			}
+
+			case T_FUNC: {
+				return function_def();
 			}
 
 			// allow empty statements
@@ -626,6 +795,8 @@ struct Parser {
 
 		tok++;
 
+		block->statements = nullptr;
+
 		AST** link = &block->statements;
 		while (tok->type != T_BLOCK_CLOSE) {
 			*link = statement();
@@ -639,10 +810,10 @@ struct Parser {
 	}
 
 	AST* file () {
-		ZoneScoped;
-
 		auto* block = ast_alloc<AST_block>(A_BLOCK);
 		block->a.source.start = tok[0].source.start;
+
+		block->statements = nullptr;
 
 		AST** link = &block->statements;
 		while (tok->type != T_EOF) {

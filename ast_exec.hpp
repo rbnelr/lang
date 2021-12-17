@@ -1,111 +1,42 @@
 #pragma once
 #include "common.hpp"
-#include "types.hpp"
+#include "value.hpp"
 #include "parser.hpp"
 
-void println (Value& val) {
-	print_val(val);
-	printf("\n");
-}
-void my_printf (Value& format, Value const* args, size_t argc) {
-	const char* cur = format.u.str;
+void match_call_args (Value* args, size_t argc, AST_funcdecl const& decl, AST_call* call) {
+	AST_var* declarg = (AST_var*)decl.args;
 
 	size_t i = 0;
-	while (*cur != '\0') {
-		if (*cur == '{') {
-			const char* params = cur++;
+	while (declarg) {
+		if (declarg->a.type == A_VARARGS) {
+			// last func arg is varargs, any number of remaining call args works (including 0)
+			assert(!declarg->a.next);
+			return;
+		}
+
+		if (declarg->a.type != A_VARDECL) {
+			assert(false);
+			return;
+		}
+
+		if (i == argc) {
+			// no args left in call
+			// error: too few arguments
+			throw MyException{"error: too few arguments to function", call->a.source};
+		}
 			
-			while (*cur != '}')
-				cur++;
-			cur++;
+		// still args left in call
+		auto& arg = args[i++];
 
-			if (i >= argc) print_val(Value{}); // print null for % that access outside of the varargs
-			else           print_val(args[i++]);
-			continue;
-		} else {
-			if (cur[0] == '^' && cur[1] == '{') {
-				cur++; // ^{ escape sequence
-			}
-			putc(*cur++, stdout);
-		}
+		// TODO: typecheck arg against declarg
+
+		declarg = (AST_var*)declarg->a.next;
 	}
-	// ignore varargs that are not printed (no error)
+	
+	// no more args in func
+	if (i != argc)
+		throw MyException{"error: too many arguments to function", call->a.source};
 }
-
-// TODO: make this more dynamic
-// function names should be turned into IDs before tokenization
-// then put into a hashmap along with the implementation func ptr and a types list to match arguments against
-Value call_function (strview const& ident, Value* args, size_t argc, AST_call* call) {
-	auto match = [] (Value* args, size_t argc, std::initializer_list<Type> types, bool follow_vararg=false) {
-		if (follow_vararg) {
-			if (argc < types.size()) return false;
-		} else {
-			if (argc != types.size()) return false;
-		}
-		for (size_t i=0; i<types.size(); ++i) {
-			if (args[i].type != *(types.begin() + i)) return false;
-		}
-		return true;
-	};
-
-	if (ident == "print") {
-		if (argc != 1) goto mismatch;
-		print_val(args[0]);
-	}
-	else if (ident == "println") {
-		if (argc != 1) goto mismatch;
-		println(args[0]);
-	}
-	else if (ident == "printf") {
-		if (!match(args, argc, { STR }, true)) goto mismatch;
-		my_printf(args[0], args+1, argc-1);
-	}
-	else if (ident == "timer") {
-		if (argc != 0) goto mismatch;
-		return (int64_t)get_timestamp();
-	}
-	else if (ident == "timer_end") {
-		if (!match(args, argc, { INT })) goto mismatch;
-		auto end = (int64_t)get_timestamp();
-		return (double)(end - args[0].u.i) / (double)timestamp_freq;
-	}
-	else {
-		throw MyException{"unknown function", call->a.source};
-	}
-
-	return NULLVAL;
-
-mismatch:
-	throw MyException{"no matching function overload", call->a.source};
-}
-
-struct Stack {
-	std::vector<Value>  values;
-	std::vector<size_t> frames;
-
-	Value& push (AST_var* var) {
-		assert(var->addr == values.size());
-		return values.emplace_back();
-	}
-	Value& get (AST_var* var) {
-		assert(!frames.empty());
-		//size_t frame_ptr = frames.back();
-
-		assert(var->addr < values.size());
-		return values[var->addr]; 
-	}
-
-	void begin_scope () {
-		frames.emplace_back( values.size() );
-	}
-	void end_scope () {
-		assert(!frames.empty());
-
-		int frame_idx = (int)frames.size()-1;
-		values.resize(frames[frame_idx]);
-		frames.pop_back();
-	}
-};
 
 struct Interpreter {
 
@@ -247,59 +178,185 @@ struct Interpreter {
 		_UNREACHABLE;
 	}
 
-	Stack stack;
+	std::vector<Value>  stack;
 
-	void execute (AST* node, Value* retval, int depth=0) {
+	void stack_push (Value const& val) {
+		stack.emplace_back(val);
+	}
+	Value stack_pop (AST_vardecl* var) {
+		auto ret = stack.back();
+		stack.pop_back();
+		return ret;
+	}
+	void stack_reset (size_t frame) {
+		assert(stack.size() >= frame);
+		_ASSUME(stack.size() >= frame);
+		stack.resize(frame);
+	}
+
+	Value& stack_get (AST_var* var, size_t frame) {
+		size_t addr = frame + var->stack_offs;
+		assert(addr < stack.size());
+		return stack[addr];
+	}
+
+	Value call_function (AST_call* call, size_t stack_ptr) {
+		auto* func_ast  = call->decl;
+		auto& func_decl = ((AST_funcdef*)func_ast)->decl;
+
+		size_t call_frame = stack.size();
+
+		// alloc stack space for returns
+		for (size_t i=0; i<func_decl.retc; ++i) {
+			stack_push(NULLVAL);
+		}
+		// alloc stack space for args and fill them
+		for (auto* n=call->args; n != nullptr; n = n->next) {
+			Value val;
+			execute(n, &val, stack_ptr); // read variables while still in old stack frame
+			stack_push(val);
+		}
+		
+		// typecheck
+		Value* vals = stack.data() + call_frame;
+		size_t valc = func_decl.retc + call->argc;
+		match_call_args(vals + func_decl.retc, call->argc, func_decl, call);
+
+		// call function with new stack_ptr being the address of the first return
+		if (func_ast->type == A_FUNCDEF) {
+			auto* funcdef = (AST_funcdef*)func_ast;
+			auto* body = (AST_block*)funcdef->body;
+
+			for (auto* n=body->statements; n != nullptr; n = n->next) {
+				Value ignore;
+				execute(n, &ignore, call_frame);
+			}
+		}
+		else {
+			assert(func_ast->type == A_FUNCDEF_BUILTIN);
+			auto* decl = (AST_funcdef_builtin*)call->decl;
+
+			decl->func_ptr(vals, valc);
+		}
+
+		// get (first) return value from stack
+		Value ret = func_decl.retc != 0 ? vals[0] : NULLVAL;
+
+		// reset stack to before the call
+		stack_reset(call_frame);
+
+		return ret;
+	}
+
+	void execute (AST* node, Value* retval, size_t stack_ptr) {
 		//assert(retval->type == NULL);
 		//_ASSUME(retval->type == NULL);
 
 		switch (node->type) {
+
+			case A_BLOCK: {
+				auto* block = (AST_block*)node;
+
+				// new stack_ptr for scope is the current stack top
+				stack_ptr = stack.size();
+
+				for (auto* n=block->statements; n != nullptr; n = n->next) {
+					Value ignore;
+					execute(n, &ignore, stack_ptr);
+				}
+
+				// reset the stack to before the block
+				stack.resize(stack_ptr);
+			} break;
+
 			case A_LITERAL: {
 				auto* lit = (AST_literal*)node;
 				*retval = lit->value;
 			} break;
 
-			case A_VAR_DECL: {
-				stack.push((AST_var*)node);
+			case A_VARDECL: {
+				stack_push((AST_vardecl*)node);
 			} break;
+
 			case A_VAR: {
-				*retval = stack.get((AST_var*)node);
+				*retval = stack_get((AST_var*)node, stack_ptr);
 			} break;
 
-			case A_ASSIGN: {
-				auto* op = (AST_binop*)node;
+			case A_IF: {
+				auto* aif = (AST_if*)node;
 
-				Value tmp;
-				execute(op->rhs, &tmp, depth+1);
+				Value condval;
+				execute(aif->cond, &condval, stack_ptr);
+				if (condval.type != BOOL)
+					throw MyException{"if condition must be bool", aif->cond->source};
 
-				assert(op->lhs->type == A_VAR || op->lhs->type == A_VAR_DECL);
-				auto* lhs = (AST_var*)op->lhs;
+				auto& body = condval.u.b ? aif->true_body : aif->false_body;
+				if (body)
+					execute(body, retval, stack_ptr);
+			} break;
+			case A_SELECT: {
+				auto* aif = (AST_if*)node;
 
-				if (op->lhs->type == A_VAR_DECL)
-					stack.push(lhs) = tmp;
-				else
-					stack.get(lhs) = tmp;
+				Value condval;
+				execute(aif->cond, &condval, stack_ptr);
+				if (condval.type != BOOL)
+					throw MyException{"select condition must be bool", aif->cond->source};
+
+				auto& body = condval.u.b ? aif->true_body : aif->false_body;
+				execute(body, retval, stack_ptr);
 			} break;
 
-			case A_ADDEQ: case A_SUBEQ: case A_MULEQ: case A_DIVEQ: {
-				auto* op = (AST_binop*)node;
 
-				Value tmp;
-				execute(op->rhs, &tmp, depth+1);
-
-				assert(op->lhs->type == A_VAR);
-				auto* lhs = (AST_var*)op->lhs;
-
-				auto& val = stack.get(lhs);
-				val = binop(val, tmp, assignop2binop(node->type), op); // execute the += as +
+			case A_FUNCDEF: {
+				// does nothing
 			} break;
 
-			// unary operators
+			case A_CALL: {
+				*retval = call_function((AST_call*)node, stack_ptr);
+			} break;
+
+			case A_LOOP: {
+				auto* loop = (AST_loop*)node;
+				auto* body = (AST_block*)loop->body;
+
+				// current stack_ptr is the top of the stack
+				stack_ptr = stack.size();
+
+				Value startret;
+				execute(loop->start, &startret, stack_ptr);
+
+				// stack_ptr to rest loop body variables is the top of the stack after loop <start>
+				size_t loop_stack_ptr = stack.size();
+
+				for (;;) {
+					Value condval;
+					execute(loop->cond, &condval, stack_ptr);
+					if (condval.type != BOOL)
+						throw MyException{"loop condition must be bool", loop->cond->source};
+					if (!condval.u.b)
+						break;
+
+					for (auto* n=body->statements; n != nullptr; n = n->next) {
+						Value ignore;
+						execute(n, &ignore, stack_ptr);
+					}
+
+					// pop variables from loop body
+					stack.resize(loop_stack_ptr);
+
+					Value endret;
+					execute(loop->end, &endret, stack_ptr);
+				}
+
+				// pop variables from loop <start>
+				stack.resize(stack_ptr);
+			} break;
+
 			case A_NEGATE: case A_NOT: {
 				auto* op = (AST_unop*)node;
 
 				Value operand_val;
-				execute(op->operand, &operand_val, depth+1);
+				execute(op->operand, &operand_val, stack_ptr);
 				*retval = unop(operand_val, op);
 			} break;
 			case A_INC: case A_DEC: {
@@ -308,101 +365,48 @@ struct Interpreter {
 				if (op->operand->type != A_VAR)
 					throw MyException{"post inc/decrement can only operate on variables", node->source};
 
-				Value& operand_val = stack.get((AST_var*)op->operand);
+				Value& operand_val = stack_get((AST_var*)op->operand, stack_ptr);
 				*retval = unop(operand_val, op);
 			} break;
 
-			// binary operators
+			case A_ASSIGN: {
+				auto* op = (AST_binop*)node;
+
+				Value tmp;
+				execute(op->rhs, &tmp, stack_ptr);
+
+				assert(op->lhs->type == A_VAR || op->lhs->type == A_VARDECL);
+				auto* lhs = (AST_var*)op->lhs;
+
+				if (op->lhs->type == A_VARDECL)
+					stack_push(tmp);
+				else
+					stack_get(lhs, stack_ptr) = tmp;
+			} break;
+
+			case A_ADDEQ: case A_SUBEQ: case A_MULEQ: case A_DIVEQ: {
+				auto* op = (AST_binop*)node;
+
+				Value tmp;
+				execute(op->rhs, &tmp, stack_ptr);
+
+				assert(op->lhs->type == A_VAR);
+				auto* lhs = (AST_var*)op->lhs;
+
+				auto& val = stack_get(lhs, stack_ptr);
+				val = binop(val, tmp, assignop2binop(node->type), op); // execute the += as +
+			} break;
+
 			case A_ADD: case A_SUB: case A_MUL: case A_DIV:
 			case A_LESS: case A_LESSEQ: case A_GREATER: case A_GREATEREQ:
 			case A_EQUALS: case A_NOT_EQUALS: {
 				auto* op = (AST_binop*)node;
 
 				Value l, r;
-				execute(op->lhs, &l, depth+1);
-				execute(op->rhs, &r, depth+1);
+				execute(op->lhs, &l, stack_ptr);
+				execute(op->rhs, &r, stack_ptr);
 
 				*retval = binop(l, r, op->a.type, op);
-			} break;
-
-			case A_IF: {
-				auto* aif = (AST_if*)node;
-
-				Value condval;
-				execute(aif->cond, &condval, depth+1);
-				if (condval.type != BOOL)
-					throw MyException{"if condition must be bool", aif->cond->source};
-
-				auto& body = condval.u.b ? aif->true_body : aif->false_body;
-				if (body)
-					execute(body, retval, depth+1);
-			} break;
-			// ternary operator
-			case A_SELECT: {
-				auto* aif = (AST_if*)node;
-
-				Value condval;
-				execute(aif->cond, &condval, depth+1);
-				if (condval.type != BOOL)
-					throw MyException{"select condition must be bool", aif->cond->source};
-
-				auto& body = condval.u.b ? aif->true_body : aif->false_body;
-				execute(body, retval, depth+1);
-			} break;
-
-			// flow control
-			case A_LOOP: {
-				auto* loop = (AST_loop*)node;
-
-				// need a scope for the variables declared in <begin> and used in <cond> and <end>
-				stack.begin_scope();
-
-				Value startret;
-				execute(loop->start, &startret, depth+1);
-
-				for (;;) {
-					Value condval;
-					execute(loop->cond, &condval, depth+1);
-					if (condval.type != BOOL)
-						throw MyException{"loop condition must be bool", loop->cond->source};
-					if (!condval.u.b)
-						break;
-
-					Value bodyret;
-					execute(loop->body, &bodyret, depth+1);
-					Value endret;
-					execute(loop->end, &endret, depth+1);
-				}
-
-				stack.end_scope();
-			} break;
-
-			case A_CALL: {
-				auto* call = (AST_call*)node;
-
-				std::vector<Value> args;
-				args.resize(call->argc);
-
-				size_t i = 0;
-				for (auto* n=call->args; n != nullptr; n = n->next) {
-					auto& arg = args[i++];
-					execute(n, &arg, depth+1);
-				}
-
-				*retval = call_function(call->ident, args.data(), args.size(), call);
-			} break;
-
-			case A_BLOCK: {
-				auto* block = (AST_block*)node;
-
-				stack.begin_scope();
-
-				for (auto* n=block->statements; n != nullptr; n = n->next) {
-					Value ignore;
-					execute(n, &ignore, depth+1);
-				}
-
-				stack.end_scope();
 			} break;
 
 			default:

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<AutoVisualizer xmlns="http://schemas.microsoft.com/vstudio/debugger/natvis/2010">
+	<Type Name="AST">
+		<DisplayString>{type,en} ({source})</DisplayString>
+	</Type>
+	
+	<Type Name="source_range">
+		<DisplayString>{start,[end-start]s}</DisplayString>
+	</Type>
+	
+	<Type Name="Value">
+		<DisplayString Condition="type == NULL">{type,en}</DisplayString>
+		<DisplayString Condition="type == BOOL">{type,en}: {u.b}</DisplayString>
+		<DisplayString Condition="type == INT" >{type,en}: {u.i}</DisplayString>
+		<DisplayString Condition="type == FLT" >{type,en}: {u.f}</DisplayString>
+		<DisplayString Condition="type == STR" >{type,en}: {u.str,s}</DisplayString>
+	</Type>
+</AutoVisualizer>

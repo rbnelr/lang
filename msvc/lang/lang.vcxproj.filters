@@ -45,7 +45,6 @@
     <ClInclude Include="..\..\errors.hpp" />
     <ClInclude Include="..\..\ast_exec.hpp" />
     <ClInclude Include="..\..\parser.hpp" />
-    <ClInclude Include="..\..\types.hpp" />
     <ClInclude Include="..\..\line_map.hpp" />
     <ClInclude Include="..\..\util\timer.hpp">
       <Filter>util</Filter>
@@ -59,7 +58,9 @@
     <ClInclude Include="..\..\util\smhasher\MurmurHash3.h">
       <Filter>util\smhasher</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\optimize.hpp" />
+    <ClInclude Include="..\..\value.hpp" />
+    <ClInclude Include="..\..\resolve.hpp" />
+    <ClInclude Include="..\..\builtins.hpp" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="util">
@@ -76,5 +77,8 @@
     <None Include="..\..\test.la" />
     <None Include="..\..\test2.la" />
     <None Include="..\..\test3.la" />
+  </ItemGroup>
+  <ItemGroup>
+    <Natvis Include="compiler.natvis" />
   </ItemGroup>
 </Project>

@@ -8,14 +8,14 @@ printf("f? t?0:1 : t?2:3 = {}\n", f? t?0:1 : t?2:3);
 printf("f? f?0:1 : f?2:3 = {}\n", f? f?0:1 : f?2:3);
 
 
-println(- - - a ++ ++);
+printfhg("{}\n", - - - a ++ ++);
 
-println(a - - b + c);
-println(a - - b * c);
-println(a - ! b * c);
+printf("{}\n", a - - b + c);
+printf("{}\n", a - - b * c);
+printf("{}\n", a - ! b * c);
 
-println(a * b * -c * d + e);
-println(a * b * -c + d + e);
+printf("{}\n", a * b * -c * d + e);
+printf("{}\n", a * b * -c + d + e);
 
-//println(a * b * !c * d + e);
-//println(a * b * !c + d + e);
+//printf("{}\n", a * b * !c * d + e);
+//printf("{}\n", a * b * !c + d + e);

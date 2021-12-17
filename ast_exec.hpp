@@ -201,8 +201,9 @@ struct Interpreter {
 		stack.resize(frame);
 	}
 
-	Value& stack_get (AST_var* var, size_t frame) {
-		size_t addr = frame + var->stack_offs;
+	Value& stack_get (AST_var* var, size_t stack_frame) {
+		assert(var->stack_offs >= 0);
+		size_t addr = stack_frame + var->stack_offs;
 		assert(addr < stack.size());
 		return stack[addr];
 	}
@@ -214,7 +215,7 @@ struct Interpreter {
 		auto* func_ast  = call->decl;
 		auto& func_decl = ((AST_funcdef*)func_ast)->decl;
 
-		size_t call_frame = stack.size();
+		size_t stack_frame = stack.size();
 
 		// alloc stack space for returns
 		for (size_t i=0; i<func_decl.retc; ++i) {
@@ -228,7 +229,7 @@ struct Interpreter {
 		}
 		
 		// typecheck
-		Value* vals = stack.data() + call_frame;
+		Value* vals = stack.data() + stack_frame;
 		size_t valc = func_decl.retc + call->argc;
 		match_call_args(vals + func_decl.retc, call->argc, func_decl, call);
 
@@ -239,7 +240,7 @@ struct Interpreter {
 
 			for (auto* n=body->statements; n != nullptr; n = n->next) {
 				Value ignore;
-				auto jmp = _execute(n, &ignore, call_frame);
+				auto jmp = _execute(n, &ignore, stack_frame);
 				if (jmp) {
 					if (jmp->type != A_RETURN) return jmp;
 					break;
@@ -257,7 +258,7 @@ struct Interpreter {
 		*retval = func_decl.retc != 0 ? vals[0] : NULLVAL;
 
 		// reset stack to before the call
-		stack_reset(call_frame);
+		stack_reset(stack_frame);
 
 		return JUMP_NORMAL;
 	}
@@ -271,8 +272,8 @@ struct Interpreter {
 			case A_BLOCK: {
 				auto* block = (AST_block*)node;
 
-				// new stack_ptr for scope is the current stack top
-				stack_ptr = stack.size();
+				// remember which vars to pop when closing scope
+				size_t scope_stack = stack.size();
 
 				for (auto* n=block->statements; n != nullptr; n = n->next) {
 					Value ignore;
@@ -281,7 +282,7 @@ struct Interpreter {
 				}
 
 				// reset the stack to before the block
-				stack.resize(stack_ptr);
+				stack.resize(scope_stack);
 			} break;
 
 			case A_LITERAL: {
@@ -337,14 +338,14 @@ struct Interpreter {
 				auto* loop = (AST_loop*)node;
 				auto* body = (AST_block*)loop->body;
 
-				// current stack_ptr is the top of the stack
-				stack_ptr = stack.size();
+				// remember which vars to pop when closing scope
+				size_t scope_stack = stack.size();
 
 				Value startret;
 				_execute(loop->start, &startret, stack_ptr);
 
 				// stack_ptr to rest loop body variables is the top of the stack after loop <start>
-				size_t loop_stack_ptr = stack.size();
+				size_t body_scope_stack = stack.size();
 
 				for (;;) {
 					Value condval;
@@ -367,7 +368,7 @@ struct Interpreter {
 
 				loop_continue:
 					// pop variables from loop body
-					stack.resize(loop_stack_ptr);
+					stack.resize(body_scope_stack);
 
 					Value endret;
 					_execute(loop->end, &endret, stack_ptr);
@@ -375,7 +376,7 @@ struct Interpreter {
 			loop_break:
 
 				// pop variables from loop <start>
-				stack.resize(stack_ptr);
+				stack.resize(scope_stack);
 			} break;
 
 			case A_RETURN:

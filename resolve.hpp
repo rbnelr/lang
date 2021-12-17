@@ -24,45 +24,53 @@ struct IdentiferStack {
 	std::vector<strview> vars_stack;
 	std::vector<strview> funcs_stack;
 
-	size_t scope_depth = 0;
+	size_t scope_id = 0;
 
 	struct Scope {
 		// index of first variable of each scope in <vars_stack>
 		size_t vars_base;
 		// index of first variable of each scope in <funcs_stack>
 		size_t funcs_base;
+		// 
+		size_t func_vars_base;
+		size_t func_scope_id;
 	};
-	Scope cur_scope = {0,0};
+	Scope cur_scope = {0,0,0};
 
-	Scope push_scope () {
+	Scope push_scope (bool func_scope=false) {
 		Scope old_scope = cur_scope;
+
+		scope_id++;
 
 		cur_scope.vars_base  = vars_stack .size();
 		cur_scope.funcs_base = funcs_stack.size();
-		scope_depth++;
+
+		if (func_scope) {
+			cur_scope.func_vars_base = cur_scope.vars_base;
+			cur_scope.func_scope_id = scope_id;
+		}
 
 		return old_scope;
 	}
-	void reset_scope (Scope& old_scope) {
-		assert(scope_depth > 0);
-
-		scope_depth--;
+	void reset_scope (Scope& old_scope, bool func_scope=false) {
+		assert(scope_id > 0);
 
 		for (size_t i=cur_scope.vars_base; i<vars_stack.size(); ++i) {
-			ident_map.erase({ scope_depth, vars_stack[i] });
+			ident_map.erase({ scope_id, vars_stack[i] });
 		}
 		for (size_t i=cur_scope.funcs_base; i<funcs_stack.size(); ++i) {
-			ident_map.erase({ scope_depth, funcs_stack[i] });
+			ident_map.erase({ scope_id, funcs_stack[i] });
 		}
 
 		vars_stack .resize(cur_scope.vars_base);
 		funcs_stack.resize(cur_scope.funcs_base);
 
+		scope_id--;
 		cur_scope = old_scope;
 	}
 
 	void declare_ident (AST* ast, strview const& ident) {
-		auto res = ident_map.try_emplace(ScopedIdentifer{ scope_depth-1, ident }, ast);
+		auto res = ident_map.try_emplace(ScopedIdentifer{ scope_id, ident }, ast);
 		if (!res.second)
 			throw MyException{"error: identifer already declared in this scope", ast->source}; // TODO: print declaration of that identifer
 	}
@@ -79,32 +87,35 @@ struct IdentiferStack {
 		funcs_stack.emplace_back(func->decl.ident);
 	}
 
-	AST* resolve_ident (AST* node, strview const& ident) {
-		assert(scope_depth > 0);
+	AST* resolve_ident (AST* node, strview const& ident, size_t min_scope) {
+		assert(scope_id > 0);
 
-		for (size_t scope_i=scope_depth; scope_i!=0;) {
-			--scope_i;
-
-			auto it = ident_map.find({ scope_i, ident });
+		for (size_t i=scope_id; ; i--) {
+			auto it = ident_map.find({ i, ident });
 			if (it != ident_map.end())
 				return it->second;
-		}
 
+			if (i == min_scope)
+				break;
+		}
 		throw MyException{"error: unknown identifer", node->source};
 	}
 	void resolve_var (AST_var* var) {
-		AST* ast = resolve_ident((AST*)var, var->ident);
+		// min_scope = func_scope_id, functions can only access their own variables
+		AST* ast = resolve_ident((AST*)var, var->ident, cur_scope.func_scope_id);
 		if (ast->type != A_VARDECL)
 			throw MyException{"error: identifer was not declared as variable", var->a.source};
 
 		var->decl = ast;
 
 		AST_vardecl* vardecl = (AST_vardecl*)ast;
-		var->stack_offs = (intptr_t)vardecl->resolve_addr - (intptr_t)cur_scope.vars_base;
+		assert(vardecl->resolve_addr >= cur_scope.func_vars_base);
+		var->stack_offs = (intptr_t)vardecl->resolve_addr - (intptr_t)cur_scope.func_vars_base;
 	}
 
 	void resolve_func_call (AST_call* call) {
-		AST* ast = resolve_ident((AST*)call, call->ident);
+		// min_scope = 0, functions can call all functions visible to them
+		AST* ast = resolve_ident((AST*)call, call->ident, 0);
 		if (!(ast->type == A_FUNCDEF || ast->type == A_FUNCDEF_BUILTIN))
 			throw MyException{"error: identifer was not declared as function", call->a.source};
 		
@@ -117,14 +128,10 @@ struct IdentifierResolve {
 	IdentiferStack stack;
 
 	void resolve_idents (AST* root) {
-		auto scope = stack.push_scope();
-
 		for (AST_funcdef_builtin const* f : BUILTIN_FUNCS)
 			stack.declare_func((AST_funcdef*)f); // cast is safe
 
 		_resolve(root);
-
-		stack.reset_scope(scope);
 	}
 
 	void _resolve (AST* node) {
@@ -157,7 +164,7 @@ struct IdentifierResolve {
 
 				stack.declare_func(def);
 
-				auto scope = stack.push_scope();
+				auto scope = stack.push_scope(true);
 
 				for (auto* ret=def->decl.rets; ret != nullptr; ret = ret->next)
 					stack.declare_var((AST_vardecl*)ret);
@@ -168,7 +175,7 @@ struct IdentifierResolve {
 				for (auto* n=body->statements; n != nullptr; n = n->next)
 					_resolve(n);
 
-				stack.reset_scope(scope);
+				stack.reset_scope(scope, true);
 			} break;
 			case A_CALL: {
 				auto* call = (AST_call*)node;

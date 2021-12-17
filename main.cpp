@@ -56,7 +56,7 @@ int main (int argc, const char** argv) {
 				ires.resolve_idents(ast);
 			}
 
-			dbg_print(ast);
+			//dbg_print(ast);
 		}
 
 	#ifndef TRACY_ENABLE

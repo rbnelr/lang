@@ -136,18 +136,11 @@ struct IdentifierResolve {
 
 	void _resolve (AST* node) {
 		switch (node->type) {
-			case A_BLOCK: {
-				auto* block = (AST_block*)node;
 
-				auto old_scope = stack.push_scope();
-
-				for (auto* n=block->statements; n != nullptr; n = n->next)
-					_resolve(n);
-
-				stack.reset_scope(old_scope);
-			} break;
-
-			case A_LITERAL: {
+			case A_LITERAL:
+			case A_RETURN:
+			case A_BREAK:
+			case A_CONTINUE: {
 				// nothing to resolve
 			} break;
 
@@ -158,25 +151,24 @@ struct IdentifierResolve {
 				stack.resolve_var((AST_var*)node);
 			} break;
 
+			case A_BLOCK:
+			case A_LOOP:
 			case A_FUNCDEF: {
-				auto* def = (AST_funcdef*)node;
-				auto* body = (AST_block*)def->body;
+				bool is_func_scope = node->type == A_FUNCDEF;
 
-				stack.declare_func(def);
+				auto old_scope = stack.push_scope(is_func_scope);
 
-				auto scope = stack.push_scope(true);
+				visit(node, [this] (AST* n) {
+					if (n->type == A_FUNCDEF) {
+						auto* def = (AST_funcdef*)n;
+						stack.declare_func(def);
+					}
+				});
+				visit(node, [this] (AST* node) { _resolve(node); });
 
-				for (auto* ret=def->decl.rets; ret != nullptr; ret = ret->next)
-					stack.declare_var((AST_vardecl*)ret);
-
-				for (auto* arg=def->decl.args; arg != nullptr; arg = arg->next)
-					stack.declare_var((AST_vardecl*)arg);
-
-				for (auto* n=body->statements; n != nullptr; n = n->next)
-					_resolve(n);
-
-				stack.reset_scope(scope, true);
+				stack.reset_scope(old_scope, is_func_scope);
 			} break;
+
 			case A_CALL: {
 				auto* call = (AST_call*)node;
 				stack.resolve_func_call(call);
@@ -185,55 +177,9 @@ struct IdentifierResolve {
 					_resolve(n);
 			} break;
 
-			case A_IF:
-			case A_SELECT: {
-				auto* aif = (AST_if*)node;
-				_resolve(aif->cond     );
-				_resolve(aif->true_body);
-				if (aif->false_body)
-					_resolve(aif->false_body);
+			default: {
+				visit(node, [this] (AST* node) { _resolve(node); });
 			} break;
-
-			case A_LOOP: {
-				auto* loop = (AST_loop*)node;
-				auto* body = (AST_block*)loop->body;
-
-				auto old_scope = stack.push_scope();
-
-				// resolve control header of for loop first, so that it can't access variables from within the body
-				_resolve(loop->start);
-				_resolve(loop->cond );
-				_resolve(loop->end  );
-
-				for (auto* n=body->statements; n != nullptr; n = n->next)
-					_resolve(n);
-
-				stack.reset_scope(old_scope);
-			} break;
-
-			case A_RETURN:
-			case A_BREAK:
-			case A_CONTINUE: {
-				// nothing to resolve
-			} break;
-
-			case A_NEGATE: case A_NOT: case A_INC: case A_DEC: {
-				auto* unop = (AST_unop*)node;
-				_resolve(unop->operand);
-			} break;
-
-			case A_ADD: case A_SUB: case A_MUL: case A_DIV: case A_REMAINDER:
-			case A_LESS: case A_LESSEQ: case A_GREATER: case A_GREATEREQ: case A_EQUALS: case A_NOT_EQUALS:
-			case A_ASSIGN:
-			case A_ADDEQ: case A_SUBEQ: case A_MULEQ: case A_DIVEQ: case A_REMAINDEREQ: {
-				auto* binop = (AST_binop*)node;
-				_resolve(binop->lhs);
-				_resolve(binop->rhs);
-			} break;
-
-			default:
-				assert(false);
-				_UNREACHABLE;
 		}
 	}
 };

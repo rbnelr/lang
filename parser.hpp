@@ -306,8 +306,8 @@ struct AST_if { AST a;
 struct AST_loop { AST a;
 	AST*         start;
 	AST*         cond;
-	AST*         body;
 	AST*         end;
+	AST*         body;
 };
 
 struct AST_unop { AST a;
@@ -321,7 +321,7 @@ struct AST_binop { AST a;
 // helper function to iterate all child AST nodes and call a func on them
 template <typename FUNC>
 void visit (AST* node, FUNC func) {
-	if (!node) return;
+	assert(node);
 
 	switch (node->type) {
 		case A_BLOCK: { auto* block = (AST_block*)node;
@@ -346,14 +346,15 @@ void visit (AST* node, FUNC func) {
 		case A_SELECT: { auto* aif = (AST_if*)node;
 			func(aif->cond      );
 			func(aif->true_body );
-			func(aif->false_body);
+			if (aif->false_body)
+				func(aif->false_body);
 		} break;
 
 		case A_LOOP: { auto* loop = (AST_loop*)node;
 			func(loop->start);
 			func(loop->cond );
-			func(loop->body );
 			func(loop->end  );
+			func(loop->body );
 		} break;
 
 		case A_NEGATE: case A_NOT:
@@ -375,7 +376,6 @@ void visit (AST* node, FUNC func) {
 			func(node);
 	}
 }
-
 void dbg_print (AST* node, int depth=0) {
 	if (!node) return;
 	

@@ -13,6 +13,7 @@ h := "foo";
 h2 := "bar";
 
 printf("start {} {}\n", h, h2);
+printf("\n");
 
 capt2 := "cap2";
 capt1 := "cap1";
@@ -21,7 +22,18 @@ func indent (depth) {
 	for i:=0; i<depth; i++ {
 		printf("  ");
 	}
+
+	{
+		Test(); // works
+	}
+
+	func Test () {}
 }
+
+// Test(); // error: unknown identifer
+
+B("from main before", 0);
+printf("\n");
 
 func B (msg, depth) {
 	indent(depth); printf("B ^{\n");
@@ -38,7 +50,8 @@ func B (msg, depth) {
 	indent(depth); printf("B -> Hello World!\n");
 }
 
-//A(); does not work yet, resolver would have to do a prescan
+A(0); // does not work yet, resolver would have to do a prescan
+printf("\n");
 
 func A (depth) {
 	indent(depth); printf("A ^{\n");
@@ -54,7 +67,10 @@ func A (depth) {
 }
 
 B("from main", 0);
+printf("\n");
+
 A(0);
+printf("\n");
 
 func myprint (msg) {
 	printf(" prin {}", msg);

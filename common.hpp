@@ -128,3 +128,23 @@ struct BumpAllocator {
 };
 
 BumpAllocator g_allocator;
+
+// g_allocator-backed buffer printf
+char const* format (char const* format, ...) {
+	va_list vl;
+	va_start(vl, format);
+
+	int required_len = vsnprintf(nullptr, 0, format, vl);
+	if (required_len <= 0)
+		return nullptr; // error or empty string
+
+	char* str = g_allocator.alloc_array<char>(required_len + 1); // required_len is exluding the null terminator
+
+	int written_len = vsnprintf(str, required_len + 1, format, vl);
+	if (written_len != required_len)
+		return nullptr; // error?
+
+	va_end(vl);
+
+	return str;
+}

@@ -58,9 +58,10 @@
     <ClInclude Include="..\..\util\smhasher\MurmurHash3.h">
       <Filter>util\smhasher</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\value.hpp" />
-    <ClInclude Include="..\..\resolve.hpp" />
     <ClInclude Include="..\..\builtins.hpp" />
+    <ClInclude Include="..\..\code.hpp" />
+    <ClInclude Include="..\..\codegen.hpp" />
+    <ClInclude Include="..\..\basic_types.hpp" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="util">

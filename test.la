@@ -9,16 +9,21 @@
 
 //// Variable declarations
 //l = 7; // error: unknown variable.
-l :;
+//l :; // can't declare var without either explicit type or inferred from assignment
+l : int;
 
 //l := 5; // error: variable already declared in this scope.
 l = 4;
 
+l = l;
+m := 7;
+l = m;
+
 s := "blah";
-printf("{}\n", s);
+printf("{s}\n", s);
 
 s = "foo";
-printf("{}\n", s);
+printf("{s}\n", s);
 
 //// Math
 c := -0 + 1;
@@ -26,7 +31,8 @@ c := -0 + 1;
 a := +0;
 a += 4 + c;
 
-b := null;
+//b := null; // currently not a literal, since null does not exists as a type
+b := "null";
 //b = c = a;
 //b += c += 2;
 
@@ -104,7 +110,7 @@ printf("1 == 0            : {}\n", 1 == 0         );
 printf("1 == 1            : {}\n", 1 == 1         );
 printf("'helo' == 'hello' : {}\n", "a" == "hello" );
 printf("'helo4' > 'helo3' : {}\n", "helo4" > "helo3"  );
-printf("'helo' == null    : {}\n", "a" == null    );
+//printf("'helo' == null    : {}\n", "a" == null    );
 printf("5 >= 5            : {}\n", 5 >= 5         );
 printf("5 > 5             : {}\n", 5 > 5          );
 printf("2>3 == 3>4        : {}\n", 2>3 == 3>4     );
@@ -197,7 +203,7 @@ printf("---------------\n");
 
 // 
 sqr := 625; // 25^2
-sqrt :;
+sqrt : int;
 for i:=0; i<100; i++ {
 	if i*i == sqr {
 		sqrt = i;

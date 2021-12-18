@@ -2,13 +2,15 @@
 #include "errors.hpp"
 #include "tokenizer.hpp"
 #include "parser.hpp"
-#include "resolve.hpp"
-#include "ast_exec.hpp"
+#include "codegen.hpp"
+//#include "ast_exec.hpp"
 
 int main (int argc, const char** argv) {
 	enable_console_ansi_color_codes();
 
-	std::string filename = "test3.la";
+	setvbuf(stderr, nullptr, _IOFBF, BUFSIZ);
+
+	std::string filename = "test.la";
 	std::string source;
 	{
 		ZoneScopedN("load_text_file");
@@ -50,29 +52,34 @@ int main (int argc, const char** argv) {
 				ast = parser.file();
 			}
 
-			{
-				ZoneScopedN("resolve_idents");
-				IdentifierResolve ires;
-				ires.resolve_idents(ast);
-			}
+			dbg_print(ast);
 
-			//dbg_print(ast);
+			{
+				ZoneScopedN("codegen");
+				Codegen codegen;
+				codegen.generate(ast);
+
+				dbg_print(codegen.code.data(), codegen.code.size());
+			}
 		}
 
 	#ifndef TRACY_ENABLE
-		printf("--------------------\n");
-		
-		{
-			ZoneScopedN("interpret AST");
-			Interpreter interp;
-		
-			Value retval;
-			interp.execute(ast, &retval);
-		}
+	//	printf("--------------------\n");
+	//	
+	//	{
+	//		ZoneScopedN("interpret AST");
+	//		Interpreter interp;
+	//	
+	//		Value retval;
+	//		interp.execute(ast, &retval);
+	//	}
 	#endif
 	}
-	catch (MyException& ex) {
+	catch (CompilerExcept& ex) {
 		ex.print(filename.c_str(), lines);
+	}
+	catch (RuntimeExcept& ex) {
+		ex.print();
 	}
 	catch (...) {
 		fprintf(stderr, "Unknown exception!");

@@ -3,41 +3,6 @@
 #include "value.hpp"
 #include "parser.hpp"
 
-void match_call_args (Value* args, size_t argc, AST_funcdecl const& decl, AST_call* call) {
-	AST_var* declarg = (AST_var*)decl.args;
-
-	size_t i = 0;
-	while (declarg) {
-		if (declarg->a.type == A_VARARGS) {
-			// last func arg is varargs, any number of remaining call args works (including 0)
-			assert(!declarg->a.next);
-			return;
-		}
-
-		if (declarg->a.type != A_VARDECL) {
-			assert(false);
-			return;
-		}
-
-		if (i == argc) {
-			// no args left in call
-			// error: too few arguments
-			throw MyException{"error: too few arguments to function", call->a.source};
-		}
-			
-		// still args left in call
-		auto& arg = args[i++];
-
-		// TODO: typecheck arg against declarg
-
-		declarg = (AST_var*)declarg->a.next;
-	}
-	
-	// no more args in func
-	if (i != argc)
-		throw MyException{"error: too many arguments to function", call->a.source};
-}
-
 struct Interpreter {
 
 	Value binop (Value& lhs, Value& rhs, ASTType opt, AST_binop* op) {
@@ -52,7 +17,7 @@ struct Interpreter {
 		}
 
 		if (lt != rt) {
-			throw MyException{"types do not match", op->a.source};
+			throw CompilerExcept{"types do not match", op->a.source};
 		}
 		switch (lt) {
 			case INT: {
@@ -88,7 +53,7 @@ struct Interpreter {
 					case A_NOT_EQUALS: return l != r;
 
 					case A_REMAINDER:
-						throw MyException{"% operator not valid for floats", op->a.source};
+						throw CompilerExcept{"% operator not valid for floats", op->a.source};
 				}
 			} break;
 			case BOOL: {
@@ -102,12 +67,12 @@ struct Interpreter {
 					case A_MUL:
 					case A_DIV:
 					case A_REMAINDER:
-						throw MyException{"can't do math with bool", op->a.source};
+						throw CompilerExcept{"can't do math with bool", op->a.source};
 					case A_LESS:
 					case A_LESSEQ:
 					case A_GREATER:
 					case A_GREATEREQ:
-						throw MyException{"can't compare bools", op->a.source};
+						throw CompilerExcept{"can't compare bools", op->a.source};
 				}
 			} break;
 			case STR: {
@@ -135,7 +100,7 @@ struct Interpreter {
 					case A_MUL:
 					case A_DIV:
 					case A_REMAINDER:
-						throw MyException{"can't do math with str", op->a.source};
+						throw CompilerExcept{"can't do math with str", op->a.source};
 				}
 			} break;
 			case NULL: {
@@ -145,12 +110,12 @@ struct Interpreter {
 					case A_MUL:
 					case A_DIV:
 					case A_REMAINDER:
-						throw MyException{"can't do math with null", op->a.source};
+						throw CompilerExcept{"can't do math with null", op->a.source};
 					case A_LESS:
 					case A_LESSEQ:
 					case A_GREATER:
 					case A_GREATEREQ:
-						throw MyException{"null can't be larger or smaller", op->a.source};
+						throw CompilerExcept{"null can't be larger or smaller", op->a.source};
 				}
 			} break;
 		}
@@ -178,8 +143,8 @@ struct Interpreter {
 					case A_DEC    : return rhs.u.f--;
 				}
 				break;
-			case NULL: throw MyException{"can't do math with null", op->a.source};
-			case STR:  throw MyException{"can't do math with str", op->a.source};
+			case NULL: throw CompilerExcept{"can't do math with null", op->a.source};
+			case STR:  throw CompilerExcept{"can't do math with str", op->a.source};
 		}
 		assert(false);
 		_UNREACHABLE;
@@ -202,8 +167,8 @@ struct Interpreter {
 	}
 
 	Value& stack_get (AST_var* var, size_t stack_frame) {
-		assert(var->stack_offs >= 0);
-		size_t addr = stack_frame + var->stack_offs;
+		//assert(var->stack_offs >= 0);
+		size_t addr = stack_frame + ((AST_vardecl*)(var->fdef))->stack_loc;
 		assert(addr < stack.size());
 		return stack[addr];
 	}
@@ -212,8 +177,8 @@ struct Interpreter {
 	static inline constexpr AST* JUMP_NORMAL = nullptr;
 
 	Jump_t call_function (AST_call* call, Value* retval, size_t stack_ptr) {
-		auto* func_ast  = call->decl;
-		auto& func_decl = ((AST_funcdef*)func_ast)->decl;
+		auto* func_ast  = call->fdef;
+		auto& func_decl = ((AST_funcdef*)func_ast)->fdef;
 
 		size_t stack_frame = stack.size();
 
@@ -249,9 +214,9 @@ struct Interpreter {
 		}
 		else {
 			assert(func_ast->type == A_FUNCDEF_BUILTIN);
-			auto* decl = (AST_funcdef_builtin*)call->decl;
+			auto* fdef = (AST_funcdef_builtin*)call->fdef;
 
-			decl->func_ptr(vals, valc);
+			fdef->func_ptr(vals, valc);
 		}
 
 		// get (first) return value from stack
@@ -304,7 +269,7 @@ struct Interpreter {
 				Value condval;
 				_execute(aif->cond, &condval, stack_ptr);
 				if (condval.type != BOOL)
-					throw MyException{"if condition must be bool", aif->cond->source};
+					throw CompilerExcept{"if condition must be bool", aif->cond->source};
 
 				auto& body = condval.u.b ? aif->true_body : aif->false_body;
 				if (body) {
@@ -318,7 +283,7 @@ struct Interpreter {
 				Value condval;
 				_execute(aif->cond, &condval, stack_ptr);
 				if (condval.type != BOOL)
-					throw MyException{"select condition must be bool", aif->cond->source};
+					throw CompilerExcept{"select condition must be bool", aif->cond->source};
 
 				auto& body = condval.u.b ? aif->true_body : aif->false_body;
 				_execute(body, retval, stack_ptr);
@@ -351,7 +316,7 @@ struct Interpreter {
 					Value condval;
 					_execute(loop->cond, &condval, stack_ptr);
 					if (condval.type != BOOL)
-						throw MyException{"loop condition must be bool", loop->cond->source};
+						throw CompilerExcept{"loop condition must be bool", loop->cond->source};
 					if (!condval.u.b)
 						break;
 
@@ -396,7 +361,7 @@ struct Interpreter {
 				auto* op = (AST_unop*)node;
 
 				if (op->operand->type != A_VAR)
-					throw MyException{"post inc/decrement can only operate on variables", node->source};
+					throw CompilerExcept{"post inc/decrement can only operate on variables", node->source};
 
 				Value& operand_val = stack_get((AST_var*)op->operand, stack_ptr);
 				*retval = unop(operand_val, op);
@@ -455,11 +420,11 @@ struct Interpreter {
 		if (jmp) {
 			switch (jmp->type) {
 				case A_RETURN:
-					throw MyException{"error: return keyword is invalid outside of function", jmp->source};
+					throw CompilerExcept{"error: return keyword is invalid outside of function", jmp->source};
 				case A_BREAK:
-					throw MyException{"error: break keyword is invalid outside of loop", jmp->source};
+					throw CompilerExcept{"error: break keyword is invalid outside of loop", jmp->source};
 				case A_CONTINUE:
-					throw MyException{"error: continue keyword is invalid outside of loop", jmp->source};
+					throw CompilerExcept{"error: continue keyword is invalid outside of loop", jmp->source};
 				default:
 					assert(false);
 					_UNREACHABLE;

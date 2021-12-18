@@ -2,7 +2,7 @@
 #include "common.hpp"
 #include "line_map.hpp"
 
-struct MyException {
+struct CompilerExcept {
 	const char* errstr;
 
 	source_range source;
@@ -40,7 +40,7 @@ struct MyException {
 		size_t charno = source.start - line_str.data();
 
 		if (ansi_color_supported) fputs(ANSI_COLOR_RED, stderr);
-		fprintf(stderr, "%s:%" PRIuMAX ":%" PRIuMAX ": error: %s.\n", filename, start_lineno+1, charno+1, errstr);
+		fprintf(stderr, "%s:%" PRIuMAX ":%" PRIuMAX ": %s.\n", filename, start_lineno+1, charno+1, errstr);
 
 		if (ansi_color_supported) fputs(ANSI_COLOR_RESET, stderr);
 		
@@ -58,6 +58,18 @@ struct MyException {
 		print_line_range(source.start - line_str.data(), source.end - line_str.data());
 		fputs("\n", stderr);
 
+		if (ansi_color_supported) fputs(ANSI_COLOR_RESET, stderr);
+
+		fflush(stderr);
+	}
+};
+
+struct RuntimeExcept {
+	const char* errstr;
+
+	void print () {
+		if (ansi_color_supported) fputs(ANSI_COLOR_RED, stderr);
+		fprintf(stderr, "%s.\n", errstr);
 		if (ansi_color_supported) fputs(ANSI_COLOR_RESET, stderr);
 
 		fflush(stderr);

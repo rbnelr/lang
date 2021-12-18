@@ -1,7 +1,7 @@
 #pragma once
 #include "common.hpp"
 #include "errors.hpp"
-#include "value.hpp"
+#include "basic_types.hpp"
 #include "line_map.hpp"
 #include "ident_ids.hpp"
 
@@ -232,10 +232,11 @@ struct Token {
 	TokenType    type;
 	source_range source;
 
-	Value        val;
+	Type         lit_type;
+	Value        lit_val;
 };
 
-Value parse_escaped_string (const char* start, const char* end) {
+const char* parse_escaped_string (const char* start, const char* end) {
 	// resulting strings should be shorter than escaped strings
 	size_t max_len = end - start + 1;
 
@@ -254,7 +255,7 @@ Value parse_escaped_string (const char* start, const char* end) {
 				case '\\': *out++ = '\\'; break;
 				case '"' : *out++ = '\"'; break;
 				default:
-					throw MyException{ "invalid escape sequence in literal string", start, in };
+					throw CompilerExcept{ "syntax error: invalid escape sequence in literal string", start, in };
 			}
 		} else {
 			*out++ = *in++;
@@ -266,10 +267,7 @@ Value parse_escaped_string (const char* start, const char* end) {
 	// don't bother to reallocate the strings just to save a few bytes not needed due to escape sequences
 	// g_allocator does not support reallocation currently
 
-	Value val;
-	val.type = STR;
-	val.u.str = result;
-	return val;
+	return result;
 }
 
 std::vector<Token> tokenize (const char* src, IdentiferIDs& ident_ids) {
@@ -307,7 +305,7 @@ std::vector<Token> tokenize (const char* src, IdentiferIDs& ident_ids) {
 					while (depth > 0) {
 						if (*cur == '\0') {
 							// TODO: also add note about block comment open location to error
-							throw MyException{ "end of file in block comment", {cur, cur+1}};
+							throw CompilerExcept{ "syntax error: end of file in block comment", {cur, cur+1}};
 						}
 						else if (cur[0] == '/' && cur[1] == '*') {
 							cur += 2; // skip "/*"
@@ -326,7 +324,7 @@ std::vector<Token> tokenize (const char* src, IdentiferIDs& ident_ids) {
 			} break;
 			case '*': {
 				if (cur[1] == '/') {
-					throw MyException{"unexpected block comment close", {cur, cur+2}};
+					throw CompilerExcept{"syntax error: unexpected block comment close", {cur, cur+2}};
 				}
 			} break;
 		}
@@ -415,11 +413,12 @@ std::vector<Token> tokenize (const char* src, IdentiferIDs& ident_ids) {
 					cur = start; // reset to begining
 					double val;
 					if (!parse_double(cur, &val)) {
-						throw MyException{"number parse error", {start, start+1}};
+						throw CompilerExcept{"syntax error: number parse error", {start, start+1}};
 					}
 					tok.type = T_LITERAL;
 					tok.source = { start, cur };
-					tok.val = val;
+					tok.lit_type = FLT;
+					tok.lit_val.f = val;
 					continue;
 				}
 				// int
@@ -428,11 +427,12 @@ std::vector<Token> tokenize (const char* src, IdentiferIDs& ident_ids) {
 					cur = start; // reset to begining
 					int64_t val;
 					if (!parse_integer(cur, &val))
-						throw MyException{"number parse error", {start, start+1}};
+						throw CompilerExcept{"syntax error: number parse error", {start, start+1}};
 					
 					tok.type = T_LITERAL;
 					tok.source = { start, cur };
-					tok.val = val;
+					tok.lit_type = INT;
+					tok.lit_val.i = val;
 					continue;
 				}
 			}
@@ -444,7 +444,7 @@ std::vector<Token> tokenize (const char* src, IdentiferIDs& ident_ids) {
 
 				for (;;) {
 					if (*cur == '\0')
-						throw MyException{"end of file in string literal", {cur, cur+1}};
+						throw CompilerExcept{"syntax error: end of file in string literal", {cur, cur+1}};
 					// escape sequences \\ and \"
 					else if (cur[0] == '\\' && (cur[1] == '"' || cur[1] == '\\'))
 						cur += 2;
@@ -457,7 +457,8 @@ std::vector<Token> tokenize (const char* src, IdentiferIDs& ident_ids) {
 
 				tok.type = T_LITERAL;
 				tok.source = { start, cur };
-				tok.val = parse_escaped_string(strstart, strend); // TODO: scanning this string twice, does this need to happen?
+				tok.lit_type = STR;
+				tok.lit_val.str = parse_escaped_string(strstart, strend); // TODO: scanning this string twice, does this need to happen?
 				continue;
 			}
 
@@ -498,9 +499,9 @@ std::vector<Token> tokenize (const char* src, IdentiferIDs& ident_ids) {
 					else if (text == "else"     ) { tok.type = T_ELSE;                         }
 					else if (text == "for"      ) { tok.type = T_FOR;                          }
 
-					else if (text == "null"     ) { tok.type = T_LITERAL; tok.val = {};        }
-					else if (text == "true"     ) { tok.type = T_LITERAL; tok.val = { true };  }
-					else if (text == "false"    ) { tok.type = T_LITERAL; tok.val = { false }; }
+					//else if (text == "null"     ) { tok.type = T_LITERAL; tok.lit_type = BOOL; tok.lit_val.b = {};        }
+					else if (text == "true"     ) { tok.type = T_LITERAL; tok.lit_type = BOOL; tok.lit_val.b = true;  }
+					else if (text == "false"    ) { tok.type = T_LITERAL; tok.lit_type = BOOL; tok.lit_val.b = false; }
 
 					else if (text == "func"     ) { tok.type = T_FUNC;                         }
 
@@ -516,7 +517,7 @@ std::vector<Token> tokenize (const char* src, IdentiferIDs& ident_ids) {
 				#endif
 				}
 
-				throw MyException{"unknown token", {start, start+1}};
+				throw CompilerExcept{"syntax error: unknown token", {start, start+1}};
 			}
 		}
 

@@ -144,14 +144,15 @@
   <ItemGroup>
     <ClInclude Include="..\..\..\common\tracy\Tracy.hpp" />
     <ClInclude Include="..\..\builtins.hpp" />
+    <ClInclude Include="..\..\code.hpp" />
     <ClInclude Include="..\..\common.hpp" />
     <ClInclude Include="..\..\errors.hpp" />
     <ClInclude Include="..\..\ast_exec.hpp" />
     <ClInclude Include="..\..\line_map.hpp" />
-    <ClInclude Include="..\..\resolve.hpp" />
+    <ClInclude Include="..\..\codegen.hpp" />
     <ClInclude Include="..\..\parser.hpp" />
     <ClInclude Include="..\..\tokenizer.hpp" />
-    <ClInclude Include="..\..\value.hpp" />
+    <ClInclude Include="..\..\basic_types.hpp" />
     <ClInclude Include="..\..\util\console_colors.hpp" />
     <ClInclude Include="..\..\util\file_io.hpp" />
     <ClInclude Include="..\..\util\smhasher\MurmurHash1.h" />

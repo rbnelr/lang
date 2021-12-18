@@ -2,7 +2,7 @@
 #include "common.hpp"
 #include "tokenizer.hpp"
 #include "errors.hpp"
-#include "value.hpp"
+#include "basic_types.hpp"
 
 typedef void (*builtin_func_t)(Value* vals, size_t valc);
 
@@ -227,6 +227,7 @@ struct AST {
 	source_range source;
 
 	AST*         next;
+	Type         valtype;
 };
 
 template <typename T>
@@ -260,13 +261,12 @@ struct AST_literal { AST a;
 
 struct AST_vardecl { AST a;
 	strview      ident;
-	size_t       resolve_addr; // position on stack during resolving
+	size_t       stack_loc; // for codegen: position relative to stack frame
 };
 
 struct AST_var { AST a;
 	strview      ident;
-	AST*         decl;
-	intptr_t     stack_offs; // position at runtime relative to stack frame
+	AST_vardecl* decl;
 };
 
 struct AST_funcdecl {
@@ -295,7 +295,7 @@ struct AST_call { AST a;
 	size_t       argc;
 	AST*         args;
 
-	AST*         decl; // either points to AST_funcdef or AST_funcdef_builtin, check via AST.type
+	AST*         fdef; // either points to AST_funcdef or AST_funcdef_builtin, check via AST.type
 };
 
 struct AST_if { AST a;
@@ -396,12 +396,12 @@ void dbg_print (AST* node, int depth=0) {
 
 		case A_VARDECL: { auto* var = (AST_vardecl*)node;
 			std::string str(var->ident);
-			printf(" %s (%" PRIuMAX ")\n", str.c_str(), var->resolve_addr);
+			printf(" %s (%s)\n", str.c_str(), Type_str[var->a.valtype]);
 		} break;
 
 		case A_VAR: { auto* var = (AST_var*)node;
 			std::string str(var->ident);
-			printf(" %s (%" PRIiMAX ")\n", str.c_str(), var->stack_offs);
+			printf(" %s\n", str.c_str());
 		} break;
 
 		case A_FUNCDEF: { auto* f = (AST_funcdef*)node;
@@ -458,18 +458,18 @@ struct Parser {
 	Token* tok;
 
 	void throw_error_after (const char* errstr, Token const& after_tok) {
-		throw MyException{errstr, {after_tok.source.end, after_tok.source.end+1}};
+		throw CompilerExcept{errstr, {after_tok.source.end, after_tok.source.end+1}};
 	}
 	void throw_error (const char* errstr, Token const& tok) {
-		throw MyException{errstr, tok.source };
+		throw CompilerExcept{errstr, tok.source };
 	}
 	void throw_error (const char* errstr, Token const& first, Token const& last) {
-		throw MyException{errstr, {first.source.start, last.source.end} };
+		throw CompilerExcept{errstr, {first.source.start, last.source.end} };
 	}
 
 	void eat_semicolon () {
 		if (tok->type != T_SEMICOLON)
-			throw_error_after("syntax error, ';' expected", tok[-1]);
+			throw_error_after("syntax error: ';' expected", tok[-1]);
 		tok++;
 	}
 
@@ -491,7 +491,7 @@ struct Parser {
 				tok++;
 			}
 			else if (tok->type != T_PAREN_CLOSE) {
-				throw_error_after("syntax error, ',' or ')' expected!", tok[-1]);
+				throw_error_after("syntax error: ',' or ')' expected!", tok[-1]);
 			}
 		}
 		tok++; // T_PAREN_CLOSE
@@ -508,7 +508,7 @@ struct Parser {
 				AST* result = expression(0);
 
 				if (tok->type != T_PAREN_CLOSE)
-					throw_error_after("syntax error, parenthesis '(' not closed", tok[-1]);
+					throw_error_after("syntax error: parenthesis '(' not closed", tok[-1]);
 				tok++;
 
 				return result;
@@ -544,13 +544,14 @@ struct Parser {
 			case T_LITERAL: {
 				auto* lit = ast_alloc<AST_literal>(A_LITERAL);
 				lit->a.source = tok->source;
-				lit->value = tok->val;
+				lit->a.valtype = tok->lit_type;
+				lit->value     = tok->lit_val;
 				tok++;
 				return (AST*)lit;
 			}
 			
 			default: {
-				throw_error("syntax error, number or variable expected", *tok);
+				throw_error("syntax error: number or variable expected", *tok);
 				return nullptr;
 			}
 		}
@@ -607,7 +608,7 @@ struct Parser {
 
 			if (op_tok.type == T_QUESTIONMARK) {
 				if (tok->type != T_COLON)
-					throw_error_after("syntax error, ':' expected after true case of select operator", tok[-1]);
+					throw_error_after("syntax error: ':' expected after true case of select operator", tok[-1]);
 				tok++;
 
 				auto* op = ast_alloc<AST_if>(tok2btop(op_tok.type));
@@ -641,9 +642,29 @@ struct Parser {
 			var->a.source.start = tok[0].source.start;
 			var->a.source.end   = tok[1].source.end;
 			var->ident = tok[0].source.text();
-			lhs = (AST*)var;
-
+			
 			tok+=2;
+
+			// type specifier
+			if (tok->type == T_IDENTIFIER) {
+				auto ident = tok->source.text();
+
+				if      (ident == "bool") var->a.valtype = BOOL;
+				else if (ident == "int" ) var->a.valtype = INT;
+				else if (ident == "flt" ) var->a.valtype = FLT;
+				else if (ident == "str" ) var->a.valtype = STR;
+				
+				tok++;
+			}
+			else {
+				var->a.valtype = VOID;
+
+				if (tok->type != T_ASSIGN)
+					throw_error_after("syntax error: \neither specify type during variable declaration with \"<var> : <type>;\"\n"
+						                              "or let type be inferred with \"<var> := <expr>;\"", tok[-1]);
+			}
+
+			lhs = (AST*)var;
 		}
 		// lhs is expression
 		else {
@@ -653,7 +674,7 @@ struct Parser {
 		// lhs = rhs   or  lhs += rhs  etc.
 		if (is_binary_assignemnt_op(tok->type)) {
 			if (lhs->type == A_VARDECL && tok->type != T_ASSIGN)
-				throw_error("syntax error, cannot modify variable during declaration", *tok);
+				throw_error("syntax error: cannot modify variable during declaration", *tok);
 
 			auto* op = ast_alloc<AST_binop>(tok2assign(tok->type));
 			op->a.source = tok->source;
@@ -724,16 +745,16 @@ struct Parser {
 		tok++;
 
 		if (tok->type != T_IDENTIFIER)
-			throw_error_after("syntax error, function identifer expected!", tok[-1]);
+			throw_error_after("syntax error: function identifer expected!", tok[-1]);
 		func->decl.ident = tok->source.text();
 		tok++;
 
 		if (tok->type != T_PAREN_OPEN)
-			throw_error_after("syntax error, '(' expected after function identifer!", tok[-1]);
+			throw_error_after("syntax error: '(' expected after function identifer!", tok[-1]);
 		
 		func->decl.argc = comma_seperated_list(&func->decl.args, [this] () {
 			if (tok->type != T_IDENTIFIER)
-				throw_error_after("syntax error, function argument identifer expected!", tok[-1]);
+				throw_error_after("syntax error: function argument identifer expected!", tok[-1]);
 
 			auto* arg = ast_alloc<AST_vardecl>(A_VARDECL);
 			arg->a.source = tok->source;
@@ -754,7 +775,7 @@ struct Parser {
 
 			func->decl.retc = comma_seperated_list(&func->decl.rets, [this] () {
 				if (tok->type != T_IDENTIFIER)
-					throw_error_after("syntax error, function return identifer expected!", tok[-1]);
+					throw_error_after("syntax error: function return identifer expected!", tok[-1]);
 
 				auto* arg = ast_alloc<AST_vardecl>(A_VARDECL);
 				arg->a.source = tok->source;
@@ -776,7 +797,7 @@ struct Parser {
 
 		auto eat_semicolon = [this] () {
 			if (tok->type != T_SEMICOLON)
-				throw_error_after("syntax error, ';' expected", tok[-1]);
+				throw_error_after("syntax error: ';' expected", tok[-1]);
 			tok++;
 		};
 
@@ -829,7 +850,7 @@ struct Parser {
 
 	AST* block () {
 		if (tok->type != T_BLOCK_OPEN)
-			throw_error("syntax error, '{' expected", *tok);
+			throw_error("syntax error: '{' expected", *tok);
 
 		auto* block = ast_alloc<AST_block>(A_BLOCK);
 		block->a.source = tok->source;
@@ -867,7 +888,7 @@ struct Parser {
 		}
 
 		if (tok->type != T_EOF)
-			throw_error("syntax error, end of input expected", *tok);
+			throw_error("syntax error: end of file expected", *tok);
 
 		block->a.source.end = tok->source.end;
 		return (AST*)block;

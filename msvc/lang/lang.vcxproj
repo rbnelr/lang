@@ -144,6 +144,7 @@
   <ItemGroup>
     <ClInclude Include="..\..\..\common\tracy\Tracy.hpp" />
     <ClInclude Include="..\..\builtins.hpp" />
+    <ClInclude Include="..\..\bytecode_vm.hpp" />
     <ClInclude Include="..\..\code.hpp" />
     <ClInclude Include="..\..\common.hpp" />
     <ClInclude Include="..\..\errors.hpp" />

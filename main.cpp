@@ -4,6 +4,7 @@
 #include "parser.hpp"
 #include "codegen.hpp"
 //#include "ast_exec.hpp"
+#include "bytecode_vm.hpp"
 
 int main (int argc, const char** argv) {
 	enable_console_ansi_color_codes();
@@ -32,8 +33,7 @@ int main (int argc, const char** argv) {
 	SourceLines lines; // need lines outside of try to allow me to print error messages with line numbers
 	try {
 
-		AST* ast;
-		IdentiferIDs ident_ids;
+		std::vector<Instruction> code;
 		{
 			ZoneScopedN("compile");
 			{
@@ -42,9 +42,10 @@ int main (int argc, const char** argv) {
 
 			std::vector<Token> tokens;
 			{
-				tokens = tokenize(source.c_str(), ident_ids);
+				tokens = tokenize(source.c_str());
 			}
 
+			AST* ast;
 			{
 				ZoneScopedN("parse");
 				Parser parser;
@@ -52,28 +53,26 @@ int main (int argc, const char** argv) {
 				ast = parser.file();
 			}
 
-			dbg_print(ast);
+			//dbg_print(ast);
 
 			{
 				ZoneScopedN("codegen");
 				Codegen codegen;
 				codegen.generate(ast);
 
-				dbg_print(codegen.code.data(), codegen.code.size());
+				code = std::move(codegen.code);
+
+				dbg_print(code.data(), code.size());
 			}
 		}
 
-	#ifndef TRACY_ENABLE
-	//	printf("--------------------\n");
-	//	
-	//	{
-	//		ZoneScopedN("interpret AST");
-	//		Interpreter interp;
-	//	
-	//		Value retval;
-	//		interp.execute(ast, &retval);
-	//	}
-	#endif
+	//#ifndef TRACY_ENABLE
+		VM vm;
+		{
+			ZoneScopedN("vm.execute");
+			vm.execute(code.data(), code.size(), 0);
+		}
+	//#endif
 	}
 	catch (CompilerExcept& ex) {
 		ex.print(filename.c_str(), lines);

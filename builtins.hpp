@@ -31,7 +31,7 @@ void my_printf (Value* vals, size_t valc) {
 	size_t i = 0;
 	while (*cur != '\0') {
 		if (*cur == '{') {
-			const char* start = cur++;
+			const char* start = ++cur;
 
 			while (*cur != '}')
 				cur++;
@@ -45,7 +45,7 @@ void my_printf (Value* vals, size_t valc) {
 			}
 			else {
 				if (params.size() != 1)
-					throw CompilerExcept{"runtime error: printf: expected type specifier"};
+					throw RuntimeExcept{"runtime error: printf: expected type specifier"};
 				
 				auto& val = varargs[i++];
 
@@ -55,7 +55,7 @@ void my_printf (Value* vals, size_t valc) {
 					case 'f': print(val.f);   break;
 					case 's': print(val.str); break;
 					default:
-						throw CompilerExcept{"runtime error: printf: unknown type specifier"};
+						throw RuntimeExcept{"runtime error: printf: unknown type specifier"};
 				}
 			}
 			continue;

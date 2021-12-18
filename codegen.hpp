@@ -325,9 +325,11 @@ struct Codegen {
 			codegen(n);
 
 		pop_cstack(stack_frame);
+
+		code.push_back({ OP_RET, {}, {} });
 	}
 
-	std::vector<IR_Op> code;
+	std::vector<Instruction> code;
 
 	struct CodegenStack {
 		std::vector<AST_vardecl*> stack;
@@ -344,14 +346,18 @@ struct Codegen {
 		cstack.stack.resize(frame);
 	}
 
+	static inline AST_vardecl TMP  = { { A_VARDECL, "" }, "tmp", 0 };
+	static inline AST_vardecl TMPL = { { A_VARDECL, "" }, "tmpL", 0 };
+	static inline AST_vardecl TMPR = { { A_VARDECL, "" }, "tmpR", 0 };
+
 	AST_vardecl* codegen (AST* node, AST_vardecl* dst=nullptr, size_t dst_stk_loc=0) {
 		switch (node->type) {
 
 			case A_LITERAL: {
 				auto* lit = (AST_literal*)node;
 				if (dst) {
-					size_t val = *(size_t*)&lit->value;
-					code.push_back({ OP_MOVI, { dst->stack_loc, (AST*)dst }, { val, node } });
+					int64_t val = *(int64_t*)&lit->value;
+					code.push_back({ OP_MOVI, { (int64_t)dst_stk_loc, (AST*)dst }, { val, node } });
 				}
 			} break;
 
@@ -370,7 +376,7 @@ struct Codegen {
 				auto* vardecl = (AST_vardecl*)var->decl;
 
 				if (dst) {
-					code.push_back({ OP_MOV, { dst->stack_loc, (AST*)dst }, { dst_stk_loc, node } });
+					code.push_back({ OP_MOV, { (int64_t)dst_stk_loc, (AST*)dst }, { vardecl->stack_loc, node } });
 				}
 
 				return vardecl;
@@ -381,8 +387,6 @@ struct Codegen {
 
 				auto* vardecl = codegen(op->lhs);
 				codegen(op->rhs, vardecl, vardecl->stack_loc);
-
-
 			} break;
 
 			case A_BLOCK: {
@@ -422,6 +426,12 @@ struct Codegen {
 				auto* fdef = (AST_funcdef*)call->fdef;
 				auto* farg = fdef->decl.args;
 
+				for (auto* n=fdef->decl.rets; n != nullptr; n = n->next) {
+					size_t stack_loc = cstack.stack.size();
+					cstack.stack.emplace_back((AST_vardecl*)n);
+
+					code.push_back({ OP_PUSHI, { 0, nullptr }, { 0, (AST*)n } });
+				}
 				for (auto* n=call->args; n != nullptr; n = n->next) {
 					
 					auto* argdecl = (AST_vardecl*)farg;
@@ -438,13 +448,198 @@ struct Codegen {
 
 				if (call->fdef->type == A_FUNCDEF_BUILTIN) {
 					auto* fdefb = (AST_funcdef_builtin*)fdef;
-					code.push_back({ OP_CALLB, { (size_t)fdefb->func_ptr, (AST*)fdefb }, { 0, nullptr } });
+					code.push_back({ OP_CALLB, { (int64_t)fdefb->func_ptr, (AST*)fdefb }, { (int64_t)stack_frame, nullptr } });
 				}
 				else {
 					//code.push_back({ OP_CALL, { 0, call->fdef }, { 0, nullptr } });
 				}
 
+				if (dst && fdef->decl.retc > 0) {
+					code.push_back({ OP_MOV, { (int64_t)dst_stk_loc, (AST*)dst }, { (int64_t)stack_frame, (AST*)fdef->decl.rets } });
+				}
+
 				pop_cstack(stack_frame);
+			} break;
+
+			case A_ADDEQ: case A_SUBEQ: case A_MULEQ: case A_DIVEQ: case A_REMAINDEREQ: {
+				auto* op = (AST_binop*)node;
+				assert(op->lhs->type == A_VAR);
+				auto* lhs = (AST_var*)op->lhs;
+
+				size_t tmp_loc = cstack.stack.size();
+				cstack.stack.emplace_back(&TMP);
+				code.push_back({ OP_PUSHI, { 0, nullptr }, { 0, (AST*)&TMP } });
+
+				codegen(op->rhs, &TMP, tmp_loc);
+
+				if (op->lhs->valtype != op->rhs->valtype)
+					throw CompilerExcept{"error: compund assignment operator: types do not match", op->a.source};
+
+				Opcode opc;
+				switch (op->lhs->valtype) {
+					case INT: opc = OP_ADD; break;
+					case FLT: opc = OP_FADD; break;
+					default:
+						throw CompilerExcept{"error: math ops not valid for this type", node->source};
+				}
+				
+				if (op->lhs->valtype == FLT && node->type == A_REMAINDEREQ)
+					throw CompilerExcept{"error: remainder operator not valid for floats", node->source};
+
+				opc = (Opcode)(node->type + (opc - A_ADDEQ));
+
+				code.push_back({ opc, { (int64_t)lhs->decl->stack_loc, (AST*)lhs->decl }, { (int64_t)tmp_loc, (AST*)&TMP } });
+
+				pop_cstack(tmp_loc);
+			} break;
+
+			case A_ADD: case A_SUB: case A_MUL: case A_DIV: case A_REMAINDER:
+			case A_LESS: case A_LESSEQ: case A_GREATER: case A_GREATEREQ:
+			case A_EQUALS: case A_NOT_EQUALS: {
+				auto* op = (AST_binop*)node;
+
+				size_t tmp_locs = cstack.stack.size();
+
+				cstack.stack.emplace_back(&TMPL);
+				cstack.stack.emplace_back(&TMPR);
+				code.push_back({ OP_PUSHI, { 0, nullptr }, { 0, (AST*)&TMPL } });
+				code.push_back({ OP_PUSHI, { 0, nullptr }, { 0, (AST*)&TMPR } });
+
+				codegen(op->lhs, &TMPL, tmp_locs);
+				codegen(op->rhs, &TMPR, tmp_locs+1);
+
+				if (op->lhs->valtype != op->rhs->valtype)
+					throw CompilerExcept{"error: binary operator: types do not match", op->a.source};
+
+				Opcode opc;
+				bool flip = false;
+
+				switch (op->lhs->valtype) {
+					case INT: {
+						switch (node->type) {
+							case A_ADD: case A_SUB: case A_MUL: case A_DIV: case A_REMAINDER:
+								opc = (Opcode)(node->type + (OP_ADD - A_ADD));
+								break;
+							case A_LESS:       opc = OP_LT;                 break;
+							case A_LESSEQ:     opc = OP_LTE;                break;
+							case A_GREATER:    opc = OP_LT;   flip = true;  break;
+							case A_GREATEREQ:  opc = OP_LTE;  flip = true;  break;
+							case A_EQUALS:     opc = OP_EQ;                 break;
+							case A_NOT_EQUALS: opc = OP_NEQ;                break;
+							default: assert(false);
+						}
+					} break;
+					case BOOL: {
+						switch (node->type) {
+							case A_ADD: case A_SUB: case A_MUL: case A_DIV: case A_REMAINDER:
+								throw CompilerExcept{"error: math ops not valid for this type", node->source};
+							case A_LESS:     
+							case A_LESSEQ:   
+							case A_GREATER:  
+							case A_GREATEREQ:
+								throw CompilerExcept{"error: can't compare bools like that", node->source};
+
+							case A_EQUALS:     opc = OP_EQ;                 break;
+							case A_NOT_EQUALS: opc = OP_NEQ;                break;
+							default: assert(false);
+						}
+					} break;
+					case FLT: {
+						switch (node->type) {
+							case A_ADD: case A_SUB: case A_MUL: case A_DIV:
+								opc = (Opcode)(node->type + (OP_FADD - A_ADD));
+								break;
+							case A_REMAINDER:
+								throw CompilerExcept{"error: remainder operator not valid for floats", node->source};
+							case A_LESS:       opc = OP_FLT;                 break;
+							case A_LESSEQ:     opc = OP_FLTE;                break;
+							case A_GREATER:    opc = OP_FLT;   flip = true;  break;
+							case A_GREATEREQ:  opc = OP_FLTE;  flip = true;  break;
+							case A_EQUALS:     opc = OP_FEQ;                 break;
+							case A_NOT_EQUALS: opc = OP_FNEQ;                break;
+							default: assert(false);
+						}
+					} break;
+					default:
+						throw CompilerExcept{"error: math ops not valid for this type", node->source};
+				}
+
+				size_t bdst = flip ? tmp_locs+1 : tmp_locs  ;
+				size_t bsrc = flip ? tmp_locs   : tmp_locs+1;
+
+				AST* bdstp = flip ? (AST*)&TMPR : (AST*)&TMPL;
+				AST* bsrcp = flip ? (AST*)&TMPL : (AST*)&TMPR;
+
+				code.push_back({ opc, { (int64_t)bdst, bdstp }, { (int64_t)bsrc, bsrcp } });
+
+				if (dst) {
+					code.push_back({ OP_MOV, { (int64_t)dst_stk_loc, (AST*)dst }, { (int64_t)bdst, bdstp } });
+				}
+				pop_cstack(tmp_locs);
+			} break;
+
+			case A_NEGATE: case A_NOT: {
+				auto* op = (AST_unop*)node;
+
+				size_t tmp_loc = cstack.stack.size();
+				cstack.stack.emplace_back(&TMP);
+				code.push_back({ OP_PUSHI, { 0, nullptr }, { 0, (AST*)&TMP } });
+
+				codegen(op->operand, &TMP, tmp_loc);
+
+				Opcode opc;
+				switch (node->type) {
+					case A_NEGATE: {
+						switch (op->operand->valtype) {
+							case INT: opc = OP_NEG; break;
+							case FLT: opc = OP_FNEG; break;
+							default: throw CompilerExcept{"error: negate is not valid for type", node->source};
+						}
+					} break;
+					case A_NOT: {
+						switch (op->operand->valtype) {
+							case INT : opc = OP_NOT; break;
+							case BOOL: opc = OP_NOT; break;
+							default: throw CompilerExcept{"error: not is not valid for type", node->source};
+						}
+					} break;
+				}
+
+				code.push_back({ opc, { (int64_t)tmp_loc, (AST*)&TMP }, { 0, nullptr } });
+
+				if (dst) {
+					code.push_back({ OP_MOV, { (int64_t)dst_stk_loc, (AST*)dst }, { (int64_t)tmp_loc, (AST*)&TMP } });
+				}
+				pop_cstack(tmp_loc);
+			} break;
+
+			case A_INC: case A_DEC: {
+				auto* op = (AST_unop*)node;
+				assert(op->operand->type == A_VAR);
+				auto* operand = (AST_var*)op->operand;
+
+				size_t tmp_loc = cstack.stack.size();
+				if (dst) {
+					cstack.stack.emplace_back(&TMP);
+
+					code.push_back({ OP_PUSHI, { 0, nullptr }, { 0, (AST*)&TMP } });
+					code.push_back({ OP_MOV, { (int64_t)tmp_loc, (AST*)&TMP }, { operand->decl->stack_loc, op->operand } });
+				}
+
+				code.push_back({ (Opcode)(node->type + (OP_INC - A_INC)), { operand->decl->stack_loc, op->operand }, { 0, nullptr } });
+
+				if (dst) {
+					code.push_back({ OP_MOV, { (int64_t)dst_stk_loc, (AST*)dst }, { (int64_t)tmp_loc, (AST*)&TMP } });
+					pop_cstack(tmp_loc);
+				}
+			} break;
+
+			case A_IF:
+			case A_SELECT: {
+				auto* aif = (AST_if*)node;
+
+
+
 			} break;
 
 			case A_RETURN:

@@ -3,7 +3,6 @@
 #include "errors.hpp"
 #include "basic_types.hpp"
 #include "line_map.hpp"
-#include "ident_ids.hpp"
 
 constexpr inline bool is_decimal_c (char c) {
 	return c >= '0' && c <= '9';
@@ -270,7 +269,7 @@ const char* parse_escaped_string (const char* start, const char* end) {
 	return result;
 }
 
-std::vector<Token> tokenize (const char* src, IdentiferIDs& ident_ids) {
+std::vector<Token> tokenize (const char* src) {
 	ZoneScoped;
 	std::vector<Token> tokens;
 	tokens.reserve(1024*8);

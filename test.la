@@ -26,33 +26,46 @@ s = "foo";
 printf("{s}\n", s);
 
 //// Math
-c := -0 + 1;
 
-a := +0;
-a += 4 + c;
+c := -0; // 0
+c += 2;  // 2
+c *= -0 + 1; // 2
+
+a := +0; // 0
+a += 4 + c; // 6
+
+b := 0; // 0
 
 //b := null; // currently not a literal, since null does not exists as a type
-b := "null";
+//b := "null";
 //b = c = a;
 //b += c += 2;
 
 //// Escaped strings
-printf("\\ \" ^{} {}\n", 5);
+printf("\\ \" ^{} {i}\n", 5);
 
-printf("a: {}  b: {}  c: {}\n", a, b, c);
+printf("a: {i}  b: {i}  c: {i}\n", a, b, c);
+
+
+c = 5;
 
 -c; // ignored expression as statement
+b = c++; // b = 5, c = 6
+b = b++; // b++: 6  but overwritten with 5 -> b=5
+
+a = c; // a = 6
+a = a++ + a; // a + a+1 = 13
+
 c = -c;
-printf("c: {}\n", c);
+printf("a: {i}  b: {i}  c: {i}\n", a, b, c);
 
-printf("{}\n", 1 * a - 2);
-
-printf("{}\n", 1 * 5 * 2);
-printf("{}\n", 1 - 5 * 2);
+printf("{i}\n", 1 * a - 2);
+printf("{i}\n", 1 * 5 * 2);
+printf("{i}\n", 1 - 5 * 2);
 
 //// Post inc/decrement
 h := 0;
-printf("{} {} {} {} {} {}\n", h++, h++, h++, h--, h--, h);
+printf("{i} {i} {i} {i} {i} {i}\n", h++, h++, h++, h--, h--, h);
 
 printf("---------------\n");
 k := 6;
@@ -60,8 +73,8 @@ k := 6;
 // error: post inc/decrement can only operate on variables.
 // (because after returned value of first increment is a rvalue)
 //printf("{}\n", - - - k ++ ++);
-printf("{}\n", - - - k ++);
-printf("{}\n", k);
+printf("{i}\n", - - - k ++);
+printf("{i}\n", k);
 
 //// Empty statements (TODO: disallow?)
 ;
@@ -76,20 +89,20 @@ printf("---------------\n");
 
 {
 	p := -3;
-	printf("inner: {}\n", p);
+	printf("inner: {i}\n", p);
 }
 //printf("outer: {}\n", p); // error: unknown variable.
 
 printf("---------------\n");
 
 p := -4;
-printf("outer: {}\n", p);
+printf("outer: {i}\n", p);
 {
-	printf("inner: {}\n", p);
+	printf("inner: {i}\n", p);
 	p := -3;
-	printf("inner: {}\n", p);
+	printf("inner: {i}\n", p);
 }
-printf("outer: {}\n", p);
+printf("outer: {i}\n", p);
 
 printf("---------------\n");
 
@@ -104,16 +117,16 @@ printf("---------------\n");
 //printf("{}\n", null + null); // error: can't do math with null.
 //printf("{}\n", null > null); // error: null can't be larger or smaller.
 
-printf("false             : {}\n", false          );
-printf("true              : {}\n", true           );
-printf("1 == 0            : {}\n", 1 == 0         );
-printf("1 == 1            : {}\n", 1 == 1         );
-printf("'helo' == 'hello' : {}\n", "a" == "hello" );
-printf("'helo4' > 'helo3' : {}\n", "helo4" > "helo3"  );
+printf("false             : {b}\n", false          );
+printf("true              : {b}\n", true           );
+printf("1 == 0            : {b}\n", 1 == 0         );
+printf("1 == 1            : {b}\n", 1 == 1         );
+//printf("'helo' == 'hello' : {b}\n", "a" == "hello" );
+//printf("'helo4' > 'helo3' : {b}\n", "helo4" > "helo3"  );
 //printf("'helo' == null    : {}\n", "a" == null    );
-printf("5 >= 5            : {}\n", 5 >= 5         );
-printf("5 > 5             : {}\n", 5 > 5          );
-printf("2>3 == 3>4        : {}\n", 2>3 == 3>4     );
+printf("5 >= 5            : {b}\n", 5 >= 5         );
+printf("5 > 5             : {b}\n", 5 > 5          );
+printf("2>3 == 3>4        : {b}\n", 2>3 == 3>4     );
 
 printf("---------------\n");
 
@@ -156,18 +169,18 @@ printf("---------------\n");
 
 { //// ternary
 	a := true;
-	printf("a : {}\n", a?"True!":"False...");
+	printf("a : {s}\n", a?"True!":"False...");
 
 	a = !a;
-	printf("a : {}\n", a?"True!":"False...");
+	printf("a : {s}\n", a?"True!":"False...");
 	
 	f := false;
 	t := true;
 	printf("t=true f=false\n");
-	printf("t? t?0:1 : t?2:3 = {}\n", t? t?0:1 : t?2:3);
-	printf("t? f?0:1 : f?2:3 = {}\n", t? f?0:1 : t?2:3);
-	printf("f? t?0:1 : t?2:3 = {}\n", f? t?0:1 : t?2:3);
-	printf("f? f?0:1 : f?2:3 = {}\n", f? f?0:1 : f?2:3);
+	printf("t? t?0:1 : t?2:3 = {i}\n", t? t?0:1 : t?2:3);
+	printf("t? f?0:1 : f?2:3 = {i}\n", t? f?0:1 : t?2:3);
+	printf("f? t?0:1 : t?2:3 = {i}\n", f? t?0:1 : t?2:3);
+	printf("f? f?0:1 : f?2:3 = {i}\n", f? f?0:1 : f?2:3);
 }
 
 
@@ -193,7 +206,7 @@ printf("---------------\n");
 
 for y:=0; y<4; y++ {
 	for x:=0; x<4; x++ {
-		printf("{}{} ", y,x);
+		printf("{i}{i} ", y,x);
 	}
 	printf("\n");
 }
@@ -210,13 +223,13 @@ for i:=0; i<100; i++ {
 		break;
 	}
 }
-printf("sqrt({}) is {}\n", sqr, sqrt);
+printf("sqrt({i}) is {i}\n", sqr, sqrt);
 
 for i:=0; i<10; i++ {
 	if i % 2 != 0 {
 		continue; // skip odd numbers
 	}
-	printf("{} is even\n", i);
+	printf("{i} is even\n", i);
 }
 
 printf("---------------\n");
@@ -234,5 +247,5 @@ printf("---------------\n");
 	}
 	
 	dur := timer_end(start);
-	printf("time: {} ms  time/iter: {} ns\n", dur * 1000.0, dur / countf * 1000000000.0);
+	printf("time: {f} ms  time/iter: {f} ns\n", dur * 1000.0, dur / countf * 1000000000.0);
 }

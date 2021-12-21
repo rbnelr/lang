@@ -70,6 +70,18 @@ struct VM {
 					builtin_func((Value*)frame_ptr, stack_ptr - src_val);
 				} continue;
 
+				case OP_JMP: {
+					program_counter = dst_val;
+				} continue;
+				case OP_JNZ: {
+					if (SRC != 0)
+						program_counter = dst_val;
+				} continue;
+				case OP_JZ: {
+					if (SRC == 0)
+						program_counter = dst_val;
+				} continue;
+
 				case OP_NEG: {
 					auto& i = DST;
 					i = -i;

@@ -15,6 +15,10 @@ enum Opcode {
 
 	OP_RET,
 
+	OP_JMP,     // JUMP DST
+	OP_JNZ,     // JUMP DST, COND     jump if nonzero  
+	OP_JZ,      // JUMP DST, COND     jump if zero     
+
 	OP_NEG,     // MEM
 	OP_NOT,     // MEM
 	OP_INC,     // MEM
@@ -53,6 +57,10 @@ inline constexpr const char* Opcode_str[] = {
 	"CALLB",
 
 	"RET",
+
+	"JMP",
+	"JNZ",
+	"JZ",
 
 	"NEG",
 	"NOT",
@@ -142,6 +150,7 @@ void dbg_print (Instruction* code, size_t length) {
 			case OP_LT: case OP_LTE: case OP_EQ: case OP_NEQ:
 			case OP_FADD: case OP_FSUB: case OP_FMUL: case OP_FDIV:
 			case OP_FLT: case OP_FLTE: case OP_FEQ: case OP_FNEQ:
+			case OP_JMP: case OP_JNZ: case OP_JZ:
 				dst = true;
 				src = true;
 				break;
@@ -163,7 +172,7 @@ void dbg_print (Instruction* code, size_t length) {
 				assert(false);
 		}
 
-		printf("%5d | %-6s", i, Opcode_str[op.code]);
+		printf("%5lli | %-6s", i, Opcode_str[op.code]);
 
 		if (dst) printf("%16lli", op.dst.val);
 		else     printf("%16s", "");

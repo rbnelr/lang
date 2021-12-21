@@ -291,7 +291,7 @@ struct Codegen {
 
 						funcs.emplace_back(def);
 					}
-					});
+				});
 				visit(node, [this] (AST* node) { resolve(node); });
 
 				stack.reset_scope(old_scope, is_func_scope);
@@ -350,7 +350,10 @@ struct Codegen {
 	static inline AST_vardecl TMPL = { { A_VARDECL, "" }, "tmpL", 0 };
 	static inline AST_vardecl TMPR = { { A_VARDECL, "" }, "tmpR", 0 };
 
-	AST_vardecl* codegen (AST* node, AST_vardecl* dst=nullptr, size_t dst_stk_loc=0) {
+	typedef AST* Jump_t;
+	static inline constexpr AST* JUMP_NORMAL = nullptr;
+
+	Jump_t codegen (AST* node, AST_vardecl* dst=nullptr, size_t dst_stk_loc=0) {
 		switch (node->type) {
 
 			case A_LITERAL: {
@@ -368,8 +371,6 @@ struct Codegen {
 				cstack.stack.emplace_back(vardecl);
 
 				code.push_back({ OP_PUSHI, { 0, nullptr }, { 0, (AST*)vardecl } });
-
-				return vardecl;
 			} break;
 			case A_VAR: {
 				auto* var = (AST_var*)node;
@@ -378,14 +379,14 @@ struct Codegen {
 				if (dst) {
 					code.push_back({ OP_MOV, { (int64_t)dst_stk_loc, (AST*)dst }, { vardecl->stack_loc, node } });
 				}
-
-				return vardecl;
 			} break;
 
 			case A_ASSIGN: {
 				auto* op = (AST_binop*)node;
 
-				auto* vardecl = codegen(op->lhs);
+				codegen(op->lhs);
+				auto* vardecl = op->lhs->type == A_VARDECL ? (AST_vardecl*)node : (AST_vardecl*)((AST_var*)node)->decl;
+
 				codegen(op->rhs, vardecl, vardecl->stack_loc);
 			} break;
 
@@ -394,28 +395,11 @@ struct Codegen {
 
 				size_t stack_frame = cstack.stack.size();
 
-				for (auto* n=block->statements; n != nullptr; n = n->next)
+				for (auto* n=block->statements; n != nullptr; n = n->next) {
 					codegen(n);
+				}
 
 				pop_cstack(stack_frame);
-			} break;
-
-			case A_LOOP: {
-				//bool is_func_scope = node->type == A_FUNCDEF;
-				//
-				//auto old_scope = stack.push_scope(is_func_scope);
-				//
-				//visit(node, [this] (AST* n) {
-				//	if (n->type == A_FUNCDEF) {
-				//		auto* def = (AST_funcdef*)n;
-				//		stack.declare_func(def);
-				//
-				//		funcs.emplace_back(def);
-				//	}
-				//	});
-				//visit(node, [this] (AST* node) { _resolve(node); });
-				//
-				//stack.reset_scope(old_scope, is_func_scope);
 			} break;
 
 			case A_CALL: {
@@ -522,8 +506,8 @@ struct Codegen {
 								break;
 							case A_LESS:       opc = OP_LT;                 break;
 							case A_LESSEQ:     opc = OP_LTE;                break;
-							case A_GREATER:    opc = OP_LT;   flip = true;  break;
-							case A_GREATEREQ:  opc = OP_LTE;  flip = true;  break;
+							case A_GREATER:    opc = OP_LTE;  flip = true;  break;
+							case A_GREATEREQ:  opc = OP_LT;   flip = true;  break;
 							case A_EQUALS:     opc = OP_EQ;                 break;
 							case A_NOT_EQUALS: opc = OP_NEQ;                break;
 							default: assert(false);
@@ -638,14 +622,79 @@ struct Codegen {
 			case A_SELECT: {
 				auto* aif = (AST_if*)node;
 
+				size_t tmp_loc = cstack.stack.size();
+				cstack.stack.emplace_back(&TMP);
+				code.push_back({ OP_PUSHI, { 0, nullptr }, { 0, (AST*)&TMP } });
 
+				// condition
+				codegen(aif->cond, &TMP, tmp_loc);
 
+				size_t false_jmp = code.size();
+				code.push_back({ OP_JZ, { 0, nullptr }, { (int64_t)tmp_loc, (AST*)&TMP } });
+
+				// true body
+				codegen(aif->true_body, dst, dst_stk_loc);
+
+				if (!aif->false_body) {
+					code[false_jmp].dst = { (int64_t)code.size(), nullptr };
+				}
+				else {
+					size_t end_jmp = code.size();
+					code.push_back({ OP_JMP, { 0, nullptr }, { 0, nullptr } });
+
+					code[false_jmp].dst = { (int64_t)code.size(), nullptr };
+
+					// false body
+					codegen(aif->false_body, dst, dst_stk_loc);
+
+					code[end_jmp].dst = { (int64_t)code.size(), nullptr };
+				}
+
+				pop_cstack(tmp_loc);
+
+			} break;
+
+			case A_LOOP: {
+				auto* loop = (AST_loop*)node;
+
+				size_t loop_stk = cstack.stack.size();
+
+				// start
+				codegen(loop->start);
+
+				size_t loop_lbl = code.size();
+
+				size_t cond_loc = cstack.stack.size();
+				cstack.stack.emplace_back(&TMP);
+				code.push_back({ OP_PUSHI, { 0, nullptr }, { 0, (AST*)&TMP } });
+				
+				// condition
+				codegen(loop->cond, &TMP, cond_loc);
+
+				// jump to end on cond == false
+				size_t cond_jmp = code.size();
+				code.push_back({ OP_JZ, { 0, nullptr }, { (int64_t)cond_loc, (AST*)&TMP } });
+				
+				// body
+				codegen(loop->body);
+
+				pop_cstack(cond_loc);
+
+				// end
+				codegen(loop->end);
+
+				// unconditional jump to loop top
+				code.push_back({ OP_JMP, { (int64_t)loop_lbl, nullptr }, { 0, nullptr } });
+
+				code[cond_jmp].dst = { (int64_t)code.size(), nullptr };
+
+				pop_cstack(loop_stk);
 			} break;
 
 			case A_RETURN:
 			case A_BREAK:
 			case A_CONTINUE: {
-
+				return node;
 			} break;
 
 			case A_FUNCDEF:
@@ -653,6 +702,7 @@ struct Codegen {
 				
 			} break;
 		}
-		return nullptr;
+
+		return JUMP_NORMAL;
 	}
 };

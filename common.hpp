@@ -87,6 +87,7 @@ struct BumpAllocator {
 		if (cur <= end)
 			return ptr;
 
+		assert(false);
 		return nullptr;
 	}
 	inline char* alloc (size_t size, size_t align) {

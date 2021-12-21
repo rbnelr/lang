@@ -2,7 +2,6 @@
 #include "common.hpp"
 #include "parser.hpp"
 #include "builtins.hpp"
-#include "code.hpp"
 
 struct ScopedIdentifer {
 	size_t     scope;
@@ -151,12 +150,12 @@ void match_call_args (AST_call* call, AST_funcdecl const& fdef) {
 	}
 }
 
-struct Codegen {
+struct IdentResolver {
 	IdentiferStack stack;
 
 	std::vector<AST_funcdef*> funcs;
 
-	void generate (AST* root) {
+	void resolve (AST* root) {
 		for (AST_funcdef_builtin const* f : BUILTIN_FUNCS)
 			stack.declare_func((AST_funcdef*)f); // cast is safe
 
@@ -173,21 +172,10 @@ struct Codegen {
 			funcs.emplace_back(module_main);
 		}
 
-		{
-			ZoneScopedN("resolve");
-			resolve(root);
-		}
-
-		code.reserve(1024 * 16);
-
-		auto& func = funcs[0];
-		//for (auto& func : funcs) {
-			ZoneScopedN("codegen_func");
-			codegen_funcdef(func);
-		//}
+		recurse(root);
 	}
 
-	void resolve (AST* node) {
+	void recurse (AST* node) {
 		switch (node->type) {
 
 			case A_LITERAL: {
@@ -208,8 +196,8 @@ struct Codegen {
 			case A_ASSIGN:
 			case A_ADDEQ: case A_SUBEQ: case A_MULEQ: case A_DIVEQ: case A_REMAINDEREQ: {
 				auto* op = (AST_binop*)node;
-				resolve(op->lhs);
-				resolve(op->rhs);
+				recurse(op->lhs);
+				recurse(op->rhs);
 
 				if (op->lhs->type == A_VARDECL) {
 					assert(node->type == A_ASSIGN);
@@ -237,7 +225,7 @@ struct Codegen {
 				stack.resolve_func_call(call);
 
 				for (auto* n=call->args; n != nullptr; n = n->next)
-					resolve(n);
+					recurse(n);
 
 				auto* funcdef = (AST_funcdef*)call->fdef;
 				match_call_args(call, funcdef->decl);
@@ -247,7 +235,7 @@ struct Codegen {
 			case A_NEGATE: case A_NOT:
 			case A_INC: case A_DEC: {
 				auto* op = (AST_unop*)node;
-				resolve(op->operand);
+				recurse(op->operand);
 				op->a.valtype = op->operand->valtype;
 			} break;
 
@@ -255,8 +243,8 @@ struct Codegen {
 			case A_LESS: case A_LESSEQ: case A_GREATER: case A_GREATEREQ:
 			case A_EQUALS: case A_NOT_EQUALS: {
 				auto* op = (AST_binop*)node;
-				resolve(op->lhs);
-				resolve(op->rhs);
+				recurse(op->lhs);
+				recurse(op->rhs);
 
 				if (op->lhs->valtype != op->rhs->valtype)
 					throw CompilerExcept{"error: binary operator: types do not match", op->a.source};
@@ -268,7 +256,7 @@ struct Codegen {
 			case A_SELECT: {
 				auto* aif = (AST_if*)node;
 
-				visit(node, [this] (AST* node) { resolve(node); });
+				visit(node, [this] (AST* node) { recurse(node); });
 
 				if (node->type == A_SELECT) {
 					if (aif->true_body->valtype != aif->false_body->valtype)
@@ -292,7 +280,7 @@ struct Codegen {
 						funcs.emplace_back(def);
 					}
 				});
-				visit(node, [this] (AST* node) { resolve(node); });
+				visit(node, [this] (AST* node) { recurse(node); });
 
 				stack.reset_scope(old_scope, is_func_scope);
 			} break;
@@ -309,8 +297,89 @@ struct Codegen {
 			}
 		}
 	}
+};
 
-	void codegen_funcdef (AST_funcdef* func) {
+struct IRGen {
+
+	struct IRNode {
+		enum Type {
+			LABEL,    // no-op, but used to mark places jumps go to
+			STK_PUSH, // Create a new scope
+			STK_POP,  // Close the last scope, making stack space be reused
+
+			VARDECL, // var decl lhs and rhs are null
+			MOVE,    // assign rhs to lhs, lhs is a VARDECL node
+
+			CONST,   // get value from ((AST_literal*)ast)->value
+			UNOP,    // only uses lhs     op is ast->type
+			BINOP,   // uses lhs and rhs  op is ast->type
+			
+			JUMP,    // unconditional jump to lhs
+			JUMP_CT, // conditional jump to lhs if rhs true
+			JUMP_CF, // conditional jump to lhs if rhs false
+
+			CALL,    // lhs is nothing for now (but could be computed func ptr) rhs is ptr to _array_ of returns + args,  # of rets is ast->decl->retc, # of args is  ast->argc
+			RETURN,
+		};
+		Type type;
+
+		AST* ast;
+
+		IRNode* lhs;
+		IRNode* rhs;
+	};
+	std::vector<IRNode*> code;
+
+	struct LoopLabels {
+		IRNode* repeat;
+		IRNode* end;
+	};
+	std::vector<LoopLabels> loop_lbls;
+	IRNode*                 return_lbl;
+
+	IRNode* alloc (IRNode::Type type, AST* ast=nullptr, IRNode* lhs=nullptr, IRNode* rhs=nullptr) {
+		auto* ptr = g_allocator.alloc<IRNode>();
+		*ptr = { type, ast, lhs, rhs };
+		return ptr;
+	}
+	void add (IRNode* node) {
+		assert(node);
+		code.emplace_back(node);
+	}
+
+	IRNode* emit (IRNode::Type type, AST* ast=nullptr, IRNode* lhs=nullptr, IRNode* rhs=nullptr) {
+		auto* ptr = alloc(type, ast, lhs, rhs);
+		add(ptr);
+		return ptr;
+	}
+
+	IRNode* emit_n (size_t count, IRNode::Type type) {
+		auto* ptr = g_allocator.alloc_array<IRNode>(count);
+		
+		size_t idx = code.size();
+		code.resize(idx + count);
+		
+		for (size_t i=0; i<count; ++i) {
+			ptr[i].type = type;
+			ptr[i].ast = nullptr;
+			ptr[i].lhs = nullptr;
+			ptr[i].rhs = nullptr;
+			code[idx+i] = &ptr[i];
+		}
+		return ptr;
+	}
+
+	void generate (std::vector<AST_funcdef*>& funcdefs) {
+		code.reserve(1024);
+
+		auto& func = funcdefs[0];
+		//for (auto& func : funcs) {
+		IRgen_funcdef(func);
+		//}
+	}
+
+	void IRgen_funcdef (AST_funcdef* func) {
+		ZoneScoped;
 
 		for (auto* n=func->decl.args; n != nullptr; n = n->next) {
 			
@@ -319,143 +388,105 @@ struct Codegen {
 			
 		}
 
-		size_t stack_frame = cstack.stack.size();
+		return_lbl = alloc(IRNode::LABEL);
+
+		emit(IRNode::STK_PUSH);
 
 		for (auto* n=func->body; n != nullptr; n = n->next)
-			codegen(n);
+			IRgen(n);
 
-		pop_cstack(stack_frame);
+		emit(IRNode::STK_POP);
 
-		code.push_back({ OP_RET, {}, {} });
+		add(return_lbl);
+		emit(IRNode::RETURN);
 	}
 
-	std::vector<Instruction> code;
+	IRNode* IRgen (AST* ast, AST_vardecl* dst=nullptr, size_t dst_stk_loc=0) {
+		switch (ast->type) {
 
-	struct CodegenStack {
-		std::vector<AST_vardecl*> stack;
-	};
-	CodegenStack cstack;
-
-	void pop_cstack (size_t frame) {
-		assert(cstack.stack.size() >= frame);
-		for (size_t i=cstack.stack.size(); i>frame;) {
-			--i;
-
-			code.push_back({ OP_POP, { 0, (AST*)cstack.stack[i] }, { 0, nullptr } });
-		}
-		cstack.stack.resize(frame);
-	}
-
-	static inline AST_vardecl TMP  = { { A_VARDECL, "" }, "tmp", 0 };
-	static inline AST_vardecl TMPL = { { A_VARDECL, "" }, "tmpL", 0 };
-	static inline AST_vardecl TMPR = { { A_VARDECL, "" }, "tmpR", 0 };
-
-	typedef AST* Jump_t;
-	static inline constexpr AST* JUMP_NORMAL = nullptr;
-
-	Jump_t codegen (AST* node, AST_vardecl* dst=nullptr, size_t dst_stk_loc=0) {
-		switch (node->type) {
-
-			case A_LITERAL: {
-				auto* lit = (AST_literal*)node;
-				if (dst) {
-					int64_t val = *(int64_t*)&lit->value;
-					code.push_back({ OP_MOVI, { (int64_t)dst_stk_loc, (AST*)dst }, { val, node } });
-				}
-			} break;
-
+			case A_LITERAL:
+				return emit(IRNode::CONST, ast);
 			case A_VARDECL: {
-				auto* vardecl = (AST_vardecl*)node;
+				auto* vardecl = (AST_vardecl*)ast;
 
-				vardecl->stack_loc = cstack.stack.size();
-				cstack.stack.emplace_back(vardecl);
+				auto* node = emit(IRNode::VARDECL, ast);
+				vardecl->IRnode = node;
+				return node;
+			}
 
-				code.push_back({ OP_PUSHI, { 0, nullptr }, { 0, (AST*)vardecl } });
-			} break;
 			case A_VAR: {
-				auto* var = (AST_var*)node;
+				auto* var = (AST_var*)ast;
 				auto* vardecl = (AST_vardecl*)var->decl;
-
-				if (dst) {
-					code.push_back({ OP_MOV, { (int64_t)dst_stk_loc, (AST*)dst }, { vardecl->stack_loc, node } });
-				}
-			} break;
+				return (IRNode*)vardecl->IRnode;
+			}
 
 			case A_ASSIGN: {
-				auto* op = (AST_binop*)node;
+				auto* op = (AST_binop*)ast;
 
-				codegen(op->lhs);
-				auto* vardecl = op->lhs->type == A_VARDECL ? (AST_vardecl*)node : (AST_vardecl*)((AST_var*)node)->decl;
+				auto* lhs = IRgen(op->lhs);
+				auto* rhs = IRgen(op->rhs);
 
-				codegen(op->rhs, vardecl, vardecl->stack_loc);
-			} break;
+				emit(IRNode::MOVE, ast, lhs, rhs);
+				return nullptr;
+			}
 
 			case A_BLOCK: {
-				auto* block = (AST_block*)node;
+				auto* block = (AST_block*)ast;
 
-				size_t stack_frame = cstack.stack.size();
+				emit(IRNode::STK_PUSH);
 
 				for (auto* n=block->statements; n != nullptr; n = n->next) {
-					codegen(n);
+					IRgen(n);
 				}
 
-				pop_cstack(stack_frame);
-			} break;
+				emit(IRNode::STK_POP);
+				return nullptr;
+			}
 
 			case A_CALL: {
-				auto* call = (AST_call*)node;
-
-				size_t stack_frame = cstack.stack.size();
+				auto* call = (AST_call*)ast;
 
 				auto* fdef = (AST_funcdef*)call->fdef;
-				auto* farg = fdef->decl.args;
 
-				for (auto* n=fdef->decl.rets; n != nullptr; n = n->next) {
-					size_t stack_loc = cstack.stack.size();
-					cstack.stack.emplace_back((AST_vardecl*)n);
+				size_t count = fdef->decl.retc + call->argc;
+				auto* ret_args = emit_n(count, IRNode::VARDECL);
 
-					code.push_back({ OP_PUSHI, { 0, nullptr }, { 0, (AST*)n } });
+				auto* cur = ret_args;
+				for (auto* ret_ast = fdef->decl.rets; ret_ast != nullptr; ret_ast = ret_ast->next) {
+					auto* ret = cur++;
+					ret->ast = ret_ast;
 				}
-				for (auto* n=call->args; n != nullptr; n = n->next) {
-					
+
+				auto* farg = fdef->decl.args;
+				for (auto* arg_ast = call->args; arg_ast != nullptr; arg_ast = arg_ast->next) {
 					auto* argdecl = (AST_vardecl*)farg;
-					size_t stack_loc = cstack.stack.size();// don't clobber AST_funcdef.decl.args
-					cstack.stack.emplace_back(argdecl);
+					
+					auto* arg_ir = IRgen(arg_ast);
 
-					code.push_back({ OP_PUSHI, { 0, nullptr }, { 0, (AST*)argdecl } });
+					auto* arg_decl = cur++;
+					arg_decl->ast = (AST*)argdecl;
 
-					//
-					codegen(n, argdecl, stack_loc);
+					emit(IRNode::MOVE, arg_ast, arg_decl, arg_ir);
 
 					if (farg->type != A_VARARGS) farg = farg->next;
 				}
 
-				if (call->fdef->type == A_FUNCDEF_BUILTIN) {
-					auto* fdefb = (AST_funcdef_builtin*)fdef;
-					code.push_back({ OP_CALLB, { (int64_t)fdefb->func_ptr, (AST*)fdefb }, { (int64_t)stack_frame, nullptr } });
-				}
-				else {
-					//code.push_back({ OP_CALL, { 0, call->fdef }, { 0, nullptr } });
-				}
+				emit(IRNode::CALL, ast, nullptr, ret_args);
 
-				if (dst && fdef->decl.retc > 0) {
-					code.push_back({ OP_MOV, { (int64_t)dst_stk_loc, (AST*)dst }, { (int64_t)stack_frame, (AST*)fdef->decl.rets } });
-				}
-
-				pop_cstack(stack_frame);
-			} break;
+				if (fdef->decl.retc == 0)
+					return nullptr;
+				return &ret_args[0];
+			}
 
 			case A_ADDEQ: case A_SUBEQ: case A_MULEQ: case A_DIVEQ: case A_REMAINDEREQ: {
-				auto* op = (AST_binop*)node;
+				auto* op = (AST_binop*)ast;
 				assert(op->lhs->type == A_VAR);
 				auto* lhs = (AST_var*)op->lhs;
 
-				size_t tmp_loc = cstack.stack.size();
-				cstack.stack.emplace_back(&TMP);
-				code.push_back({ OP_PUSHI, { 0, nullptr }, { 0, (AST*)&TMP } });
+				auto* lhs_ir = (IRNode*)((AST_vardecl*)lhs->decl)->IRnode;
+				auto* rhs = IRgen(op->rhs);
 
-				codegen(op->rhs, &TMP, tmp_loc);
-
+				/*
 				if (op->lhs->valtype != op->rhs->valtype)
 					throw CompilerExcept{"error: compund assignment operator: types do not match", op->a.source};
 
@@ -464,40 +495,29 @@ struct Codegen {
 					case INT: opc = OP_ADD; break;
 					case FLT: opc = OP_FADD; break;
 					default:
-						throw CompilerExcept{"error: math ops not valid for this type", node->source};
+						throw CompilerExcept{"error: math ops not valid for this type", ast->source};
 				}
 				
-				if (op->lhs->valtype == FLT && node->type == A_REMAINDEREQ)
-					throw CompilerExcept{"error: remainder operator not valid for floats", node->source};
+				if (op->lhs->valtype == FLT && ast->type == A_REMAINDEREQ)
+					throw CompilerExcept{"error: remainder operator not valid for floats", ast->source};
+				*/
 
-				opc = (Opcode)(node->type + (opc - A_ADDEQ));
-
-				code.push_back({ opc, { (int64_t)lhs->decl->stack_loc, (AST*)lhs->decl }, { (int64_t)tmp_loc, (AST*)&TMP } });
-
-				pop_cstack(tmp_loc);
-			} break;
+				auto* op_ir = emit(IRNode::BINOP, ast, lhs_ir, rhs);
+				emit(IRNode::MOVE, ast, lhs_ir, op_ir);
+				return nullptr;
+			}
 
 			case A_ADD: case A_SUB: case A_MUL: case A_DIV: case A_REMAINDER:
 			case A_LESS: case A_LESSEQ: case A_GREATER: case A_GREATEREQ:
 			case A_EQUALS: case A_NOT_EQUALS: {
-				auto* op = (AST_binop*)node;
+				auto* op = (AST_binop*)ast;
 
-				size_t tmp_locs = cstack.stack.size();
+				auto* lhs = IRgen(op->lhs);
+				auto* rhs = IRgen(op->rhs);
 
-				cstack.stack.emplace_back(&TMPL);
-				cstack.stack.emplace_back(&TMPR);
-				code.push_back({ OP_PUSHI, { 0, nullptr }, { 0, (AST*)&TMPL } });
-				code.push_back({ OP_PUSHI, { 0, nullptr }, { 0, (AST*)&TMPR } });
+				assert(op->lhs->valtype == op->rhs->valtype);
 
-				codegen(op->lhs, &TMPL, tmp_locs);
-				codegen(op->rhs, &TMPR, tmp_locs+1);
-
-				if (op->lhs->valtype != op->rhs->valtype)
-					throw CompilerExcept{"error: binary operator: types do not match", op->a.source};
-
-				Opcode opc;
-				bool flip = false;
-
+				/*
 				switch (op->lhs->valtype) {
 					case INT: {
 						switch (node->type) {
@@ -546,163 +566,135 @@ struct Codegen {
 					} break;
 					default:
 						throw CompilerExcept{"error: math ops not valid for this type", node->source};
-				}
+				}*/
 
-				size_t bdst = flip ? tmp_locs+1 : tmp_locs  ;
-				size_t bsrc = flip ? tmp_locs   : tmp_locs+1;
-
-				AST* bdstp = flip ? (AST*)&TMPR : (AST*)&TMPL;
-				AST* bsrcp = flip ? (AST*)&TMPL : (AST*)&TMPR;
-
-				code.push_back({ opc, { (int64_t)bdst, bdstp }, { (int64_t)bsrc, bsrcp } });
-
-				if (dst) {
-					code.push_back({ OP_MOV, { (int64_t)dst_stk_loc, (AST*)dst }, { (int64_t)bdst, bdstp } });
-				}
-				pop_cstack(tmp_locs);
+				return emit(IRNode::BINOP, ast, lhs, rhs);
 			} break;
 
 			case A_NEGATE: case A_NOT: {
-				auto* op = (AST_unop*)node;
+				auto* op = (AST_unop*)ast;
 
-				size_t tmp_loc = cstack.stack.size();
-				cstack.stack.emplace_back(&TMP);
-				code.push_back({ OP_PUSHI, { 0, nullptr }, { 0, (AST*)&TMP } });
+				auto* operand_ir = IRgen(op->operand);
 
-				codegen(op->operand, &TMP, tmp_loc);
-
+				/*
 				Opcode opc;
-				switch (node->type) {
+				switch (ast->type) {
 					case A_NEGATE: {
 						switch (op->operand->valtype) {
 							case INT: opc = OP_NEG; break;
 							case FLT: opc = OP_FNEG; break;
-							default: throw CompilerExcept{"error: negate is not valid for type", node->source};
+							default: throw CompilerExcept{"error: negate is not valid for type", ast->source};
 						}
 					} break;
 					case A_NOT: {
 						switch (op->operand->valtype) {
 							case INT : opc = OP_NOT; break;
 							case BOOL: opc = OP_NOT; break;
-							default: throw CompilerExcept{"error: not is not valid for type", node->source};
+							default: throw CompilerExcept{"error: not is not valid for type", ast->source};
 						}
 					} break;
-				}
+				}*/
 
-				code.push_back({ opc, { (int64_t)tmp_loc, (AST*)&TMP }, { 0, nullptr } });
-
-				if (dst) {
-					code.push_back({ OP_MOV, { (int64_t)dst_stk_loc, (AST*)dst }, { (int64_t)tmp_loc, (AST*)&TMP } });
-				}
-				pop_cstack(tmp_loc);
-			} break;
+				return emit(IRNode::UNOP, ast, operand_ir);
+			}
 
 			case A_INC: case A_DEC: {
-				auto* op = (AST_unop*)node;
+				auto* op = (AST_unop*)ast;
 				assert(op->operand->type == A_VAR);
-				auto* operand = (AST_var*)op->operand;
+				auto* operand_ir = (IRNode*)((AST_vardecl*)((AST_var*)op->operand)->decl)->IRnode;
 
-				size_t tmp_loc = cstack.stack.size();
-				if (dst) {
-					cstack.stack.emplace_back(&TMP);
-
-					code.push_back({ OP_PUSHI, { 0, nullptr }, { 0, (AST*)&TMP } });
-					code.push_back({ OP_MOV, { (int64_t)tmp_loc, (AST*)&TMP }, { operand->decl->stack_loc, op->operand } });
-				}
-
-				code.push_back({ (Opcode)(node->type + (OP_INC - A_INC)), { operand->decl->stack_loc, op->operand }, { 0, nullptr } });
-
-				if (dst) {
-					code.push_back({ OP_MOV, { (int64_t)dst_stk_loc, (AST*)dst }, { (int64_t)tmp_loc, (AST*)&TMP } });
-					pop_cstack(tmp_loc);
-				}
-			} break;
+				auto* op_ir = emit(IRNode::UNOP, ast, operand_ir);
+				emit(IRNode::MOVE, ast, operand_ir, op_ir);
+				return op_ir;
+			}
 
 			case A_IF:
 			case A_SELECT: {
-				auto* aif = (AST_if*)node;
+				auto* aif = (AST_if*)ast;
 
-				size_t tmp_loc = cstack.stack.size();
-				cstack.stack.emplace_back(&TMP);
-				code.push_back({ OP_PUSHI, { 0, nullptr }, { 0, (AST*)&TMP } });
+				auto* false_lbl = alloc(IRNode::LABEL);
 
 				// condition
-				codegen(aif->cond, &TMP, tmp_loc);
-
-				size_t false_jmp = code.size();
-				code.push_back({ OP_JZ, { 0, nullptr }, { (int64_t)tmp_loc, (AST*)&TMP } });
+				auto* cond = IRgen(aif->cond);
+				emit(IRNode::JUMP_CF, ast, false_lbl, cond);
 
 				// true body
-				codegen(aif->true_body, dst, dst_stk_loc);
+				IRgen(aif->true_body);
 
+				// no false body
 				if (!aif->false_body) {
-					code[false_jmp].dst = { (int64_t)code.size(), nullptr };
+					add(false_lbl);
 				}
+				// false body
 				else {
-					size_t end_jmp = code.size();
-					code.push_back({ OP_JMP, { 0, nullptr }, { 0, nullptr } });
+					auto* end_lbl = alloc(IRNode::LABEL);
 
-					code[false_jmp].dst = { (int64_t)code.size(), nullptr };
+					emit(IRNode::JUMP, ast, end_lbl);
+					add(false_lbl);
 
 					// false body
-					codegen(aif->false_body, dst, dst_stk_loc);
+					IRgen(aif->false_body);
 
-					code[end_jmp].dst = { (int64_t)code.size(), nullptr };
+					add(end_lbl);
 				}
-
-				pop_cstack(tmp_loc);
-
-			} break;
+				return nullptr;
+			}
 
 			case A_LOOP: {
-				auto* loop = (AST_loop*)node;
+				auto* loop = (AST_loop*)ast;
 
-				size_t loop_stk = cstack.stack.size();
+				emit(IRNode::STK_PUSH); // stk for loop header variable
 
 				// start
-				codegen(loop->start);
+				IRgen(loop->start);
 
-				size_t loop_lbl = code.size();
+				auto* loop_lbl = emit(IRNode::LABEL);
+				auto* end_lbl  = alloc(IRNode::LABEL);
 
-				size_t cond_loc = cstack.stack.size();
-				cstack.stack.emplace_back(&TMP);
-				code.push_back({ OP_PUSHI, { 0, nullptr }, { 0, (AST*)&TMP } });
-				
+				loop_lbls.push_back({ loop_lbl, end_lbl });
+
 				// condition
-				codegen(loop->cond, &TMP, cond_loc);
-
-				// jump to end on cond == false
-				size_t cond_jmp = code.size();
-				code.push_back({ OP_JZ, { 0, nullptr }, { (int64_t)cond_loc, (AST*)&TMP } });
+				auto* cond = IRgen(loop->cond);
+				emit(IRNode::JUMP_CF, ast, end_lbl, cond);
 				
 				// body
-				codegen(loop->body);
-
-				pop_cstack(cond_loc);
+				IRgen(loop->body);
 
 				// end
-				codegen(loop->end);
+				IRgen(loop->end);
 
 				// unconditional jump to loop top
-				code.push_back({ OP_JMP, { (int64_t)loop_lbl, nullptr }, { 0, nullptr } });
+				emit(IRNode::JUMP, ast, loop_lbl, cond);
 
-				code[cond_jmp].dst = { (int64_t)code.size(), nullptr };
+				add(end_lbl);
 
-				pop_cstack(loop_stk);
-			} break;
+				emit(IRNode::STK_POP); // stk for loop header variable
+				loop_lbls.pop_back();
+				return nullptr;
+			}
 
-			case A_RETURN:
-			case A_BREAK:
+			case A_RETURN: {
+				emit(IRNode::JUMP, ast, return_lbl);
+				return nullptr;
+			}
+			case A_BREAK: {
+				if (loop_lbls.empty())
+					throw CompilerExcept{"error: break not inside of any loop", ast->source};
+				
+				emit(IRNode::JUMP, ast, loop_lbls.back().end);
+				return nullptr;
+			}
 			case A_CONTINUE: {
-				return node;
-			} break;
+				if (loop_lbls.empty())
+					throw CompilerExcept{"error: continue not inside of any loop", ast->source};
+
+				emit(IRNode::JUMP, ast, loop_lbls.back().repeat);
+				return nullptr;
+			}
 
 			case A_FUNCDEF:
-			default: {
-				
-			} break;
+			default:
+				return nullptr;
 		}
-
-		return JUMP_NORMAL;
 	}
 };

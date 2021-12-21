@@ -261,7 +261,7 @@ struct AST_literal { AST a;
 
 struct AST_vardecl { AST a;
 	strview      ident;
-	int64_t      stack_loc; // for codegen: position relative to stack frame
+	void*        IRnode; // for codegen
 };
 
 struct AST_var { AST a;

@@ -31,6 +31,8 @@ enum Opcode {
 	OP_REMAIND, // MEM, MEM
 	OP_LT,      // MEM, MEM
 	OP_LTE,     // MEM, MEM
+	OP_GT,      // MEM, MEM
+	OP_GTE,     // MEM, MEM
 	OP_EQ,      // MEM, MEM
 	OP_NEQ,     // MEM, MEM
 
@@ -43,6 +45,8 @@ enum Opcode {
 	_OP_FREMAIND, // dummy
 	OP_FLT,      // MEM, MEM
 	OP_FLTE,     // MEM, MEM
+	OP_FGT,      // MEM, MEM
+	OP_FGTE,     // MEM, MEM
 	OP_FEQ,      // MEM, MEM
 	OP_FNEQ,     // MEM, MEM
 };
@@ -73,6 +77,8 @@ inline constexpr const char* Opcode_str[] = {
 	"REMAIND",   
 	"LT",        
 	"LTE",       
+	"GT",        
+	"GTE",       
 	"EQ",        
 	"NEQ",       
 	"FNEG",      
@@ -83,6 +89,8 @@ inline constexpr const char* Opcode_str[] = {
 	"_FREMAIND", 
 	"FLT",        
 	"FLTE",       
+	"FGT",        
+	"FGTE",       
 	"FEQ",        
 	"FNEQ",       
 };
@@ -147,9 +155,9 @@ void dbg_print (Instruction* code, size_t length) {
 			case OP_MOVI: case OP_MOV:
 			case OP_CALL: case OP_CALLB:
 			case OP_ADD: case OP_SUB: case OP_MUL: case OP_DIV: case OP_REMAIND:
-			case OP_LT: case OP_LTE: case OP_EQ: case OP_NEQ:
+			case OP_LT: case OP_LTE: case OP_GT: case OP_GTE: case OP_EQ: case OP_NEQ:
 			case OP_FADD: case OP_FSUB: case OP_FMUL: case OP_FDIV:
-			case OP_FLT: case OP_FLTE: case OP_FEQ: case OP_FNEQ:
+			case OP_FLT: case OP_FLTE: case OP_FGT: case OP_FGTE: case OP_FEQ: case OP_FNEQ:
 			case OP_JMP: case OP_JNZ: case OP_JZ:
 				dst = true;
 				src = true;

@@ -261,7 +261,7 @@ struct AST_literal { AST a;
 
 struct AST_vardecl { AST a;
 	strview      ident;
-	void*        IRnode; // for codegen
+	size_t       var_id; // for IR gen
 };
 
 struct AST_var { AST a;
@@ -300,8 +300,8 @@ struct AST_call { AST a;
 
 struct AST_if { AST a;
 	AST*         cond;
-	AST*         true_body;
-	AST*         false_body;
+	AST*         if_body;
+	AST*         else_body;
 };
 struct AST_loop { AST a;
 	AST*         start;
@@ -345,9 +345,9 @@ void visit (AST* node, FUNC func) {
 		case A_IF:
 		case A_SELECT: { auto* aif = (AST_if*)node;
 			func(aif->cond      );
-			func(aif->true_body );
-			if (aif->false_body)
-				func(aif->false_body);
+			func(aif->if_body );
+			if (aif->else_body)
+				func(aif->else_body);
 		} break;
 
 		case A_LOOP: { auto* loop = (AST_loop*)node;
@@ -613,10 +613,10 @@ struct Parser {
 
 				auto* op = ast_alloc<AST_if>(tok2btop(op_tok.type));
 				op->cond       = lhs;
-				op->true_body  = rhs;
+				op->if_body  = rhs;
 
 				assert(assoc == RIGHT_ASSOC);
-				op->false_body = expression(prec);
+				op->else_body = expression(prec);
 
 				lhs = (AST*)op;
 			}
@@ -721,8 +721,8 @@ struct Parser {
 
 		aif->a.source.end = tok[-1].source.end;
 
-		aif->true_body  = block();
-		aif->false_body = elif_statement();
+		aif->if_body  = block();
+		aif->else_body = elif_statement();
 
 		return (AST*)aif;
 	}

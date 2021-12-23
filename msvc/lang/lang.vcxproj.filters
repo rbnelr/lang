@@ -58,10 +58,10 @@
       <Filter>util\smhasher</Filter>
     </ClInclude>
     <ClInclude Include="..\..\builtins.hpp" />
-    <ClInclude Include="..\..\code.hpp" />
     <ClInclude Include="..\..\basic_types.hpp" />
     <ClInclude Include="..\..\bytecode_vm.hpp" />
     <ClInclude Include="..\..\ir_gen.hpp" />
+    <ClInclude Include="..\..\codegen.hpp" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="util">

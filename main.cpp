@@ -3,15 +3,61 @@
 #include "tokenizer.hpp"
 #include "parser.hpp"
 #include "ir_gen.hpp"
-//#include "ast_exec.hpp"
+#include "codegen.hpp"
 //#include "bytecode_vm.hpp"
 
+_NOINLINE void fib (int n) {
+	int a = 0;
+	int b = 1;
+
+	printf("%d %d", a, b);
+
+	for (int i = 0; i < n-2; i++) {
+		int c = a + b;
+		printf(" %d", c);
+		a = b;
+		b = c;
+	}
+
+	printf("\n");
+}
+
+_NOINLINE int pascal_tri (int i, int row) {
+	if (i < 0 || i > row)
+		return 0;
+
+	if (row == 0)
+		return 1;
+
+	int a = pascal_tri(i-1, row-1);
+	int b = pascal_tri(i  , row-1);
+	return a + b;
+}
+
+_NOINLINE void pascal_tri (int rows) {
+	for (int row=0; row < rows; ++row) {
+
+		for (int i=0; i < rows-1 - row; ++i)
+			printf("  ");
+
+		for (int i=0; i<=row; ++i) {
+			int val = pascal_tri(i, row);
+			printf("%03d ", val);
+		}
+
+		printf("\n");
+	}
+}
+
 int main (int argc, const char** argv) {
+	//fib(50);
+	//pascal_tri(13);
+
 	enable_console_ansi_color_codes();
 
 	setvbuf(stderr, nullptr, _IOFBF, BUFSIZ);
 
-	std::string filename = "test.la";
+	std::string filename = "test2.la";
 	std::string source;
 	{
 		ZoneScopedN("load_text_file");
@@ -64,14 +110,20 @@ int main (int argc, const char** argv) {
 				funcdefs = std::move(resolve.funcs);
 			}
 
+			IRGen irgen;
+			{
+				ZoneScopedN("ir_gen");
+				irgen.generate(funcdefs);
+
+				irgen.ir.dbg_print();
+			}
+
+			Codegen codegen;
 			{
 				ZoneScopedN("codegen");
-				IRGen ir;
-				ir.generate(funcdefs);
+				codegen.generate(irgen.ir.code);
 
-				//code = std::move(ir.code);
-
-				//dbg_print(code.data(), code.size());
+				codegen.dbg_print();
 			}
 		}
 

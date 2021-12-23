@@ -1,21 +1,20 @@
+n : int;
+{
+	a := 5;
+	b := 10;
+	n = a * b;
+}
 
-f := false;
-t := true;
-printf("t=true f=false\n");
-printf("t? t?0:1 : t?2:3 = {}\n", t? t?0:1 : t?2:3);
-printf("t? f?0:1 : f?2:3 = {}\n", t? f?0:1 : t?2:3);
-printf("f? t?0:1 : t?2:3 = {}\n", f? t?0:1 : t?2:3);
-printf("f? f?0:1 : f?2:3 = {}\n", f? f?0:1 : f?2:3);
+a := 0;
+b := 1;
 
+printf("%d %d", a, b);
 
-printf("{}\n", - - - a ++ ++);
+for i := 0; i < n-2; i++ {
+	c := a + b;
+	printf(" %d", c);
+	a = b;
+	b = c;
+}
 
-printf("{}\n", a - - b + c);
-printf("{}\n", a - - b * c);
-printf("{}\n", a - ! b * c);
-
-printf("{}\n", a * b * -c * d + e);
-printf("{}\n", a * b * -c + d + e);
-
-//printf("{}\n", a * b * !c * d + e);
-//printf("{}\n", a * b * !c + d + e);
+printf("\n");

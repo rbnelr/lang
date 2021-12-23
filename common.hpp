@@ -11,6 +11,7 @@
 #include <vector>
 #include <unordered_map>
 
+#include "util/macros.hpp"
 #include "util/string.hpp"
 #include "util/file_io.hpp"
 #include "util/console_colors.hpp"
@@ -22,8 +23,6 @@
 #include "inttypes.h" // for PRIuMAX for size_t printf'ing
 
 #include "Tracy.hpp"
-
-#define ARRLEN(arr) (sizeof(arr) / sizeof((arr)[0]))
 
 using namespace kiss;
 
@@ -47,6 +46,8 @@ typedef std::string_view strview;
 	#define _FORCEINLINE  
 	#define _NOINLINE     
 #endif
+
+#define INVALID_DEFAULT assert(false); _UNREACHABLE
 
 #if 1
 	#define TRACY_REPEAT 100000

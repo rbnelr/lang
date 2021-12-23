@@ -6,7 +6,7 @@
 	blah // blah
 	/* blah */
 */
-/*
+
 //// Variable declarations
 //l = 7; // error: unknown variable.
 //l :; // can't declare var without either explicit type or inferred from assignment
@@ -190,7 +190,7 @@ printf("---------------\n");
 //for "hello World" {}  error: int expected
 
 printf("---------------\n");
-*/
+
 for i:=0; i<10; i++ {
 	
 }

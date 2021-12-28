@@ -310,7 +310,7 @@ struct IR {
 		STK_PUSH, // Create a new scope
 		STK_POP,  // Close the last scope, making stack space be reused (even without optimizations)
 
-		//VARDECL,  // dst
+		VARDECL,  // needed to be able to control variable stack placement out of order (compared to fist assignment) (NOTE that temporaries are always in order)
 
 		MOVE,     // dst = lhs
 		CONST,    // dst = ((AST_literal*)ast)->value
@@ -333,7 +333,7 @@ struct IR {
 		"STK_PUSH",
 		"STK_POP",
 
-		//"VARDECL",
+		"VARDECL",
 		
 		"MOVE",
 		"CONST",
@@ -366,16 +366,31 @@ struct IR {
 			};
 		};
 
-		// only for debug info and debug printing
-		union {
-			AST*        ast; // ast the IR came from
-			const char* name; // for labels: label name
-		};
+		AST* ast; // ast the IR came from
 	};
 
-	size_t next_var = 0;
-	size_t next_temp = 0;
-	size_t next_label = 0;
+	size_t var_count = 0;
+	size_t temp_count = 0;
+	size_t label_count = 0;
+	
+	struct LabelInfo {
+		AST*        ast;
+		const char* name;
+		size_t      codeaddr;
+	};
+	std::vector<LabelInfo> labels; // labels by id (ids are in order of label references, ie. jumps)
+
+	size_t create_label (AST* ast, char const* type) {
+		size_t lbl_id = label_count++;
+
+		grow(labels, label_count);
+		labels[lbl_id].ast = ast;
+		labels[lbl_id].name = format("%s(%lli)", type, lbl_id);
+
+		return lbl_id;
+	}
+
+	size_t max_args = 0;
 
 	std::vector<Instruction> code;
 
@@ -412,9 +427,6 @@ struct IR {
 			if (var.is_temp) printf(" %7s", prints("_t%llu", var.id).c_str());
 			else             printf(" %7s", prints("r%llu", var.id).c_str());
 		};
-		auto print_lbl = [] (IR_Var var) {
-			printf(" %7s", prints("L%llu", var.id).c_str());
-		};
 
 		for (size_t i=0; i<code.size(); ++i) {
 			auto& instr = code[i];
@@ -424,6 +436,7 @@ struct IR {
 
 			switch (instr.type) {
 				case LABEL:    dst = true;             break;
+				case VARDECL:  dst = true;             break;
 
 				case STK_PUSH:                         break;
 				case STK_POP:                          break;
@@ -446,13 +459,13 @@ struct IR {
 			printf("%5lli |", i);
 
 			if (instr.type == LABEL) {
-				printf("%s(%lli):\n", instr.name, instr.dst.id);
+				printf("%s:\n", labels[instr.dst.id].name);
 			}
 			else {
 				printf("  %-10s", Type_str[instr.type]);
 
 				if (jump && dst) {
-					print_lbl(instr.dst);
+					printf(" %7s", prints("L%lli", instr.dst.id).c_str());
 				}
 				else {
 					if (dst) print_var(instr.dst);
@@ -504,15 +517,6 @@ struct IRGen {
 		instr.ast = ast;
 		return (size_t)(&instr - ir.code.data());
 	}
-	size_t emit (IR::Type type, char const* name, size_t lbl_id) {
-		auto& instr = ir.code.emplace_back();
-		instr.type = type;
-		instr.dst = { 0, lbl_id };
-		instr.lhs = {0};
-		instr.rhs = {0};
-		instr.name = name;
-		return (size_t)(&instr - ir.code.data());
-	}
 	size_t emit (IR::Type type, AST* ast, size_t lbl_id, IR_Var jmp_cond={0}) {
 		auto& instr = ir.code.emplace_back();
 		instr.type = type;
@@ -551,7 +555,7 @@ struct IRGen {
 			
 		}
 
-		return_lbl = ir.next_label++;
+		return_lbl = ir.create_label((AST*)func, "return");
 
 		//emit(IR::STK_PUSH, func->body);
 
@@ -560,7 +564,7 @@ struct IRGen {
 
 		//emit(IR::STK_POP, func->body);
 
-		emit(IR::LABEL, "return", return_lbl);
+		emit(IR::LABEL, (AST*)func, return_lbl);
 		emit(IR::RETURN);
 	}
 
@@ -568,7 +572,7 @@ struct IRGen {
 		switch (ast->type) {
 
 			case A_LITERAL: {
-				IR_Var tmp = { 1, ir.next_temp++ };
+				IR_Var tmp = { 1, ir.temp_count++ };
 				emit_const(IR::CONST, ast, tmp, *(size_t*)&((AST_literal*)ast)->value);
 				return tmp;
 			}
@@ -576,8 +580,10 @@ struct IRGen {
 			case A_VARDECL: {
 				auto* var = (AST_vardecl*)ast;
 
-				IR_Var v = { 0, ir.next_var++ };
+				IR_Var v = { 0, ir.var_count++ };
 				var->var_id = v.id;
+
+				emit(IR::VARDECL, ast, v);
 				return v;
 			}
 
@@ -611,7 +617,7 @@ struct IRGen {
 				} break;
 				}*/
 
-				IR_Var tmp = { 1, ir.next_temp++ };
+				IR_Var tmp = { 1, ir.temp_count++ };
 				emit(IR::UNOP, ast, tmp, operand);
 				return tmp;
 			}
@@ -625,7 +631,7 @@ struct IRGen {
 
 				IR_Var var = { 0, oper_decl->var_id };
 
-				IR_Var tmp = { 1, ir.next_temp++ };
+				IR_Var tmp = { 1, ir.temp_count++ };
 				emit(IR::MOVE, ast, tmp, var); // copy old var value
 				emit(IR::UNOP, ast, var, var); // inc/dec var
 				return tmp;
@@ -692,7 +698,7 @@ struct IRGen {
 				throw CompilerExcept{"error: math ops not valid for this type", node->source};
 				}*/
 
-				IR_Var tmp = { 1, ir.next_temp++ };
+				IR_Var tmp = { 1, ir.temp_count++ };
 				emit(IR::BINOP, ast, tmp, lhs, rhs);
 				return tmp;
 			}
@@ -754,7 +760,7 @@ struct IRGen {
 			case A_SELECT: {
 				auto* aif = (AST_if*)ast;
 
-				size_t else_lbl = ir.next_label++;
+				size_t else_lbl = ir.create_label(ast, "else");
 
 				// condition
 				IR_Var cond = IRgen(aif->cond);
@@ -765,19 +771,19 @@ struct IRGen {
 
 				// no else body
 				if (!aif->else_body) {
-					emit(IR::LABEL, "else", else_lbl);
+					emit(IR::LABEL, ast, else_lbl);
 				}
 				// else body
 				else {
-					size_t end_lbl = ir.next_label++;
+					size_t endif_lbl = ir.create_label(ast, "endif");
 
-					emit(IR::JUMP, ast, end_lbl);
-					emit(IR::LABEL, "else", else_lbl);
+					emit(IR::JUMP, ast, endif_lbl);
+					emit(IR::LABEL, ast, else_lbl);
 
 					// false body
 					IRgen(aif->else_body);
 
-					emit(IR::LABEL, "if-end", end_lbl);
+					emit(IR::LABEL, ast, endif_lbl);
 				}
 				return {};
 			}
@@ -790,10 +796,10 @@ struct IRGen {
 				// start
 				IRgen(loop->start);
 
-				size_t loop_lbl = ir.next_label++;
-				size_t end_lbl  = ir.next_label++;
+				size_t loop_lbl = ir.create_label(ast, "loop");
+				size_t end_lbl  = ir.create_label(ast, "loopend");
 
-				emit(IR::LABEL, "loop", loop_lbl);
+				emit(IR::LABEL, ast, loop_lbl);
 
 				loop_lbls.push_back({ loop_lbl, end_lbl });
 
@@ -810,7 +816,7 @@ struct IRGen {
 				// unconditional jump to loop top
 				emit(IR::JUMP, ast, loop_lbl);
 
-				emit(IR::LABEL, "loop-end", end_lbl);
+				emit(IR::LABEL, ast, end_lbl);
 
 				emit(IR::STK_POP); // stk for loop header variable
 				loop_lbls.pop_back();
@@ -832,6 +838,8 @@ struct IRGen {
 					
 					if (argdecl->type != A_VARARGS) argdecl = argdecl->next;
 				}
+
+				ir.max_args = std::max(ir.max_args, arg_stack.size());
 
 				emit(IR::CALL, ast);
 

@@ -196,20 +196,13 @@ struct Codegen {
 	};
 
 	std::vector<size_t> labels_ordered; // lbl ids in order of code addr
-	std::vector<Info> labels; // lbl id -> lbl code addr + dbg str
 
 	std::vector<Info> istrs;
 
 	std::vector<size_t> vars;
 	std::vector<size_t> temps;
 
-	template <typename T>
-	void grow (std::vector<T>& vec, size_t min_sz) {
-		if (vec.size() < min_sz)
-			vec.resize(min_sz);
-	}
-
-	void dbg_print () {
+	void dbg_print (IR const& ir) {
 		printf("--------------------------------------------------------------------------------\n");
 		printf("bytecode:\n");
 
@@ -219,8 +212,8 @@ struct Codegen {
 		for (size_t i=0; i<code.size(); ++i) {
 			auto& instr = code[i];
 
-			while (cur_lbl_id < labels_ordered.end() && labels[*cur_lbl_id].addr == i) {
-				printf("       %s:\n", labels[*cur_lbl_id].str);
+			while (cur_lbl_id < labels_ordered.end() && ir.labels[*cur_lbl_id].codeaddr == i) {
+				printf("       %s:\n", ir.labels[*cur_lbl_id].name);
 				cur_lbl_id++;
 			}
 
@@ -292,51 +285,11 @@ struct Codegen {
 		}
 	}
 
-	void generate (std::vector<IR::Instruction>& ir_code) {
+	void generate (IR& ir) {
 		
-		size_t max_vars = 0;
-		size_t max_tmps = 0;
-		size_t max_args = 0;
-
-		// 1st pass: collect labels and count vars / temps
-		for (size_t i=0; i<ir_code.size(); ++i) {
-			auto& ir = ir_code[i];
-
-			switch (ir.type) {
-				case IR::LABEL: {
-					size_t lbl_id = ir.dst.id;
-
-					grow(labels, lbl_id+1);
-					labels[lbl_id] = Info{ 0, format("%s(%lli)", ir.name, ir.dst.id) };
-
-					labels_ordered.push_back(lbl_id);
-				} break;
-
-				case IR::MOVE:
-				case IR::CONST:
-				case IR::UNOP:
-				case IR::BINOP: {
-					//size_t lbl_idx = op.dst.id;
-					//
-					//grow(labels, lbl_idx+1);
-					//labels[lbl_idx] = { 0, op.name };
-
-					if (ir.dst.is_temp) max_tmps = std::max(max_tmps, ir.dst.id+1);
-					else                max_vars = std::max(max_vars, ir.dst.id+1);
-				} break;
-
-				case IR::ARG_PUSH: {
-					max_args = std::max(max_args, ir.dst.id+1);
-				} break;
-				case IR::ARG_POP: {
-					
-				} break;
-			}
-		}
-
 		auto get_addr = [&] (IR_Var var) {
 			size_t addr = var.id;
-			if (var.is_temp) addr += max_vars;
+			if (var.is_temp) addr += ir.var_count;
 			return addr;
 		};
 		auto format_const = [] (AST* ast) {
@@ -347,29 +300,31 @@ struct Codegen {
 			auto text = ast->tok->source.text();
 			return format("%.*s", (int)text.size(), text.data());
 		};
-		auto format_jmp = [this] (AST* ast, size_t lbl_id) {
+		auto format_jmp = [&] (AST* ast, size_t lbl_id) {
 			auto text = ast->tok->source.text();
-			return format("%s, %.*s", labels[lbl_id].str, (int)text.size(), text.data());
+			return format("%s, %.*s", ir.labels[lbl_id].name, (int)text.size(), text.data());
 		};
 
-		size_t stk_sz   = max_vars + max_tmps + max_args;
+		size_t args_addr = ir.var_count + ir.temp_count;
+		size_t stk_sz    = ir.var_count + ir.temp_count + ir.max_args;
 
-		{ // code for function prologe
-			code.emplace_back(OP_PUSH, stk_sz);
-		}
+		// code for function prologe
+		code.emplace_back(OP_PUSH, stk_sz);
 
-		// 2nd pass: generate code
-		for (size_t i=0; i<ir_code.size(); ++i) {
-			auto& ir = ir_code[i];
+		// generate code
+		for (size_t i=0; i<ir.code.size(); ++i) {
+			auto& iri = ir.code[i];
 
-			size_t dst = get_addr(ir.dst);
-			size_t lhs = get_addr(ir.lhs);
-			size_t rhs = get_addr(ir.rhs);
+			size_t dst = get_addr(iri.dst);
+			size_t lhs = get_addr(iri.lhs);
+			size_t rhs = get_addr(iri.rhs);
 
-			switch (ir.type) {
+			switch (iri.type) {
 				case IR::LABEL: {
-					size_t lbl_id = ir.dst.id;
-					labels[lbl_id].addr = code.size();
+					size_t lbl_id = iri.dst.id;
+					ir.labels[lbl_id].codeaddr = code.size();
+
+					labels_ordered.push_back(lbl_id);
 				} break;
 
 				case IR::STK_PUSH:
@@ -387,23 +342,23 @@ struct Codegen {
 				} break;
 
 				case IR::CONST: {
-					istrs.push_back({ code.size(), format_const(ir.ast) });
-					code.emplace_back(OP_MOV | OP_IMM, dst, ir.const_val);
+					istrs.push_back({ code.size(), format_const(iri.ast) });
+					code.emplace_back(OP_MOV | OP_IMM, dst, iri.const_val);
 				} break;
 
 				case IR::UNOP: {
 					if (dst != lhs) // make INC/DEC not generate useless MOVs
 						code.emplace_back(OP_MOV, dst, lhs);
-					code.emplace_back(unary2opcode(ir.ast), dst);
+					code.emplace_back(unary2opcode(iri.ast), dst);
 				} break;
 
 				case IR::BINOP: {
 					code.emplace_back(OP_MOV, dst, lhs);
-					code.emplace_back(binary2opcode(ir.ast), dst, rhs);
+					code.emplace_back(binary2opcode(iri.ast), dst, rhs);
 				} break;
 
 				case IR::ARG_PUSH: {
-					size_t addr = max_vars + max_tmps + dst;
+					size_t addr = args_addr + dst;
 					code.emplace_back(OP_MOV, addr, lhs);
 				} break;
 				case IR::ARG_POP: {
@@ -411,11 +366,9 @@ struct Codegen {
 				} break;
 
 				case IR::CALL: {
-					auto* call = (AST_call*)ir.ast;
+					auto* call = (AST_call*)iri.ast;
 
-					istrs.push_back({ code.size(), format_source(ir.ast) });
-
-					size_t args_addr = max_vars + max_tmps;
+					istrs.push_back({ code.size(), format_source(iri.ast) });
 
 					if (call->fdef->type == A_FUNCDEF_BUILTIN) {
 						auto* fdef = (AST_funcdef_builtin*)call->fdef;
@@ -430,18 +383,18 @@ struct Codegen {
 				} break;
 
 				case IR::JUMP: {
-					size_t lbl_id = ir.dst.id;
-					istrs.push_back({ code.size(), format_jmp(ir.ast, lbl_id) });
+					size_t lbl_id = iri.dst.id;
+					istrs.push_back({ code.size(), ir.labels[lbl_id].name });
 					code.emplace_back(OP_JMP, lbl_id);
 				} break;
 				case IR::JUMP_CT: {
-					size_t lbl_id = ir.dst.id;
-					istrs.push_back({ code.size(), format_jmp(ir.ast, lbl_id) });
+					size_t lbl_id = iri.dst.id;
+					istrs.push_back({ code.size(), ir.labels[lbl_id].name });
 					code.emplace_back(OP_JNZ, lbl_id, lhs);
 				} break;
 				case IR::JUMP_CF: {
-					size_t lbl_id = ir.dst.id;
-					istrs.push_back({ code.size(), format_jmp(ir.ast, lbl_id) });
+					size_t lbl_id = iri.dst.id;
+					istrs.push_back({ code.size(), ir.labels[lbl_id].name });
 					code.emplace_back(OP_JZ, lbl_id, lhs);
 				} break;
 
@@ -457,15 +410,15 @@ struct Codegen {
 		//	code.emplace_back(OP_POP, stk_sz);
 		//}
 
-		// 3rd pass: patch up jump addresses
-		for (size_t i=0; i<code.size(); ++i) {
-			auto& instr = code[i];
+		// patch up jump addresses
+		for (size_t iaddr=0; iaddr<code.size(); ++iaddr) {
+			auto& instr = code[iaddr];
 
 			switch (instr.code) {
 				case OP_JMP:
 				case OP_JNZ:
 				case OP_JZ: {
-					instr.dst = labels[instr.dst].addr;
+					instr.dst = ir.labels[instr.dst].codeaddr;
 				} break;
 			}
 		}

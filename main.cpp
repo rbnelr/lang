@@ -122,9 +122,9 @@ int main (int argc, const char** argv) {
 			Codegen codegen;
 			{
 				ZoneScopedN("codegen");
-				codegen.generate(irgen.ir.code);
+				codegen.generate(irgen.ir);
 
-				codegen.dbg_print();
+				codegen.dbg_print(irgen.ir);
 
 				code = std::move(codegen.code);
 			}

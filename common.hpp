@@ -173,3 +173,10 @@ std::string escape_string_capped (std::string_view const& str, size_t max_len=(s
 
 	return out;
 }
+
+template <typename T>
+void grow (std::vector<T>& vec, size_t min_sz) {
+	if (vec.size() < min_sz) {
+		vec.resize(min_sz);
+	}
+}

@@ -8,11 +8,11 @@ n : int;
 a := 0;
 b := 1;
 
-printf("%d %d", a, b);
+printf("{i} {i}", a, b);
 
 for i := 0; i < n-2; i++ {
 	c := a + b;
-	printf(" %d", c);
+	printf(" {i}", c);
 	a = b;
 	b = c;
 }

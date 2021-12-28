@@ -1,7 +1,7 @@
 #pragma once
 #include "basic_types.hpp"
 #include "builtins.hpp"
-#include "code.hpp"
+#include "codegen.hpp"
 
 struct VM {
 	const size_t stack_size = 1024 * 64;
@@ -28,8 +28,9 @@ struct VM {
 		while (true) {
 			assert(program_counter < code_sz);
 			auto& op = code[program_counter++];
-			auto dst_val = op.dst.val;
-			auto src_val = op.src.val;
+
+			size_t dst_val = op.dst;
+			size_t src_val = op.src;
 
 		#define SRC (assert(frame_ptr + src_val < stack_size), stack[frame_ptr + src_val])
 		#define DST (assert(frame_ptr + dst_val < stack_size), stack[frame_ptr + dst_val])
@@ -38,26 +39,25 @@ struct VM {
 		#define FDST (assert(frame_ptr + dst_val < stack_size), *(double*)&stack[frame_ptr + dst_val])
 
 			switch (op.code) {
-				case OP_PUSHI: {
-					assert(stack_ptr < stack_size);
-					stack[stack_ptr++] = src_val;
+				case OP_NOP: {
+
 				} continue;
+
 				case OP_PUSH: {
-					assert(stack_ptr < stack_size);
-					assert(frame_ptr + src_val < stack_size);
-					stack[stack_ptr++] = stack[frame_ptr + src_val];
+					assert(stack_ptr + dst_val < stack_size);
+					stack_ptr += dst_val;
 				} continue;
 
 				case OP_POP: {
-					assert(stack_ptr > 0);
-					stack_ptr--;
+					assert(stack_ptr >= dst_val);
+					stack_ptr -= dst_val;
 				#ifdef _DEBUG
 					constexpr int DBGBYTE = 0xcd;
-					memset(&stack[stack_ptr], DBGBYTE, sizeof(stack[0]));
+					memset(&stack[stack_ptr], DBGBYTE, sizeof(stack[0])*dst_val);
 				#endif
 				} continue;
 
-				case OP_MOVI: {
+				case OP_MOV | OP_IMM: {
 					DST = src_val;
 				} continue;
 				case OP_MOV: {
@@ -66,8 +66,8 @@ struct VM {
 
 				case OP_CALLB: {
 					auto* builtin_func = (builtin_func_t)dst_val;
-					auto* frame_ptr = &stack[src_val];
-					builtin_func((Value*)frame_ptr, stack_ptr - src_val);
+					auto* arg_ptr = &stack[src_val];
+					builtin_func((Value*)arg_ptr);
 				} continue;
 
 				case OP_JMP: {
@@ -121,12 +121,16 @@ struct VM {
 				case OP_FNEQ:    DST = (int64_t)(FDST != FSRC); continue;
 				
 				case OP_RET: {
-					return;
+					goto return_main;
 				} continue;
 
 				default:
 					assert(false);
 			}
 		}
+
+	return_main:
+		assert(frame_ptr == 0);
+		assert(stack_ptr == 0);
 	}
 };

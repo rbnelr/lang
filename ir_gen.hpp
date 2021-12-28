@@ -410,7 +410,7 @@ struct IR {
 		};
 		auto print_var = [] (IR_Var var) {
 			if (var.is_temp) printf(" %7s", prints("_t%llu", var.id).c_str());
-			else             printf(" %7s", prints("%llu", var.id).c_str());
+			else             printf(" %7s", prints("r%llu", var.id).c_str());
 		};
 		auto print_lbl = [] (IR_Var var) {
 			printf(" %7s", prints("L%llu", var.id).c_str());
@@ -423,30 +423,30 @@ struct IR {
 			bool jump=false;
 
 			switch (instr.type) {
-				case LABEL:    dst = true; break;
+				case LABEL:    dst = true;             break;
 
-				case STK_PUSH: break;
-				case STK_POP:  break;
+				case STK_PUSH:                         break;
+				case STK_POP:                          break;
 
 				case MOVE:     dst = true; lhs = true; break;
 				case CONST:    dst = true;             break;
 				case UNOP:     dst = true; lhs = true; break;
 				case BINOP:    dst = true; lhs = true; rhs = true; break;
 
-				case ARG_PUSH: dst = true; break;
-				case ARG_POP:              break;
-				case CALL:                 break;
+				case ARG_PUSH: dst = true; lhs = true; break;
+				case ARG_POP:  dst = true;             break;
+				case CALL:                             break;
 
 				case JUMP:     dst = true;             jump = true; break;
 				case JUMP_CT:  dst = true; lhs = true; jump = true; break;
 				case JUMP_CF:  dst = true; lhs = true; jump = true; break;
-				case RETURN:   dst = true; break;
+				case RETURN:   dst = true;             break;
 			}
 
 			printf("%5lli |", i);
 
 			if (instr.type == LABEL) {
-				printf("%s(L%lli):\n", instr.name, instr.dst.id);
+				printf("%s(%lli):\n", instr.name, instr.dst.id);
 			}
 			else {
 				printf("  %-10s", Type_str[instr.type]);
@@ -488,6 +488,12 @@ struct IRGen {
 	};
 	std::vector<LoopLabels> loop_lbls;
 	size_t                  return_lbl;
+
+	struct FuncArg {
+		AST* all;
+		AST* decl;
+	};
+	std::vector<FuncArg> arg_stack;
 
 	size_t emit (IR::Type type, AST* ast=nullptr, IR_Var dst={0}, IR_Var lhs={0}, IR_Var rhs={0}) {
 		auto& instr = ir.code.emplace_back();
@@ -621,7 +627,7 @@ struct IRGen {
 
 				IR_Var tmp = { 1, ir.next_temp++ };
 				emit(IR::MOVE, ast, tmp, var); // copy old var value
-				emit(IR::UNOP, ast, var); // inc/dec var
+				emit(IR::UNOP, ast, var, var); // inc/dec var
 				return tmp;
 			}
 
@@ -815,26 +821,28 @@ struct IRGen {
 				auto* call = (AST_call*)ast;
 				auto* fdef = (AST_funcdef*)call->fdef;
 
-				auto* farg = fdef->decl.args;
-				for (auto* arg_ast = call->args; arg_ast != nullptr; arg_ast = arg_ast->next) {
-					IR_Var arg = IRgen(arg_ast);
+				auto* argdecl = fdef->decl.args;
+				for (auto* arg = call->args; arg != nullptr; arg = arg->next) {
+					size_t argid = arg_stack.size();
+					
+					IR_Var arg_ir = IRgen(arg);
+					emit(IR::ARG_PUSH, argdecl, { 0, argid }, arg_ir);
 
-					emit(IR::ARG_PUSH, farg, arg);
-
-					if (farg->type != A_VARARGS) farg = farg->next;
+					arg_stack.push_back({ arg, argdecl });
+					
+					if (argdecl->type != A_VARARGS) argdecl = argdecl->next;
 				}
 
 				emit(IR::CALL, ast);
 
 				// get return arg
 
-				// TODO: needs to be in reverse order
-				farg = fdef->decl.args;
-				for (auto* arg_ast = call->args; arg_ast != nullptr; arg_ast = arg_ast->next) {
-					emit(IR::ARG_POP);
+				for (size_t argid = arg_stack.size(); argid>0; ) {
+					argid--;
 
-					if (farg->type != A_VARARGS) farg = farg->next;
+					emit(IR::ARG_POP, arg_stack[argid].decl, { 0, argid });
 				}
+				arg_stack.clear();
 
 				return {};
 			}

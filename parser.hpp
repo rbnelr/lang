@@ -4,7 +4,7 @@
 #include "errors.hpp"
 #include "basic_types.hpp"
 
-typedef void (*builtin_func_t)(Value* vals, size_t valc);
+typedef void (*builtin_func_t)(Value* vals);
 
 inline constexpr bool is_binary_or_ternary_op (TokenType tok) {
 	return tok >= T_ADD && tok <= T_QUESTIONMARK;
@@ -462,9 +462,6 @@ struct Parser {
 	}
 	void throw_error (const char* errstr, Token const& tok) {
 		throw CompilerExcept{errstr, tok.source };
-	}
-	void throw_error (const char* errstr, Token const& first, Token const& last) {
-		throw CompilerExcept{errstr, {first.source.start, last.source.end} };
 	}
 
 	void eat_semicolon () {

@@ -4,7 +4,7 @@
 #include "parser.hpp"
 #include "ir_gen.hpp"
 #include "codegen.hpp"
-//#include "bytecode_vm.hpp"
+#include "bytecode_vm.hpp"
 
 _NOINLINE void fib (int n) {
 	int a = 0;
@@ -79,7 +79,7 @@ int main (int argc, const char** argv) {
 	SourceLines lines; // need lines outside of try to allow me to print error messages with line numbers
 	try {
 
-		//std::vector<Instruction> code;
+		std::vector<Instruction> code;
 		{
 			ZoneScopedN("compile");
 			{
@@ -124,15 +124,17 @@ int main (int argc, const char** argv) {
 				codegen.generate(irgen.ir.code);
 
 				codegen.dbg_print();
+
+				code = std::move(codegen.code);
 			}
 		}
 
 	//#ifndef TRACY_ENABLE
-		//VM vm;
-		//{
-		//	ZoneScopedN("vm.execute");
-		//	vm.execute(code.data(), code.size(), 0);
-		//}
+		VM vm;
+		{
+			ZoneScopedN("vm.execute");
+			vm.execute(code.data(), code.size(), 0);
+		}
 	//#endif
 	}
 	catch (CompilerExcept& ex) {

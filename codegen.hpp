@@ -5,9 +5,12 @@
 enum Opcode : uint32_t {
 	OP_IMM = 1u << 31,
 
-	OP_MOV=0,      // MEM, MEM
-	OP_PUSH,     //      MEM
-	OP_POP,      //         
+	OP_NOP=0,
+
+	OP_MOV,      // MEM, MEM
+
+	OP_PUSH,     // IMM
+	OP_POP,      // IMM
 
 	// call bytecode function
 	OP_CALL,
@@ -52,7 +55,10 @@ enum Opcode : uint32_t {
 	OP_FNEQ,     // MEM, MEM
 };
 inline constexpr const char* Opcode_str[] = {
+	"NOP",  
+
 	"MOV",  
+
 	"PUSH", 
 	"POP", 
 
@@ -104,56 +110,6 @@ struct Instruction {
 	Instruction (Opcode code, size_t dst=0, size_t src=0): code{code}, dst{dst}, src{src} {}
 };
 
-void dbg_print (Instruction* code, size_t length) {
-
-	printf("code:\n-------------------------------------------\n");
-	for (size_t i=0; i<length; ++i) {
-		auto& op = code[i];
-		
-		bool dst, src;
-
-		switch (op.code) {
-			case OP_MOV:
-			case OP_CALL: case OP_CALLB:
-			case OP_ADD: case OP_SUB: case OP_MUL: case OP_DIV: case OP_REMAIND:
-			case OP_LT: case OP_LTE: case OP_GT: case OP_GTE: case OP_EQ: case OP_NEQ:
-			case OP_FADD: case OP_FSUB: case OP_FMUL: case OP_FDIV:
-			case OP_FLT: case OP_FLTE: case OP_FGT: case OP_FGTE: case OP_FEQ: case OP_FNEQ:
-			case OP_JMP: case OP_JNZ: case OP_JZ:
-				dst = true;
-				src = true;
-				break;
-			case OP_INC: case OP_DEC:
-			case OP_NEG: case OP_NOT: case OP_FNEG:
-				dst = true;
-				src = false;
-				break;
-			case OP_PUSH:
-				dst = false;
-				src = true;
-				break;
-			case OP_POP:
-			case OP_RET:
-				dst = false;
-				src = false;
-				break;
-			default:
-				assert(false);
-		}
-
-		printf("%5lli | %-6s", i, Opcode_str[op.code]);
-
-		if (dst) printf("%16lli", op.dst);
-		else     printf("%16s", "");
-
-		if (src) printf("%16lli", op.src);
-		else     printf("%16s", "");
-
-		printf("\n");
-	}
-	printf("-------------------------------------------\n");
-}
-
 Opcode unary2opcode (AST* ast) {
 	switch (ast->type) {
 		case A_NEGATE: {
@@ -190,10 +146,10 @@ Opcode binary2opcode (AST* ast) {
 	switch (ast->valtype) {
 		case INT: {
 			switch (ast->type) {
-				case A_ADD:       case A_ADDEQ:       return OP_ADD;
-				case A_SUB:       case A_SUBEQ:       return OP_SUB;
-				case A_MUL:       case A_MULEQ:       return OP_MUL;
-				case A_DIV:       case A_DIVEQ:       return OP_DIV;
+				case A_ADD: case A_ADDEQ:             return OP_ADD;
+				case A_SUB: case A_SUBEQ:             return OP_SUB;
+				case A_MUL: case A_MULEQ:             return OP_MUL;
+				case A_DIV: case A_DIVEQ:             return OP_DIV;
 				case A_REMAINDER: case A_REMAINDEREQ: return OP_REMAIND;
 				case A_LESS:                          return OP_LT;
 				case A_LESSEQ:                        return OP_LTE;
@@ -213,10 +169,10 @@ Opcode binary2opcode (AST* ast) {
 		} break;
 		case FLT: {
 			switch (ast->type) {
-				case A_ADD:       case A_ADDEQ:       return OP_FADD;
-				case A_SUB:       case A_SUBEQ:       return OP_FSUB;
-				case A_MUL:       case A_MULEQ:       return OP_FMUL;
-				case A_DIV:       case A_DIVEQ:       return OP_FDIV;
+				case A_ADD: case A_ADDEQ:             return OP_FADD;
+				case A_SUB: case A_SUBEQ:             return OP_FSUB;
+				case A_MUL: case A_MULEQ:             return OP_FMUL;
+				case A_DIV: case A_DIVEQ:             return OP_FDIV;
 				case A_LESS:                          return OP_FLT;
 				case A_LESSEQ:                        return OP_FLTE;
 				case A_GREATER:                       return OP_FGT;
@@ -239,10 +195,10 @@ struct Codegen {
 		const char*  str;
 	};
 
-	std::vector<Info> labels;
-	std::vector<size_t> label_id2idx;
+	std::vector<size_t> labels_ordered; // lbl ids in order of code addr
+	std::vector<Info> labels; // lbl id -> lbl code addr + dbg str
 
-	//std::vector<Info> instrucs;
+	std::vector<Info> istrs;
 
 	std::vector<size_t> vars;
 	std::vector<size_t> temps;
@@ -256,17 +212,18 @@ struct Codegen {
 	void dbg_print () {
 		printf("bytecode : --------------\n");
 
-		auto cur_label = labels.begin();
+		auto cur_lbl_id = labels_ordered.begin();
+		auto cur_istr = istrs.begin();
 
 		for (size_t i=0; i<code.size(); ++i) {
 			auto& instr = code[i];
 
-			while (cur_label < labels.end() && cur_label->addr == i) {
-				printf("       %s:\n", cur_label->str);
-				cur_label++;
+			while (cur_lbl_id < labels_ordered.end() && labels[*cur_lbl_id].addr == i) {
+				printf("       %s:\n", labels[*cur_lbl_id].str);
+				cur_lbl_id++;
 			}
 
-			bool dst=true, src=true;
+			bool dst=true, src=true, jmp=false;
 
 			Opcode code  = instr.code & ~OP_IMM;
 			bool src_imm = (instr.code & OP_IMM) != 0;
@@ -277,9 +234,20 @@ struct Codegen {
 					src = false;
 					break;
 
+				case OP_PUSH:
+				case OP_POP:
+					src = false;
+					break;
+
 				case OP_JMP:
+					src = false;
+					jmp = true;
+					break;
 				case OP_JNZ:
 				case OP_JZ:
+					jmp = true;
+					break;
+
 				case OP_NEG:
 				case OP_NOT:
 				case OP_INC:
@@ -289,7 +257,7 @@ struct Codegen {
 					break;
 			}
 
-			printf("%5lli |", i);
+			printf("%5llx |", i);
 
 			auto print_operand = [] (size_t val) {
 				printf(" %16s", prints("[%llx]", val).c_str());
@@ -299,15 +267,25 @@ struct Codegen {
 			};
 
 			printf("  %-5s", Opcode_str[code]);
-
-			if (dst)            print_operand(instr.dst);
-			else                printf(" %16s", "");
+			
+			if (jmp) {
+				print_imm(instr.dst);
+			}
+			else {
+				if (dst)        print_operand(instr.dst);
+				else            printf(" %16s", "");
+			}
 
 			if (src && src_imm) print_imm(instr.src);
 			else if (src)       print_operand(instr.src);
 			else                printf(" %16s", "");
 
 			printf("  # ");
+
+			while (cur_istr < istrs.end() && cur_istr->addr == i) {
+				printf("%s", cur_istr->str);
+				cur_istr++;
+			}
 
 			printf("\n");
 		}
@@ -317,7 +295,9 @@ struct Codegen {
 		
 		size_t max_vars = 0;
 		size_t max_tmps = 0;
+		size_t max_args = 0;
 
+		// 1st pass: collect labels and count vars / temps
 		for (size_t i=0; i<ir_code.size(); ++i) {
 			auto& ir = ir_code[i];
 
@@ -325,11 +305,10 @@ struct Codegen {
 				case IR::LABEL: {
 					size_t lbl_id = ir.dst.id;
 
-					auto& lbl = labels.emplace_back(Info{ 0, format("%s(%lli)", ir.name, ir.dst.id) });
-					size_t idx = &lbl - labels.data();
+					grow(labels, lbl_id+1);
+					labels[lbl_id] = Info{ 0, format("%s(%lli)", ir.name, ir.dst.id) };
 
-					grow(label_id2idx, lbl_id+1);
-					label_id2idx[lbl_id] = idx;
+					labels_ordered.push_back(lbl_id);
 				} break;
 
 				case IR::MOVE:
@@ -344,6 +323,13 @@ struct Codegen {
 					if (ir.dst.is_temp) max_tmps = std::max(max_tmps, ir.dst.id+1);
 					else                max_vars = std::max(max_vars, ir.dst.id+1);
 				} break;
+
+				case IR::ARG_PUSH: {
+					max_args = std::max(max_args, ir.dst.id+1);
+				} break;
+				case IR::ARG_POP: {
+					
+				} break;
 			}
 		}
 
@@ -352,7 +338,26 @@ struct Codegen {
 			if (var.is_temp) addr += max_vars;
 			return addr;
 		};
+		auto format_const = [] (AST* ast) {
+			auto text = ast->source.text();
+			return format("=%.*s", (int)text.size(), text.data());
+		};
+		auto format_source = [] (AST* ast) {
+			auto text = ast->source.text();
+			return format("%.*s", (int)text.size(), text.data());
+		};
+		auto format_jmp = [this] (AST* ast, size_t lbl_id) {
+			auto text = ast->source.text();
+			return format("%s, %.*s", labels[lbl_id].str, (int)text.size(), text.data());
+		};
 
+		size_t stk_sz   = max_vars + max_tmps + max_args;
+
+		{ // code for function prologe
+			code.emplace_back(OP_PUSH, stk_sz);
+		}
+
+		// 2nd pass: generate code
 		for (size_t i=0; i<ir_code.size(); ++i) {
 			auto& ir = ir_code[i];
 
@@ -363,7 +368,7 @@ struct Codegen {
 			switch (ir.type) {
 				case IR::LABEL: {
 					size_t lbl_id = ir.dst.id;
-					labels[label_id2idx[lbl_id]].addr = code.size();
+					labels[lbl_id].addr = code.size();
 				} break;
 
 				case IR::STK_PUSH:
@@ -372,15 +377,22 @@ struct Codegen {
 				} break;
 
 				case IR::MOVE: {
+					//if (ir.ast && ir.ast->type == A_ASSIGN) {
+					//	auto* op = (AST_binop*)ir.ast;
+					//	auto* alhs = op->lhs;
+					//	istrs.push_back({ code.size(), format_source(alhs) });
+					//}
 					code.emplace_back(OP_MOV, dst, lhs);
 				} break;
 
 				case IR::CONST: {
+					istrs.push_back({ code.size(), format_const(ir.ast) });
 					code.emplace_back(OP_MOV | OP_IMM, dst, ir.const_val);
 				} break;
 
 				case IR::UNOP: {
-					code.emplace_back(OP_MOV, dst, lhs);
+					if (dst != lhs) // make INC/DEC not generate useless MOVs
+						code.emplace_back(OP_MOV, dst, lhs);
 					code.emplace_back(unary2opcode(ir.ast), dst);
 				} break;
 
@@ -389,84 +401,72 @@ struct Codegen {
 					code.emplace_back(binary2opcode(ir.ast), dst, rhs);
 				} break;
 
+				case IR::ARG_PUSH: {
+					size_t addr = max_vars + max_tmps + dst;
+					code.emplace_back(OP_MOV, addr, lhs);
+				} break;
+				case IR::ARG_POP: {
+					
+				} break;
+
 				case IR::CALL: {
-					code.emplace_back(OP_CALL);
+					auto* call = (AST_call*)ir.ast;
+
+					istrs.push_back({ code.size(), format_source(ir.ast) });
+
+					size_t args_addr = max_vars + max_tmps;
+
+					if (call->fdef->type == A_FUNCDEF_BUILTIN) {
+						auto* fdef = (AST_funcdef_builtin*)call->fdef;
+
+						code.emplace_back(OP_CALLB, (size_t)(void*)fdef->func_ptr, args_addr);
+					}
+					else {
+						auto* fdef = (AST_funcdef*)call->fdef;
+
+						//code.emplace_back(OP_CALL);
+					}
+				} break;
+
+				case IR::JUMP: {
+					size_t lbl_id = ir.dst.id;
+					istrs.push_back({ code.size(), format_jmp(ir.ast, lbl_id) });
+					code.emplace_back(OP_JMP, lbl_id);
+				} break;
+				case IR::JUMP_CT: {
+					size_t lbl_id = ir.dst.id;
+					istrs.push_back({ code.size(), format_jmp(ir.ast, lbl_id) });
+					code.emplace_back(OP_JNZ, lbl_id, lhs);
+				} break;
+				case IR::JUMP_CF: {
+					size_t lbl_id = ir.dst.id;
+					istrs.push_back({ code.size(), format_jmp(ir.ast, lbl_id) });
+					code.emplace_back(OP_JZ, lbl_id, lhs);
 				} break;
 
 				case IR::RETURN: {
+					// code for function epilogue
+					code.emplace_back(OP_POP, stk_sz);
 					code.emplace_back(OP_RET);
 				} break;
 			}
 		}
 
-		for (size_t i=0; i<ir_code.size(); ++i) {
-			auto& ir = ir_code[i];
+		//{ // code for function epilogue
+		//	code.emplace_back(OP_POP, stk_sz);
+		//}
 
-			size_t dst = get_addr(ir.dst);
-			size_t lhs = get_addr(ir.lhs);
-			size_t rhs = get_addr(ir.rhs);
+		// 3rd pass: patch up jump addresses
+		for (size_t i=0; i<code.size(); ++i) {
+			auto& instr = code[i];
 
-			switch (ir.type) {
-				case IR::LABEL: {
-					size_t lbl_id = ir.dst.id;
-					labels[label_id2idx[lbl_id]].addr = code.size();
-				} break;
-
-				case IR::STK_PUSH:
-				case IR::STK_POP: {
-					// no-op
-				} break;
-
-				case IR::MOVE: {
-					code.emplace_back(OP_MOV, dst, lhs);
-				} break;
-
-				case IR::CONST: {
-					code.emplace_back(OP_MOV | OP_IMM, dst, ir.const_val);
-				} break;
-
-				case IR::UNOP: {
-					code.emplace_back(OP_MOV, dst, lhs);
-					code.emplace_back(unary2opcode(ir.ast), dst);
-				} break;
-
-				case IR::BINOP: {
-					code.emplace_back(OP_MOV, dst, lhs);
-					code.emplace_back(binary2opcode(ir.ast), dst, rhs);
-				} break;
-
-				case IR::CALL: {
-					code.emplace_back(OP_CALL);
-				} break;
-
-				case IR::RETURN: {
-					code.emplace_back(OP_RET);
+			switch (instr.code) {
+				case OP_JMP:
+				case OP_JNZ:
+				case OP_JZ: {
+					instr.dst = labels[instr.dst].addr;
 				} break;
 			}
 		}
 	}
-
-	/*
-	LABEL,    // used to mark places jumps go to
-
-	STK_PUSH, // Create a new scope
-	STK_POP,  // Close the last scope, making stack space be reused (even without optimizations)
-
-	VARDECL,  // dst
-
-	MOVE,     // dst = lhs
-	CONST,    // dst = ((AST_literal*)ast)->value
-	UNOP,     // dst = <op from ast->type> applied to lhs
-	BINOP,    // dst = lhs <op from ast->type> rhs
-
-	ARG_PUSH, // push lhs as argument for next call
-	ARG_POP,  // pop lhs argument
-	CALL,     // call func using pushed args
-
-	JUMP,     // unconditional jump to lhs
-	JUMP_CT,  // conditional jump to dst if rhs true
-	JUMP_CF,  // conditional jump to dst if rhs false
-
-	RETURN,
-	*/
 };

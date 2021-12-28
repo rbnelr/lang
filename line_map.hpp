@@ -9,7 +9,11 @@ struct source_range {
 	source_loc_t start; // first char
 	source_loc_t end;   // one past last char
 
-	std::string_view text () {
+	source_range () {}
+	constexpr source_range (source_loc_t start, source_loc_t end): start{start}, end{end} {}
+	constexpr explicit source_range (std::string_view sv): start{sv.data()}, end{sv.data() + sv.size()} {}
+
+	constexpr std::string_view text () const {
 		return std::string_view(start, (size_t)(end - start));
 	}
 };

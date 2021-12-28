@@ -5,14 +5,14 @@
 struct CompilerExcept {
 	const char* errstr;
 
-	source_range source;
+	source_range tok;
 
 	static inline int tab_spaces = 4;
 
 	void print (char const* filename, SourceLines const& lines) {
-		assert(source.end > source.start);
+		assert(tok.end > tok.start);
 
-		size_t start_lineno = lines.find_lineno(source.start);
+		size_t start_lineno = lines.find_lineno(tok.start);
 		auto line_str = lines.get_line_text(start_lineno);
 
 		auto print_line = [&] () {
@@ -37,7 +37,7 @@ struct CompilerExcept {
 			}
 		};
 
-		size_t charno = source.start - line_str.data();
+		size_t charno = tok.start - line_str.data();
 
 		if (ansi_color_supported) fputs(ANSI_COLOR_RED, stderr);
 		fprintf(stderr, "%s:%" PRIuMAX ":%" PRIuMAX ": %s.\n", filename, start_lineno+1, charno+1, errstr);
@@ -49,13 +49,13 @@ struct CompilerExcept {
 
 		if (ansi_color_supported) fputs(ANSI_COLOR_RED, stderr);
 
-		assert(source.start >= line_str.data());
+		assert(tok.start >= line_str.data());
 
 		// source.start and source.end could be in a bit after the line str due to the newline being excluded
 		// this is handled in print_line_range though
 		//assert(source.end   <= line_str.data() + line_str.size());
 
-		print_line_range(source.start - line_str.data(), source.end - line_str.data());
+		print_line_range(tok.start - line_str.data(), tok.end - line_str.data());
 		fputs("\n", stderr);
 
 		if (ansi_color_supported) fputs(ANSI_COLOR_RESET, stderr);

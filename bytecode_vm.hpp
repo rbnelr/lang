@@ -12,6 +12,9 @@ struct VM {
 	}
 
 	void execute (Instruction* code, size_t code_sz, size_t entry_point) {
+		printf("--------------------------------------------------------------------------------\n");
+		printf("VM execute:\n");
+
 		_execute(code, code_sz, stack, stack_size, entry_point);
 	}
 	static _NOINLINE void _execute (Instruction* code, size_t code_sz, int64_t* stack, size_t stack_size, size_t entry_point) {

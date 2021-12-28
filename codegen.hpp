@@ -210,7 +210,8 @@ struct Codegen {
 	}
 
 	void dbg_print () {
-		printf("bytecode : --------------\n");
+		printf("--------------------------------------------------------------------------------\n");
+		printf("bytecode:\n");
 
 		auto cur_lbl_id = labels_ordered.begin();
 		auto cur_istr = istrs.begin();
@@ -339,15 +340,15 @@ struct Codegen {
 			return addr;
 		};
 		auto format_const = [] (AST* ast) {
-			auto text = ast->source.text();
+			auto text = ast->tok->source.text();
 			return format("=%.*s", (int)text.size(), text.data());
 		};
 		auto format_source = [] (AST* ast) {
-			auto text = ast->source.text();
+			auto text = ast->tok->source.text();
 			return format("%.*s", (int)text.size(), text.data());
 		};
 		auto format_jmp = [this] (AST* ast, size_t lbl_id) {
-			auto text = ast->source.text();
+			auto text = ast->tok->source.text();
 			return format("%s, %.*s", labels[lbl_id].str, (int)text.size(), text.data());
 		};
 

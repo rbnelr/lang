@@ -254,7 +254,7 @@ const char* parse_escaped_string (const char* start, const char* end) {
 				case '\\': *out++ = '\\'; break;
 				case '"' : *out++ = '\"'; break;
 				default:
-					throw CompilerExcept{ "syntax error: invalid escape sequence in literal string", start, in };
+					throw CompilerExcept{ "syntax error: invalid escape sequence in literal string", {start, in} };
 			}
 		} else {
 			*out++ = *in++;
@@ -470,7 +470,7 @@ std::vector<Token> tokenize (const char* src) {
 					tok.source = { start, cur };
 
 				#if 0
-					auto text = tok.source.text();
+					auto text = tok.tok.text();
 
 					switch (text.size()) {
 						case 2: {

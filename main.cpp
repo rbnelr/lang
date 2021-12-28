@@ -58,10 +58,10 @@ int main (int argc, const char** argv) {
 	setvbuf(stderr, nullptr, _IOFBF, BUFSIZ);
 
 	std::string filename = "test2.la";
-	std::string source;
+	std::string tok;
 	{
 		ZoneScopedN("load_text_file");
-		if (!load_text_file(filename.c_str(), &source)) {
+		if (!load_text_file(filename.c_str(), &tok)) {
 			fprintf(stderr, "file not found!\n");
 			return 1;
 		}
@@ -83,12 +83,12 @@ int main (int argc, const char** argv) {
 		{
 			ZoneScopedN("compile");
 			{
-				lines.parse_lines(source.c_str());
+				lines.parse_lines(tok.c_str());
 			}
 
 			std::vector<Token> tokens;
 			{
-				tokens = tokenize(source.c_str());
+				tokens = tokenize(tok.c_str());
 			}
 
 			AST* ast;
@@ -97,9 +97,10 @@ int main (int argc, const char** argv) {
 				Parser parser;
 				parser.tok = &tokens[0];
 				ast = parser.file();
-			}
 
-			//dbg_print(ast);
+				printf("AST:\n");
+				dbg_print(ast);
+			}
 
 			std::vector<AST_funcdef*> funcdefs;
 			{
@@ -144,7 +145,7 @@ int main (int argc, const char** argv) {
 		ex.print();
 	}
 	catch (...) {
-		fprintf(stderr, "Unknown exception!");
+		fprintf(stderr, "\nUnknown exception!");
 	}
 
 	g_allocator.reset();

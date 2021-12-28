@@ -4,7 +4,7 @@
 #include "parser.hpp"
 
 inline constexpr AST cAST (ASTType type, Type valtype=VOID, AST* next=nullptr) {
-	return { type, {nullptr,nullptr}, next, valtype };
+	return { type, nullptr, next, valtype };
 }
 
 void print (bool b) {

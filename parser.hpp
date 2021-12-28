@@ -224,29 +224,31 @@ inline constexpr ASTType assignop2binop (ASTType type) {
 
 struct AST {
 	ASTType      type;
-	source_range source;
+	Token const* tok;
 
 	AST*         next;
 	Type         valtype;
 };
 
 template <typename T>
-inline T* ast_alloc (ASTType type) {
+inline T* ast_alloc (ASTType type, Token const* tok) {
 	T* ret = g_allocator.alloc<T>();
 	
 	memset(ret, 0, sizeof(T));
 
 	ret->a.type = type;
+	ret->a.tok  = tok;
 	ret->a.next = nullptr;
 	return ret;
 }
 template <>
-inline AST* ast_alloc<AST> (ASTType type) {
+inline AST* ast_alloc<AST> (ASTType type, Token const* tok) {
 	AST* ret = g_allocator.alloc<AST>();
 
 	memset(ret, 0, sizeof(AST));
 
 	ret->type = type;
+	ret->tok  = tok;
 	ret->next = nullptr;
 	return ret;
 }
@@ -317,6 +319,83 @@ struct AST_binop { AST a;
 	AST*         lhs;
 	AST*         rhs;
 };
+
+source_range get_source (AST* node) {
+	assert(node);
+	source_range src;
+
+	switch (node->type) {
+		case A_BLOCK: { auto* block = (AST_block*)node;
+			src.start = node->tok->source.start;
+			for (auto* n=block->statements; n != nullptr; n = n->next)
+				src.end = n->tok->source.end;
+		} break;
+
+		case A_FUNCDEF: { auto* f = (AST_funcdef*)node;
+			src.start = node->tok->source.start;
+			src.end   = get_source(f->body).end;
+		} break;
+
+		case A_CALL: { auto* call = (AST_call*)node;
+			src.start = node->tok->source.start;
+			for (auto* n=call->args; n != nullptr; n = n->next)
+				src.end = n->tok->source.end;
+		} break;
+
+		case A_IF:
+		case A_SELECT: { auto* aif = (AST_if*)node;
+			src.start = node->tok->source.start;
+			src.end   = get_source(aif->else_body).end;
+		} break;
+
+		case A_LOOP: { auto* loop = (AST_loop*)node;
+			src.start = node->tok->source.start;
+			src.end   = get_source(loop->body).end;
+		} break;
+
+		case A_NEGATE: case A_NOT:
+		case A_INC: case A_DEC: { auto* op = (AST_unop*)node;
+			auto* a = op->a.tok;
+			auto* b = op->operand->tok;
+
+			// prefix unary operator
+			if (a < b) {
+				src.start = get_source(op->operand).start;
+				src.end   = a->source.end;
+			}
+			// postfix unary operator
+			else {
+				src.start = a->source.start;
+				src.end   = get_source(op->operand).end;
+			}
+		} break;
+
+		case A_ADD: case A_SUB: case A_MUL: case A_DIV: case A_REMAINDER:
+		case A_LESS: case A_LESSEQ: case A_GREATER: case A_GREATEREQ:
+		case A_EQUALS: case A_NOT_EQUALS:
+		case A_ASSIGN:
+		case A_ADDEQ: case A_SUBEQ: case A_MULEQ: case A_DIVEQ: case A_REMAINDEREQ: {
+			auto* op = (AST_binop*)node;
+			src.start = get_source(op->lhs).start;
+			src.end   = get_source(op->rhs).end;
+		} break;
+
+		case A_VARDECL: {
+			assert(node->tok[1].type == T_COLON);
+			auto* endtok = &node->tok[1];
+			if (node->tok[2].type == T_IDENTIFIER)
+				endtok = &node->tok[2];
+
+			src.start = node->tok->source.start;
+			src.end   = endtok->source.end;
+		} break;
+
+		default: {
+			src = node->tok->source;
+		}
+	}
+	return src;
+}
 
 // helper function to iterate all child AST nodes and call a func on them
 template <typename FUNC>
@@ -390,7 +469,7 @@ void dbg_print (AST* node, int depth=0) {
 	bool children = false;
 	switch (node->type) {
 		case A_LITERAL: { auto* lit = (AST_literal*)node;
-			std::string str(lit->a.source.text());
+			std::string str(lit->a.tok->source.text());
 			printf(" %s\n", str.c_str());
 		} break;
 
@@ -515,8 +594,7 @@ struct Parser {
 				// func call
 				if (tok[1].type == T_PAREN_OPEN) {
 
-					auto* call = ast_alloc<AST_call>(A_CALL);
-					call->a.source.start = tok->source.start;
+					auto* call = ast_alloc<AST_call>(A_CALL, tok);
 					call->ident = tok->source.text();
 					tok++;
 
@@ -524,13 +602,11 @@ struct Parser {
 						return expression(0);
 					});
 
-					call->a.source.end = tok[-1].source.end;
 					return (AST*)call;
 				}
 				// variable
 				else {
-					auto* var = ast_alloc<AST_var>(A_VAR);
-					var->a.source = tok->source;
+					auto* var = ast_alloc<AST_var>(A_VAR, tok);
 					var->ident = tok->source.text();
 
 					tok++;
@@ -539,8 +615,7 @@ struct Parser {
 			}
 
 			case T_LITERAL: {
-				auto* lit = ast_alloc<AST_literal>(A_LITERAL);
-				lit->a.source = tok->source;
+				auto* lit = ast_alloc<AST_literal>(A_LITERAL, tok);
 				lit->a.valtype = tok->lit_type;
 				lit->value     = tok->lit_val;
 				tok++;
@@ -563,10 +638,8 @@ struct Parser {
 		AST* lhs;
 
 		if (is_unary_prefix_op(tok->type)) {
-			auto* unary_op = ast_alloc<AST_unop>(tok2unop(tok->type));
-			unary_op->a.source = tok->source;
-
 			unsigned prec = un_prec(tok->type);
+			auto* unary_op = ast_alloc<AST_unop>(tok2unop(tok->type), tok);
 			tok++;
 
 			unary_op->operand = expression(prec);
@@ -582,9 +655,7 @@ struct Parser {
 			if (prec < min_prec)
 				return lhs;
 
-			auto* post_op = ast_alloc<AST_unop>(tok2unop(tok->type));
-			post_op->a.source = tok->source;
-
+			auto* post_op = ast_alloc<AST_unop>(tok2unop(tok->type), tok);
 			tok++;
 
 			post_op->operand = lhs;
@@ -599,17 +670,17 @@ struct Parser {
 			if (prec < min_prec)
 				break;
 
-			Token& op_tok = *tok++;
+			Token* op_tok = tok++;
 
 			AST* rhs = expression(assoc == LEFT_ASSOC ? prec+1 : prec);
 
-			if (op_tok.type == T_QUESTIONMARK) {
+			if (op_tok->type == T_QUESTIONMARK) {
 				if (tok->type != T_COLON)
 					throw_error_after("syntax error: ':' expected after true case of select operator", tok[-1]);
 				tok++;
 
-				auto* op = ast_alloc<AST_if>(tok2btop(op_tok.type));
-				op->cond       = lhs;
+				auto* op = ast_alloc<AST_if>(tok2btop(op_tok->type), op_tok);
+				op->cond     = lhs;
 				op->if_body  = rhs;
 
 				assert(assoc == RIGHT_ASSOC);
@@ -618,8 +689,7 @@ struct Parser {
 				lhs = (AST*)op;
 			}
 			else {
-				auto* op = ast_alloc<AST_binop>(tok2btop(op_tok.type));
-				op->a.source = op_tok.source;
+				auto* op = ast_alloc<AST_binop>(tok2btop(op_tok->type), op_tok);
 
 				op->lhs = lhs;
 				op->rhs = rhs;
@@ -635,9 +705,7 @@ struct Parser {
 
 		// lhs is var decl
 		if (tok[0].type == T_IDENTIFIER && tok[1].type == T_COLON) {
-			auto* var = ast_alloc<AST_vardecl>(A_VARDECL);
-			var->a.source.start = tok[0].source.start;
-			var->a.source.end   = tok[1].source.end;
+			auto* var = ast_alloc<AST_vardecl>(A_VARDECL, tok);
 			var->ident = tok[0].source.text();
 			
 			tok+=2;
@@ -673,8 +741,7 @@ struct Parser {
 			if (lhs->type == A_VARDECL && tok->type != T_ASSIGN)
 				throw_error("syntax error: cannot modify variable during declaration", *tok);
 
-			auto* op = ast_alloc<AST_binop>(tok2assign(tok->type));
-			op->a.source = tok->source;
+			auto* op = ast_alloc<AST_binop>(tok2assign(tok->type), tok);
 			tok++;
 
 			AST* rhs = expression(0);
@@ -688,8 +755,7 @@ struct Parser {
 	}
 
 	AST* for_loop () {
-		Token* loop_tok = tok++;
-		auto* loop = ast_alloc<AST_loop>(A_LOOP);
+		auto* loop = ast_alloc<AST_loop>(A_LOOP, tok++);
 
 		loop->start = assign_expr();
 		eat_semicolon();
@@ -699,9 +765,6 @@ struct Parser {
 
 		loop->end   = assign_expr();
 
-		loop->a.source.start = loop_tok->source.start;
-		loop->a.source.end   = tok[-1].source.end;
-
 		loop->body = block();
 
 		return (AST*)loop;
@@ -710,15 +773,11 @@ struct Parser {
 	// parses  if <cond> {} elif <cond> {} elif <cond> else {}
 	// where each elif and else is optional
 	AST* if_statement () {
-		auto* aif = ast_alloc<AST_if>(A_IF); 
-		aif->a.source.start = tok->source.start;
-		tok++;
+		auto* aif = ast_alloc<AST_if>(A_IF, tok++); 
 
 		aif->cond       = expression(0);
 
-		aif->a.source.end = tok[-1].source.end;
-
-		aif->if_body  = block();
+		aif->if_body   = block();
 		aif->else_body = elif_statement();
 
 		return (AST*)aif;
@@ -737,8 +796,7 @@ struct Parser {
 	}
 
 	AST* function_def () {
-		auto* func = ast_alloc<AST_funcdef>(A_FUNCDEF); 
-		func->a.source.start = tok->source.start;
+		auto* func = ast_alloc<AST_funcdef>(A_FUNCDEF, tok);
 		tok++;
 
 		if (tok->type != T_IDENTIFIER)
@@ -753,8 +811,7 @@ struct Parser {
 			if (tok->type != T_IDENTIFIER)
 				throw_error_after("syntax error: function argument identifer expected!", tok[-1]);
 
-			auto* arg = ast_alloc<AST_vardecl>(A_VARDECL);
-			arg->a.source = tok->source;
+			auto* arg = ast_alloc<AST_vardecl>(A_VARDECL, tok);
 			arg->ident = tok->source.text();
 			tok++;
 
@@ -774,16 +831,13 @@ struct Parser {
 				if (tok->type != T_IDENTIFIER)
 					throw_error_after("syntax error: function return identifer expected!", tok[-1]);
 
-				auto* arg = ast_alloc<AST_vardecl>(A_VARDECL);
-				arg->a.source = tok->source;
+				auto* arg = ast_alloc<AST_vardecl>(A_VARDECL, tok);
 				arg->ident = tok->source.text();
 				tok++;
 
 				return (AST*)arg;
 			});
 		}
-
-		func->a.source.end = tok[-1].source.end;
 
 		func->body = block();
 
@@ -821,10 +875,7 @@ struct Parser {
 					case T_BREAK:    type = A_BREAK;    break;
 					case T_CONTINUE: type = A_CONTINUE; break;
 				}
-				auto* ast = ast_alloc<AST>(type);
-				ast->source = tok->source;
-				tok++;
-				return ast;
+				return ast_alloc<AST>(type, tok++);
 			}
 
 			case T_FUNC: {
@@ -849,10 +900,7 @@ struct Parser {
 		if (tok->type != T_BLOCK_OPEN)
 			throw_error("syntax error: '{' expected", *tok);
 
-		auto* block = ast_alloc<AST_block>(A_BLOCK);
-		block->a.source = tok->source;
-
-		tok++;
+		auto* block = ast_alloc<AST_block>(A_BLOCK, tok++);
 
 		block->statements = nullptr;
 
@@ -869,9 +917,7 @@ struct Parser {
 	}
 
 	AST* file () {
-		auto* block = ast_alloc<AST_block>(A_BLOCK);
-		block->a.source.start = tok[0].source.start;
-
+		auto* block = ast_alloc<AST_block>(A_BLOCK, tok);
 		block->statements = nullptr;
 
 		AST** link = &block->statements;
@@ -887,7 +933,6 @@ struct Parser {
 		if (tok->type != T_EOF)
 			throw_error("syntax error: end of file expected", *tok);
 
-		block->a.source.end = tok->source.end;
 		return (AST*)block;
 	}
 };

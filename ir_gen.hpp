@@ -72,7 +72,7 @@ struct IdentiferStack {
 	void declare_ident (AST* ast, strview const& ident) {
 		auto res = ident_map.try_emplace(ScopedIdentifer{ scope_id, ident }, ast);
 		if (!res.second)
-			throw CompilerExcept{"error: identifer already declared in this scope", ast->source}; // TODO: print declaration of that identifer
+			throw CompilerExcept{"error: identifer already declared in this scope", ast->tok->source}; // TODO: print declaration of that identifer
 	}
 
 	void declare_var (AST_vardecl* var) {
@@ -97,13 +97,13 @@ struct IdentiferStack {
 			if (i == min_scope)
 				break;
 		}
-		throw CompilerExcept{"error: unknown identifer", node->source};
+		throw CompilerExcept{"error: unknown identifer", node->tok->source};
 	}
 	void resolve_var (AST_var* var) {
 		// min_scope = func_scope_id, functions can only access their own variables
 		AST* ast = resolve_ident((AST*)var, var->ident, cur_scope.func_scope_id);
 		if (ast->type != A_VARDECL)
-			throw CompilerExcept{"error: identifer was not declared as variable", var->a.source};
+			throw CompilerExcept{"error: identifer was not declared as variable", var->a.tok->source};
 
 		var->decl = (AST_vardecl*)ast;
 	}
@@ -112,7 +112,7 @@ struct IdentiferStack {
 		// min_scope = 0, functions can call all functions visible to them
 		AST* ast = resolve_ident((AST*)call, call->ident, 0);
 		if (!(ast->type == A_FUNCDEF || ast->type == A_FUNCDEF_BUILTIN))
-			throw CompilerExcept{"error: identifer was not declared as function", call->a.source};
+			throw CompilerExcept{"error: identifer was not declared as function", call->a.tok->source};
 		
 		call->fdef = ast;
 	}
@@ -129,7 +129,7 @@ void match_call_args (AST_call* call, AST_funcdecl const& fdef) {
 		}
 
 		if (!declarg) // no more args in func
-			throw CompilerExcept{"error: too many arguments to function", call->a.source};
+			throw CompilerExcept{"error: too many arguments to function", call->a.tok->source};
 
 		if (declarg->type == A_VARARGS) {
 			// last func arg is varargs, any number of remaining call args match (including 0)
@@ -140,10 +140,10 @@ void match_call_args (AST_call* call, AST_funcdecl const& fdef) {
 		assert(declarg->type == A_VARDECL);
 
 		if (!callarg) // no args left in call
-			throw CompilerExcept{"error: too few arguments to function", call->a.source};
+			throw CompilerExcept{"error: too few arguments to function", call->a.tok->source};
 
 		if (callarg->valtype != declarg->valtype)
-			throw CompilerExcept{"error: call argument type mismatch", callarg->source};
+			throw CompilerExcept{"error: call argument type mismatch", callarg->tok->source};
 
 		declarg = declarg->next;
 		callarg = callarg->next;
@@ -160,8 +160,7 @@ struct IdentResolver {
 			stack.declare_func((AST_funcdef*)f); // cast is safe
 
 		{
-			AST_funcdef* module_main = ast_alloc<AST_funcdef>(A_FUNCDEF);
-			module_main->a.source = root->source;
+			AST_funcdef* module_main = ast_alloc<AST_funcdef>(A_FUNCDEF, root->tok);
 			module_main->decl.ident = "main";
 			module_main->decl.retc = 0;
 			module_main->decl.rets = nullptr;
@@ -205,18 +204,18 @@ struct IdentResolver {
 					if (op->lhs->valtype == VOID) {
 						if (op->rhs->valtype == VOID) {
 							assert(op->rhs->type == A_CALL); // everything on the rhs of assignments except calls should have a resolved type
-							throw CompilerExcept{"error: assignment: can't assign void return type", op->a.source};
+							throw CompilerExcept{"error: assignment: can't assign void return type", op->a.tok->source};
 						}
 						op->lhs->valtype = op->rhs->valtype;
 					}
 					else {
 						if (op->lhs->valtype != op->rhs->valtype)
-							throw CompilerExcept{"error: variable declaration assignment: types do not match", op->a.source};
+							throw CompilerExcept{"error: variable declaration assignment: types do not match", op->a.tok->source};
 					}
 				}
 				else {
 					if (op->lhs->valtype != op->rhs->valtype)
-						throw CompilerExcept{"error: assignment: types do not match", op->a.source};
+						throw CompilerExcept{"error: assignment: types do not match", op->a.tok->source};
 				}
 			} break;
 
@@ -247,7 +246,7 @@ struct IdentResolver {
 				recurse(op->rhs);
 
 				if (op->lhs->valtype != op->rhs->valtype)
-					throw CompilerExcept{"error: binary operator: types do not match", op->a.source};
+					throw CompilerExcept{"error: binary operator: types do not match", op->a.tok->source};
 				
 				op->a.valtype = op->lhs->valtype;
 			} break;
@@ -260,7 +259,7 @@ struct IdentResolver {
 
 				if (node->type == A_SELECT) {
 					if (aif->if_body->valtype != aif->else_body->valtype)
-						throw CompilerExcept{"error: select expression: types do not match", aif->a.source};
+						throw CompilerExcept{"error: select expression: types do not match", aif->a.tok->source};
 					aif->a.valtype = aif->if_body->valtype;
 				}
 			} break;
@@ -381,7 +380,8 @@ struct IR {
 	std::vector<Instruction> code;
 
 	void dbg_print () {
-		printf("IR code : --------------\n");
+		printf("--------------------------------------------------------------------------------\n");
+		printf("IR code :\n");
 
 		auto print_ast = [] (Instruction& instr) {
 			switch (instr.type) {
@@ -399,7 +399,7 @@ struct IR {
 							printf("%.*s", (int)var->ident.size(), var->ident.data());
 						}
 						else {
-							auto text = instr.ast->source.text();
+							auto text  = get_source(instr.ast).text();
 							auto escaped = escape_string_capped(text, 40);
 		
 							fputs(escaped.c_str(), stdout); // use fputs rather than printf since we might print printf-codes
@@ -853,14 +853,14 @@ struct IRGen {
 			}
 			case A_BREAK: {
 				if (loop_lbls.empty())
-					throw CompilerExcept{"error: break not inside of any loop", ast->source};
+					throw CompilerExcept{"error: break not inside of any loop", ast->tok->source};
 				
 				emit(IR::JUMP, ast, loop_lbls.back().end);
 				return {};
 			}
 			case A_CONTINUE: {
 				if (loop_lbls.empty())
-					throw CompilerExcept{"error: continue not inside of any loop", ast->source};
+					throw CompilerExcept{"error: continue not inside of any loop", ast->tok->source};
 
 				emit(IR::JUMP, ast, loop_lbls.back().repeat);
 				return {};

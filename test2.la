@@ -2,13 +2,13 @@ n : int;
 {
 	a := 5;
 	b := 10;
-	n = a * b;
+	n = a * b - 5;
 }
 
 a := 0;
 b := 1;
 
-printf("{i} {i}", a, b);
+printf("Fibbonaci: {i} {i}", a, b);
 
 for i := 0; i < n-2; i++ {
 	c := a + b;

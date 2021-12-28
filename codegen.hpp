@@ -3,7 +3,7 @@
 #include "ir_gen.hpp"
 
 enum Opcode : uint32_t {
-	OP_IMM = 1u << 31,
+	OP_IMM = 1u << 6,
 
 	OP_NOP=0,
 
@@ -53,6 +53,8 @@ enum Opcode : uint32_t {
 	OP_FGTE,     // MEM, MEM
 	OP_FEQ,      // MEM, MEM
 	OP_FNEQ,     // MEM, MEM
+
+	_OP_COUNT,
 };
 inline constexpr const char* Opcode_str[] = {
 	"NOP",  
@@ -99,6 +101,8 @@ inline constexpr const char* Opcode_str[] = {
 	"FEQ",        
 	"FNEQ",       
 };
+
+static_assert(_OP_COUNT < OP_IMM, "");
 
 ENUM_BITFLAG_OPERATORS_TYPE(Opcode, uint32_t)
 
@@ -202,7 +206,7 @@ struct Codegen {
 	std::vector<size_t> vars;
 	std::vector<size_t> temps;
 
-	void dbg_print (IR const& ir) {
+	void dbg_print (IR::IR const& ir) {
 		printf("--------------------------------------------------------------------------------\n");
 		printf("bytecode:\n");
 
@@ -254,10 +258,10 @@ struct Codegen {
 			printf("%5llx |", i);
 
 			auto print_operand = [] (size_t val) {
-				printf(" %16s", prints("[%llx]", val).c_str());
+				printf(" %18s", prints("[%llx]", val).c_str());
 			};
 			auto print_imm = [] (size_t val) {
-				printf(" %16llx", val);
+				printf(" %18llx", val);
 			};
 
 			printf("  %-5s", Opcode_str[code]);
@@ -267,12 +271,12 @@ struct Codegen {
 			}
 			else {
 				if (dst)        print_operand(instr.dst);
-				else            printf(" %16s", "");
+				else            printf(" %18s", "");
 			}
 
 			if (src && src_imm) print_imm(instr.src);
 			else if (src)       print_operand(instr.src);
-			else                printf(" %16s", "");
+			else                printf(" %18s", "");
 
 			printf("  # ");
 
@@ -285,31 +289,49 @@ struct Codegen {
 		}
 	}
 
-	void generate (IR& ir) {
+	void generate (IR::IR& ir) {
+
+		code .reserve(1024 * 8);
+		istrs.reserve(1024 * 8);
 		
-		auto get_addr = [&] (IR_Var var) {
+		auto get_addr = [&] (IR::Var var) {
 			size_t addr = var.id;
-			if (var.is_temp) addr += ir.var_count;
+			if (var.type == IR::TEMP) addr += ir.var_count;
 			return addr;
 		};
 		auto format_const = [] (AST* ast) {
-			auto text = ast->tok->source.text();
+			std::string_view text;
+			if (ast->type == A_ASSIGN) {
+				auto* op = (AST_binop*)ast;
+
+				text = op->rhs->src_tok->source.text();
+			}
+			else {
+				assert(ast->type == A_LITERAL);
+				text = ast->src_tok->source.text();
+			}
 			return format("=%.*s", (int)text.size(), text.data());
 		};
 		auto format_source = [] (AST* ast) {
-			auto text = ast->tok->source.text();
+			auto text = ast->src_tok->source.text();
 			return format("%.*s", (int)text.size(), text.data());
 		};
 		auto format_jmp = [&] (AST* ast, size_t lbl_id) {
-			auto text = ast->tok->source.text();
+			auto text = ast->src_tok->source.text();
 			return format("%s, %.*s", ir.labels[lbl_id].name, (int)text.size(), text.data());
 		};
 
 		size_t args_addr = ir.var_count + ir.temp_count;
-		size_t stk_sz    = ir.var_count + ir.temp_count + ir.max_args;
+		size_t stk_sz    = ir.var_count + ir.temp_count + ir.max_retargs;
 
 		// code for function prologe
 		code.emplace_back(OP_PUSH, stk_sz);
+
+		auto imm = [] (Opcode op, IR::Var rhs) {
+			if (rhs.type == IR::T_CONST)
+				op |= OP_IMM;
+			return op;
+		};
 
 		// generate code
 		for (size_t i=0; i<ir.code.size(); ++i) {
@@ -318,6 +340,43 @@ struct Codegen {
 			size_t dst = get_addr(iri.dst);
 			size_t lhs = get_addr(iri.lhs);
 			size_t rhs = get_addr(iri.rhs);
+			switch (iri.type) {
+				case IR::LABEL: {
+					assert(iri.dst.type == IR::T_LABEL);
+				} break;
+
+				case IR::MOVE: {
+					assert(iri.dst.type == IR::VAR || iri.dst.type == IR::TEMP);
+					assert(iri.lhs.type == IR::VAR || iri.lhs.type == IR::TEMP || iri.lhs.type == IR::T_CONST);
+				} break;
+
+				case IR::UNOP: {
+					assert(iri.dst.type == IR::VAR || iri.dst.type == IR::TEMP);
+					assert(iri.lhs.type == IR::VAR || iri.lhs.type == IR::TEMP); // unary op arg should not be a constant, since const folding should remove the unary op then
+				} break;
+
+				case IR::BINOP: {
+					assert(iri.dst.type == IR::VAR || iri.dst.type == IR::TEMP);
+					assert(iri.lhs.type == IR::VAR || iri.lhs.type == IR::TEMP);
+					assert(iri.rhs.type == IR::VAR || iri.rhs.type == IR::TEMP || iri.rhs.type == IR::T_CONST);
+				} break;
+
+				case IR::ARG_PUSH: {
+					assert(iri.dst.type == IR::T_ARG);
+					assert(iri.lhs.type == IR::VAR || iri.lhs.type == IR::TEMP || iri.lhs.type == IR::T_CONST);
+					assert(iri.rhs.type == IR::UNDEFINED);
+				} break;
+
+				case IR::JUMP: {
+					assert(iri.dst.type == IR::T_LABEL);
+					assert(iri.lhs.type == IR::UNDEFINED);
+				} break;
+				case IR::JUMP_CT:
+				case IR::JUMP_CF: {
+					assert(iri.dst.type == IR::T_LABEL);
+					assert(iri.lhs.type == IR::VAR || iri.lhs.type == IR::TEMP); // cond can't be CONSTVAR since that should be turned into a unconditional jmp
+				} break;
+			}
 
 			switch (iri.type) {
 				case IR::LABEL: {
@@ -327,23 +386,17 @@ struct Codegen {
 					labels_ordered.push_back(lbl_id);
 				} break;
 
-				case IR::STK_PUSH:
-				case IR::STK_POP: {
-					// no-op
-				} break;
-
 				case IR::MOVE: {
 					//if (ir.ast && ir.ast->type == A_ASSIGN) {
 					//	auto* op = (AST_binop*)ir.ast;
 					//	auto* alhs = op->lhs;
 					//	istrs.push_back({ code.size(), format_source(alhs) });
 					//}
-					code.emplace_back(OP_MOV, dst, lhs);
-				} break;
 
-				case IR::CONST: {
-					istrs.push_back({ code.size(), format_const(iri.ast) });
-					code.emplace_back(OP_MOV | OP_IMM, dst, iri.const_val);
+					if (iri.lhs.type == IR::T_CONST)
+						istrs.push_back({ code.size(), format_const(iri.ast) });
+					
+					code.emplace_back(imm(OP_MOV, iri.lhs), dst, lhs);
 				} break;
 
 				case IR::UNOP: {
@@ -353,13 +406,22 @@ struct Codegen {
 				} break;
 
 				case IR::BINOP: {
-					code.emplace_back(OP_MOV, dst, lhs);
-					code.emplace_back(binary2opcode(iri.ast), dst, rhs);
+					if (dst != lhs)
+						code.emplace_back(OP_MOV, dst, lhs);
+					code.emplace_back(imm(binary2opcode(iri.ast), iri.rhs), dst, rhs);
+				} break;
+
+				case IR::RET_PUSH: {
+					
+				} break;
+				case IR::RET_POP: {
+					size_t addr = args_addr + lhs;
+					code.emplace_back(OP_MOV, dst, addr);
 				} break;
 
 				case IR::ARG_PUSH: {
 					size_t addr = args_addr + dst;
-					code.emplace_back(OP_MOV, addr, lhs);
+					code.emplace_back(imm(OP_MOV, iri.lhs), addr, lhs);
 				} break;
 				case IR::ARG_POP: {
 					
@@ -382,20 +444,19 @@ struct Codegen {
 					}
 				} break;
 
-				case IR::JUMP: {
-					size_t lbl_id = iri.dst.id;
-					istrs.push_back({ code.size(), ir.labels[lbl_id].name });
-					code.emplace_back(OP_JMP, lbl_id);
-				} break;
-				case IR::JUMP_CT: {
-					size_t lbl_id = iri.dst.id;
-					istrs.push_back({ code.size(), ir.labels[lbl_id].name });
-					code.emplace_back(OP_JNZ, lbl_id, lhs);
-				} break;
+				case IR::JUMP:
+				case IR::JUMP_CT:
 				case IR::JUMP_CF: {
+					Opcode op;
+					switch (iri.type) {
+						case IR::JUMP:    op = OP_JMP; break;
+						case IR::JUMP_CT: op = OP_JNZ; break;
+						case IR::JUMP_CF: op = OP_JZ;  break;
+					}
+
 					size_t lbl_id = iri.dst.id;
 					istrs.push_back({ code.size(), ir.labels[lbl_id].name });
-					code.emplace_back(OP_JZ, lbl_id, lhs);
+					code.emplace_back(op, lbl_id, lhs);
 				} break;
 
 				case IR::RETURN: {
@@ -403,6 +464,14 @@ struct Codegen {
 					code.emplace_back(OP_POP, stk_sz);
 					code.emplace_back(OP_RET);
 				} break;
+
+				case IR::VARDECL:
+				case IR::DEAD: {
+					// do nothing
+				} break;
+
+				default:
+					assert(false);
 			}
 		}
 

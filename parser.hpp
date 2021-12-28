@@ -224,7 +224,8 @@ inline constexpr ASTType assignop2binop (ASTType type) {
 
 struct AST {
 	ASTType      type;
-	Token const* tok;
+
+	Token const* src_tok;
 
 	AST*         next;
 	Type         valtype;
@@ -236,9 +237,9 @@ inline T* ast_alloc (ASTType type, Token const* tok) {
 	
 	memset(ret, 0, sizeof(T));
 
-	ret->a.type = type;
-	ret->a.tok  = tok;
-	ret->a.next = nullptr;
+	ret->a.type     = type;
+	ret->a.src_tok  = tok;
+	ret->a.next     = nullptr;
 	return ret;
 }
 template <>
@@ -247,9 +248,9 @@ inline AST* ast_alloc<AST> (ASTType type, Token const* tok) {
 
 	memset(ret, 0, sizeof(AST));
 
-	ret->type = type;
-	ret->tok  = tok;
-	ret->next = nullptr;
+	ret->type     = type;
+	ret->src_tok  = tok;
+	ret->next     = nullptr;
 	return ret;
 }
 
@@ -319,83 +320,6 @@ struct AST_binop { AST a;
 	AST*         lhs;
 	AST*         rhs;
 };
-
-source_range get_source (AST* node) {
-	assert(node);
-	source_range src;
-
-	switch (node->type) {
-		case A_BLOCK: { auto* block = (AST_block*)node;
-			src.start = node->tok->source.start;
-			for (auto* n=block->statements; n != nullptr; n = n->next)
-				src.end = n->tok->source.end;
-		} break;
-
-		case A_FUNCDEF: { auto* f = (AST_funcdef*)node;
-			src.start = node->tok->source.start;
-			src.end   = get_source(f->body).end;
-		} break;
-
-		case A_CALL: { auto* call = (AST_call*)node;
-			src.start = node->tok->source.start;
-			for (auto* n=call->args; n != nullptr; n = n->next)
-				src.end = n->tok->source.end;
-		} break;
-
-		case A_IF:
-		case A_SELECT: { auto* aif = (AST_if*)node;
-			src.start = node->tok->source.start;
-			src.end   = get_source(aif->else_body).end;
-		} break;
-
-		case A_LOOP: { auto* loop = (AST_loop*)node;
-			src.start = node->tok->source.start;
-			src.end   = get_source(loop->body).end;
-		} break;
-
-		case A_NEGATE: case A_NOT:
-		case A_INC: case A_DEC: { auto* op = (AST_unop*)node;
-			auto* a = op->a.tok;
-			auto* b = op->operand->tok;
-
-			// prefix unary operator
-			if (a < b) {
-				src.start = get_source(op->operand).start;
-				src.end   = a->source.end;
-			}
-			// postfix unary operator
-			else {
-				src.start = a->source.start;
-				src.end   = get_source(op->operand).end;
-			}
-		} break;
-
-		case A_ADD: case A_SUB: case A_MUL: case A_DIV: case A_REMAINDER:
-		case A_LESS: case A_LESSEQ: case A_GREATER: case A_GREATEREQ:
-		case A_EQUALS: case A_NOT_EQUALS:
-		case A_ASSIGN:
-		case A_ADDEQ: case A_SUBEQ: case A_MULEQ: case A_DIVEQ: case A_REMAINDEREQ: {
-			auto* op = (AST_binop*)node;
-			src.start = get_source(op->lhs).start;
-			src.end   = get_source(op->rhs).end;
-		} break;
-
-		case A_VARDECL: {
-			assert(node->tok[1].type == T_COLON);
-			auto* endtok = &node->tok[1];
-			if (node->tok[2].type == T_IDENTIFIER)
-				endtok = &node->tok[2];
-
-			src.start = node->tok->source.start;
-			src.end   = endtok->source.end;
-		} break;
-
-		default: {
-			src = node->tok->source;
-		}
-	}
-	return src;
-}
 
 // helper function to iterate all child AST nodes and call a func on them
 template <typename FUNC>
@@ -469,7 +393,7 @@ void dbg_print (AST* node, int depth=0) {
 	bool children = false;
 	switch (node->type) {
 		case A_LITERAL: { auto* lit = (AST_literal*)node;
-			std::string str(lit->a.tok->source.text());
+			std::string str(lit->a.src_tok->source.text());
 			printf(" %s\n", str.c_str());
 		} break;
 

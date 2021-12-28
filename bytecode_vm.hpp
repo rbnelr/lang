@@ -94,35 +94,60 @@ struct VM {
 					i = !i;
 				} continue;
 
-				case OP_INC:     DST++;        continue;
-				case OP_DEC:     DST--;        continue;
+				case OP_INC              : DST++;                                      continue;
+				case OP_DEC              : DST--;                                      continue;
 
-				case OP_ADD:     DST += SRC;   continue;
-				case OP_SUB:     DST -= SRC;   continue;
-				case OP_MUL:     DST *= SRC;   continue;
-				case OP_DIV:     DST /= SRC;   continue;
-				case OP_REMAIND: DST %= SRC;   continue;
+				case OP_ADD              : DST += SRC;                                 continue;
+				case OP_SUB              : DST -= SRC;                                 continue;
+				case OP_MUL              : DST *= SRC;                                 continue;
+				case OP_DIV              : DST /= SRC;                                 continue;
+				case OP_REMAIND          : DST %= SRC;                                 continue;
+				case OP_ADD     | OP_IMM : DST += (int64_t)src_val;                    continue;
+				case OP_SUB     | OP_IMM : DST -= (int64_t)src_val;                    continue;
+				case OP_MUL     | OP_IMM : DST *= (int64_t)src_val;                    continue;
+				case OP_DIV     | OP_IMM : DST /= (int64_t)src_val;                    continue;
+				case OP_REMAIND | OP_IMM : DST %= (int64_t)src_val;                    continue;
 
-				case OP_LT:      DST = (int64_t)(DST <  SRC); continue;
-				case OP_LTE:     DST = (int64_t)(DST <= SRC); continue;
-				case OP_EQ:      DST = (int64_t)(DST == SRC); continue;
-				case OP_NEQ:     DST = (int64_t)(DST != SRC); continue;
+				case OP_LT               : DST = (int64_t)(DST <  SRC);                continue;
+				case OP_LTE              : DST = (int64_t)(DST <= SRC);                continue;
+				case OP_GT               : DST = (int64_t)(DST >  SRC);                continue;
+				case OP_GTE              : DST = (int64_t)(DST >= SRC);                continue;
+				case OP_EQ               : DST = (int64_t)(DST == SRC);                continue;
+				case OP_NEQ              : DST = (int64_t)(DST != SRC);                continue;
+				case OP_LT      | OP_IMM : DST = (int64_t)(DST <  (int64_t)src_val);   continue;
+				case OP_LTE     | OP_IMM : DST = (int64_t)(DST <= (int64_t)src_val);   continue;
+				case OP_GT      | OP_IMM : DST = (int64_t)(DST >  (int64_t)src_val);   continue;
+				case OP_GTE     | OP_IMM : DST = (int64_t)(DST >= (int64_t)src_val);   continue;
+				case OP_EQ      | OP_IMM : DST = (int64_t)(DST == (int64_t)src_val);   continue;
+				case OP_NEQ     | OP_IMM : DST = (int64_t)(DST != (int64_t)src_val);   continue;
 
 				case OP_FNEG: {
 					auto& d = FDST;
 					d = -d;
 				} continue;
 
-				case OP_FADD:    FDST += FSRC; continue;
-				case OP_FSUB:    FDST -= FSRC; continue;
-				case OP_FMUL:    FDST *= FSRC; continue;
-				case OP_FDIV:    FDST /= FSRC; continue;
+				case OP_FADD             : FDST += FSRC;                               continue;
+				case OP_FSUB             : FDST -= FSRC;                               continue;
+				case OP_FMUL             : FDST *= FSRC;                               continue;
+				case OP_FDIV             : FDST /= FSRC;                               continue;
+				case OP_FADD    | OP_IMM : FDST += *(double*)&op.src;                  continue;
+				case OP_FSUB    | OP_IMM : FDST -= *(double*)&op.src;                  continue;
+				case OP_FMUL    | OP_IMM : FDST *= *(double*)&op.src;                  continue;
+				case OP_FDIV    | OP_IMM : FDST /= *(double*)&op.src;                  continue;
 
-				case OP_FLT:     DST = (int64_t)(FDST <  FSRC); continue;
-				case OP_FLTE:    DST = (int64_t)(FDST <= FSRC); continue;
-				case OP_FEQ:     DST = (int64_t)(FDST == FSRC); continue;
-				case OP_FNEQ:    DST = (int64_t)(FDST != FSRC); continue;
-				
+				case OP_FLT              : DST = (int64_t)(FDST <  FSRC);              continue;
+				case OP_FLTE             : DST = (int64_t)(FDST <= FSRC);              continue;
+				case OP_FGT              : DST = (int64_t)(FDST >  FSRC);              continue;
+				case OP_FGTE             : DST = (int64_t)(FDST >= FSRC);              continue;
+				case OP_FEQ              : DST = (int64_t)(FDST == FSRC);              continue;
+				case OP_FNEQ             : DST = (int64_t)(FDST != FSRC);              continue;
+				case OP_FLT     | OP_IMM : DST = (int64_t)(FDST <  *(double*)&op.src); continue;
+				case OP_FLTE    | OP_IMM : DST = (int64_t)(FDST <= *(double*)&op.src); continue;
+				case OP_FGT     | OP_IMM : DST = (int64_t)(FDST >  *(double*)&op.src); continue;
+				case OP_FGTE    | OP_IMM : DST = (int64_t)(FDST >= *(double*)&op.src); continue;
+				case OP_FEQ     | OP_IMM : DST = (int64_t)(FDST == *(double*)&op.src); continue;
+				case OP_FNEQ    | OP_IMM : DST = (int64_t)(FDST != *(double*)&op.src); continue;
+							   
 				case OP_RET: {
 					goto return_main;
 				} continue;

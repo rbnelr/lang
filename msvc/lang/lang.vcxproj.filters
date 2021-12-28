@@ -62,6 +62,7 @@
     <ClInclude Include="..\..\bytecode_vm.hpp" />
     <ClInclude Include="..\..\ir_gen.hpp" />
     <ClInclude Include="..\..\codegen.hpp" />
+    <ClInclude Include="..\..\ir_opt.hpp" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="util">

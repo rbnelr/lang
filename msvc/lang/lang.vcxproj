@@ -148,6 +148,7 @@
     <ClInclude Include="..\..\codegen.hpp" />
     <ClInclude Include="..\..\common.hpp" />
     <ClInclude Include="..\..\errors.hpp" />
+    <ClInclude Include="..\..\ir_opt.hpp" />
     <ClInclude Include="..\..\line_map.hpp" />
     <ClInclude Include="..\..\ir_gen.hpp" />
     <ClInclude Include="..\..\parser.hpp" />

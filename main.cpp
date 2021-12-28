@@ -3,6 +3,7 @@
 #include "tokenizer.hpp"
 #include "parser.hpp"
 #include "ir_gen.hpp"
+#include "ir_opt.hpp"
 #include "codegen.hpp"
 #include "bytecode_vm.hpp"
 
@@ -98,8 +99,8 @@ int main (int argc, const char** argv) {
 				parser.tok = &tokens[0];
 				ast = parser.file();
 
-				printf("AST:\n");
-				dbg_print(ast);
+				//printf("AST:\n");
+				//dbg_print(ast);
 			}
 
 			std::vector<AST_funcdef*> funcdefs;
@@ -111,12 +112,16 @@ int main (int argc, const char** argv) {
 				funcdefs = std::move(resolve.funcs);
 			}
 
-			IRGen irgen;
+			IR::IRGen irgen;
 			{
 				ZoneScopedN("ir_gen");
 				irgen.generate(funcdefs);
+			}
 
-				irgen.ir.dbg_print();
+			{
+				ZoneScopedN("ir_opt");
+
+				IR::ir_opt(irgen.ir);
 			}
 
 			Codegen codegen;

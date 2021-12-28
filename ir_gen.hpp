@@ -72,7 +72,7 @@ struct IdentiferStack {
 	void declare_ident (AST* ast, strview const& ident) {
 		auto res = ident_map.try_emplace(ScopedIdentifer{ scope_id, ident }, ast);
 		if (!res.second)
-			throw CompilerExcept{"error: identifer already declared in this scope", ast->tok->source}; // TODO: print declaration of that identifer
+			throw CompilerExcept{"error: identifer already declared in this scope", ast->src_tok->source}; // TODO: print declaration of that identifer
 	}
 
 	void declare_var (AST_vardecl* var) {
@@ -97,13 +97,13 @@ struct IdentiferStack {
 			if (i == min_scope)
 				break;
 		}
-		throw CompilerExcept{"error: unknown identifer", node->tok->source};
+		throw CompilerExcept{"error: unknown identifer", node->src_tok->source};
 	}
 	void resolve_var (AST_var* var) {
 		// min_scope = func_scope_id, functions can only access their own variables
 		AST* ast = resolve_ident((AST*)var, var->ident, cur_scope.func_scope_id);
 		if (ast->type != A_VARDECL)
-			throw CompilerExcept{"error: identifer was not declared as variable", var->a.tok->source};
+			throw CompilerExcept{"error: identifer was not declared as variable", var->a.src_tok->source};
 
 		var->decl = (AST_vardecl*)ast;
 	}
@@ -112,7 +112,7 @@ struct IdentiferStack {
 		// min_scope = 0, functions can call all functions visible to them
 		AST* ast = resolve_ident((AST*)call, call->ident, 0);
 		if (!(ast->type == A_FUNCDEF || ast->type == A_FUNCDEF_BUILTIN))
-			throw CompilerExcept{"error: identifer was not declared as function", call->a.tok->source};
+			throw CompilerExcept{"error: identifer was not declared as function", call->a.src_tok->source};
 		
 		call->fdef = ast;
 	}
@@ -129,7 +129,7 @@ void match_call_args (AST_call* call, AST_funcdecl const& fdef) {
 		}
 
 		if (!declarg) // no more args in func
-			throw CompilerExcept{"error: too many arguments to function", call->a.tok->source};
+			throw CompilerExcept{"error: too many arguments to function", call->a.src_tok->source};
 
 		if (declarg->type == A_VARARGS) {
 			// last func arg is varargs, any number of remaining call args match (including 0)
@@ -140,10 +140,10 @@ void match_call_args (AST_call* call, AST_funcdecl const& fdef) {
 		assert(declarg->type == A_VARDECL);
 
 		if (!callarg) // no args left in call
-			throw CompilerExcept{"error: too few arguments to function", call->a.tok->source};
+			throw CompilerExcept{"error: too few arguments to function", call->a.src_tok->source};
 
 		if (callarg->valtype != declarg->valtype)
-			throw CompilerExcept{"error: call argument type mismatch", callarg->tok->source};
+			throw CompilerExcept{"error: call argument type mismatch", callarg->src_tok->source};
 
 		declarg = declarg->next;
 		callarg = callarg->next;
@@ -160,7 +160,7 @@ struct IdentResolver {
 			stack.declare_func((AST_funcdef*)f); // cast is safe
 
 		{
-			AST_funcdef* module_main = ast_alloc<AST_funcdef>(A_FUNCDEF, root->tok);
+			AST_funcdef* module_main = ast_alloc<AST_funcdef>(A_FUNCDEF, root->src_tok);
 			module_main->decl.ident = "main";
 			module_main->decl.retc = 0;
 			module_main->decl.rets = nullptr;
@@ -204,18 +204,18 @@ struct IdentResolver {
 					if (op->lhs->valtype == VOID) {
 						if (op->rhs->valtype == VOID) {
 							assert(op->rhs->type == A_CALL); // everything on the rhs of assignments except calls should have a resolved type
-							throw CompilerExcept{"error: assignment: can't assign void return type", op->a.tok->source};
+							throw CompilerExcept{"error: assignment: can't assign void return type", op->a.src_tok->source};
 						}
 						op->lhs->valtype = op->rhs->valtype;
 					}
 					else {
 						if (op->lhs->valtype != op->rhs->valtype)
-							throw CompilerExcept{"error: variable declaration assignment: types do not match", op->a.tok->source};
+							throw CompilerExcept{"error: variable declaration assignment: types do not match", op->a.src_tok->source};
 					}
 				}
 				else {
 					if (op->lhs->valtype != op->rhs->valtype)
-						throw CompilerExcept{"error: assignment: types do not match", op->a.tok->source};
+						throw CompilerExcept{"error: assignment: types do not match", op->a.src_tok->source};
 				}
 			} break;
 
@@ -246,7 +246,7 @@ struct IdentResolver {
 				recurse(op->rhs);
 
 				if (op->lhs->valtype != op->rhs->valtype)
-					throw CompilerExcept{"error: binary operator: types do not match", op->a.tok->source};
+					throw CompilerExcept{"error: binary operator: types do not match", op->a.src_tok->source};
 				
 				op->a.valtype = op->lhs->valtype;
 			} break;
@@ -259,7 +259,7 @@ struct IdentResolver {
 
 				if (node->type == A_SELECT) {
 					if (aif->if_body->valtype != aif->else_body->valtype)
-						throw CompilerExcept{"error: select expression: types do not match", aif->a.tok->source};
+						throw CompilerExcept{"error: select expression: types do not match", aif->a.src_tok->source};
 					aif->a.valtype = aif->if_body->valtype;
 				}
 			} break;
@@ -298,76 +298,82 @@ struct IdentResolver {
 	}
 };
 
-struct IR_Var {
-	bool     is_temp : 1;
-	size_t   id      : 63;
+namespace IR {
+
+enum VarType : uint8_t {
+	UNDEFINED=0,
+	T_CONST,
+	TEMP,
+	VAR,
+
+	T_LABEL,
+	T_ARG,
+};
+struct Var {
+	VarType  type;
+	size_t   id;
 };
 
+enum Type : uint8_t {
+	DEAD,     // eliminated by dead code elimination
+
+	LABEL,    // used to mark places the jumps go to
+
+	VARDECL,  // needed to be able to control variable stack placement out of order (compared to first assignment) (NOTE that temporaries are always in order)
+
+	MOVE,     // dst = lhs
+	UNOP,     // dst = <op from ast->type> applied to lhs
+	BINOP,    // dst = lhs <op from ast->type> rhs
+
+	RET_PUSH, // 
+	RET_POP,  // 
+	ARG_PUSH, // push lhs as argument for next call
+	ARG_POP,  // pop lhs argument
+	CALL,     // call func using pushed args
+
+	JUMP,     // unconditional jump to lhs
+	JUMP_CT,  // conditional jump to dst if rhs true
+	JUMP_CF,  // conditional jump to dst if rhs false
+
+	RETURN,   // unconditional jump to function epilouge
+};
+static inline constexpr const char* Type_str[] = {
+	"-",
+
+	"LABEL",
+
+	"VARDECL",
+
+	"MOVE",
+	"UNOP",
+	"BINOP",
+
+	"RET_PUSH",
+	"RET_POP",
+	"ARG_PUSH",
+	"ARG_POP",
+	"CALL",
+
+	"JUMP",
+	"JUMP_CT",
+	"JUMP_CF",
+
+	"RETURN",
+};
+
+struct Instruction {
+	Type type;
+
+	Var  dst = { UNDEFINED, 0 }; // dst.id is label id for jumps (type ignored)
+
+	Var  lhs = { UNDEFINED, 0 };
+	Var  rhs = { UNDEFINED, 0 };
+
+	AST* ast = nullptr; // ast the IR came from
+};
+
+
 struct IR {
-	enum Type {
-		LABEL,    // used to mark places jumps go to
-
-		STK_PUSH, // Create a new scope
-		STK_POP,  // Close the last scope, making stack space be reused (even without optimizations)
-
-		VARDECL,  // needed to be able to control variable stack placement out of order (compared to fist assignment) (NOTE that temporaries are always in order)
-
-		MOVE,     // dst = lhs
-		CONST,    // dst = ((AST_literal*)ast)->value
-		UNOP,     // dst = <op from ast->type> applied to lhs
-		BINOP,    // dst = lhs <op from ast->type> rhs
-
-		ARG_PUSH, // push lhs as argument for next call
-		ARG_POP,  // pop lhs argument
-		CALL,     // call func using pushed args
-		
-		JUMP,     // unconditional jump to lhs
-		JUMP_CT,  // conditional jump to dst if rhs true
-		JUMP_CF,  // conditional jump to dst if rhs false
-
-		RETURN,
-	};
-	static inline constexpr const char* Type_str[] = {
-		"LABEL",
-
-		"STK_PUSH",
-		"STK_POP",
-
-		"VARDECL",
-		
-		"MOVE",
-		"CONST",
-		"UNOP",
-		"BINOP",
-
-		"ARG_PUSH",
-		"ARG_POP",
-		"CALL",
-		
-		"JUMP",
-		"JUMP_CT",
-		"JUMP_CF",
-		
-		"RETURN",
-	};
-
-	struct Instruction {
-		Type type;
-
-		IR_Var dst; // dst var  or  dst.id = dst label
-
-		union {
-			struct {
-				IR_Var lhs;
-				IR_Var rhs;
-			};
-			struct {
-				size_t const_val;
-			};
-		};
-
-		AST* ast; // ast the IR came from
-	};
 
 	size_t var_count = 0;
 	size_t temp_count = 0;
@@ -390,7 +396,7 @@ struct IR {
 		return lbl_id;
 	}
 
-	size_t max_args = 0;
+	size_t max_retargs = 0;
 
 	std::vector<Instruction> code;
 
@@ -399,64 +405,36 @@ struct IR {
 		printf("IR code :\n");
 
 		auto print_ast = [] (Instruction& instr) {
-			switch (instr.type) {
-				case CONST: {
-					assert(instr.ast->type == A_LITERAL);
-					auto* lit = (AST_literal*)instr.ast;
+			if (instr.ast) {
+				if (instr.ast->type == A_VARDECL || instr.ast->type == A_VARARGS) {
+					auto* var = (AST_vardecl*)instr.ast;
+					printf("%.*s", (int)var->ident.size(), var->ident.data());
+				}
+				else {
+					auto text  = instr.ast->src_tok->source.text();
+					auto escaped = escape_string_capped(text, 40);
 		
-					::dbg_print(lit->a.valtype, lit->value);
-				} break;
-		
-				default: {
-					if (instr.ast) {
-						if (instr.ast->type == A_VARDECL || instr.ast->type == A_VARARGS) {
-							auto* var = (AST_vardecl*)instr.ast;
-							printf("%.*s", (int)var->ident.size(), var->ident.data());
-						}
-						else {
-							auto text  = get_source(instr.ast).text();
-							auto escaped = escape_string_capped(text, 40);
-		
-							fputs(escaped.c_str(), stdout); // use fputs rather than printf since we might print printf-codes
-						}
-					}
-				} break;
+					fputs(escaped.c_str(), stdout); // use fputs rather than printf since we might print printf-codes
+				}
 			}
 		};
-		auto print_var = [] (IR_Var var) {
-			if (var.is_temp) printf(" %7s", prints("_t%llu", var.id).c_str());
-			else             printf(" %7s", prints("r%llu", var.id).c_str());
+		auto print_var = [] (Var var) {
+			std::string str;
+			switch (var.type) {
+				case UNDEFINED:  str = ""; break;
+				case T_CONST:   str = prints("%llx",   var.id); break;
+				case TEMP:       str = prints("_t%llu", var.id); break;
+				case VAR:        str = prints("r%llu",  var.id); break;
+				case T_LABEL:    str = prints("L%llu",  var.id); break;
+				case T_ARG:      str = prints("%llu",   var.id); break;
+			}
+			printf(" %16s", str.c_str());
 		};
 
 		for (size_t i=0; i<code.size(); ++i) {
 			auto& instr = code[i];
 
-			bool dst=false, lhs=false, rhs=false;
-			bool jump=false;
-
-			switch (instr.type) {
-				case LABEL:    dst = true;             break;
-				case VARDECL:  dst = true;             break;
-
-				case STK_PUSH:                         break;
-				case STK_POP:                          break;
-
-				case MOVE:     dst = true; lhs = true; break;
-				case CONST:    dst = true;             break;
-				case UNOP:     dst = true; lhs = true; break;
-				case BINOP:    dst = true; lhs = true; rhs = true; break;
-
-				case ARG_PUSH: dst = true; lhs = true; break;
-				case ARG_POP:  dst = true;             break;
-				case CALL:                             break;
-
-				case JUMP:     dst = true;             jump = true; break;
-				case JUMP_CT:  dst = true; lhs = true; jump = true; break;
-				case JUMP_CF:  dst = true; lhs = true; jump = true; break;
-				case RETURN:   dst = true;             break;
-			}
-
-			printf("%5lli |", i);
+			printf("%5llu |", i);
 
 			if (instr.type == LABEL) {
 				printf("%s:\n", labels[instr.dst.id].name);
@@ -464,22 +442,9 @@ struct IR {
 			else {
 				printf("  %-10s", Type_str[instr.type]);
 
-				if (jump && dst) {
-					printf(" %7s", prints("L%lli", instr.dst.id).c_str());
-				}
-				else {
-					if (dst) print_var(instr.dst);
-					else     printf(" %7s", "");
-				}
-
-				//if (lhs) printf(" =");
-				//else     printf("  ");
-
-				if (lhs) print_var(instr.lhs);
-				else     printf(" %7s", "");
-				
-				if (rhs) print_var(instr.rhs);
-				else     printf(" %7s", "");
+				print_var(instr.dst);
+				print_var(instr.lhs);
+				print_var(instr.rhs);
 
 				printf("  # ");
 
@@ -496,41 +461,25 @@ struct IRGen {
 	IR ir;
 
 	struct LoopLabels {
-		size_t repeat;
+		size_t cont;
 		size_t end;
 	};
 	std::vector<LoopLabels> loop_lbls;
 	size_t                  return_lbl;
 
 	struct FuncArg {
-		AST* all;
+		AST* call;
 		AST* decl;
 	};
-	std::vector<FuncArg> arg_stack;
+	std::vector<AST*>      ret_stack;
+	std::vector<FuncArg>   arg_stack;
 
-	size_t emit (IR::Type type, AST* ast=nullptr, IR_Var dst={0}, IR_Var lhs={0}, IR_Var rhs={0}) {
+	size_t emit (Type type, AST* ast=nullptr, Var dst={}, Var lhs={}, Var rhs={}) {
 		auto& instr = ir.code.emplace_back();
 		instr.type = type;
 		instr.dst = dst;
 		instr.lhs = lhs;
 		instr.rhs = rhs;
-		instr.ast = ast;
-		return (size_t)(&instr - ir.code.data());
-	}
-	size_t emit (IR::Type type, AST* ast, size_t lbl_id, IR_Var jmp_cond={0}) {
-		auto& instr = ir.code.emplace_back();
-		instr.type = type;
-		instr.dst = { 0, lbl_id };
-		instr.lhs = jmp_cond;
-		instr.rhs = {0,0};
-		instr.ast = ast;
-		return (size_t)(&instr - ir.code.data());
-	}
-	size_t emit_const (IR::Type type, AST* ast, IR_Var dst, size_t const_val) {
-		auto& instr = ir.code.emplace_back();
-		instr.type = type;
-		instr.dst = dst;
-		instr.const_val = const_val;
 		instr.ast = ast;
 		return (size_t)(&instr - ir.code.data());
 	}
@@ -557,46 +506,46 @@ struct IRGen {
 
 		return_lbl = ir.create_label((AST*)func, "return");
 
-		//emit(IR::STK_PUSH, func->body);
+		//emit(STK_PUSH, func->body);
 
 		for (auto* n=func->body; n != nullptr; n = n->next)
 			IRgen(n);
 
-		//emit(IR::STK_POP, func->body);
+		//emit(STK_POP, func->body);
 
-		emit(IR::LABEL, (AST*)func, return_lbl);
-		emit(IR::RETURN);
+		emit(LABEL, (AST*)func, { T_LABEL, return_lbl });
+		emit(RETURN);
 	}
 
-	IR_Var IRgen (AST* ast, AST_vardecl* dst=nullptr, size_t dst_stk_loc=0) {
+	Var IRgen (AST* ast, AST_vardecl* dst=nullptr, size_t dst_stk_loc=0) {
 		switch (ast->type) {
 
 			case A_LITERAL: {
-				IR_Var tmp = { 1, ir.temp_count++ };
-				emit_const(IR::CONST, ast, tmp, *(size_t*)&((AST_literal*)ast)->value);
+				Var tmp = { TEMP, ir.temp_count++ };
+				emit(MOVE, ast, tmp, { T_CONST, *(size_t*)&((AST_literal*)ast)->value });
 				return tmp;
 			}
 
 			case A_VARDECL: {
 				auto* var = (AST_vardecl*)ast;
 
-				IR_Var v = { 0, ir.var_count++ };
+				Var v = { VAR, ir.var_count++ };
 				var->var_id = v.id;
 
-				emit(IR::VARDECL, ast, v);
+				emit(VARDECL, ast, v);
 				return v;
 			}
 
 			case A_VAR: {
 				auto* var = (AST_var*)ast;
 				auto* vardecl = (AST_vardecl*)var->decl;
-				return { 0, vardecl->var_id };
+				return { VAR, vardecl->var_id };
 			}
 
 			case A_NEGATE: case A_NOT: {
 				auto* op = (AST_unop*)ast;
 
-				IR_Var operand = IRgen(op->operand);
+				Var operand = IRgen(op->operand);
 
 				/*
 				Opcode opc;
@@ -617,8 +566,8 @@ struct IRGen {
 				} break;
 				}*/
 
-				IR_Var tmp = { 1, ir.temp_count++ };
-				emit(IR::UNOP, ast, tmp, operand);
+				Var tmp = { TEMP, ir.temp_count++ };
+				emit(UNOP, ast, tmp, operand);
 				return tmp;
 			}
 
@@ -629,11 +578,11 @@ struct IRGen {
 				auto* oper_var = (AST_var*)op->operand;
 				auto* oper_decl = (AST_vardecl*)oper_var->decl;
 
-				IR_Var var = { 0, oper_decl->var_id };
+				Var var = { VAR, oper_decl->var_id };
 
-				IR_Var tmp = { 1, ir.temp_count++ };
-				emit(IR::MOVE, ast, tmp, var); // copy old var value
-				emit(IR::UNOP, ast, var, var); // inc/dec var
+				Var tmp = { TEMP, ir.temp_count++ };
+				emit(MOVE, ast, tmp, var); // copy old var value
+				emit(UNOP, ast, var, var); // inc/dec var
 				return tmp;
 			}
 
@@ -642,8 +591,8 @@ struct IRGen {
 			case A_EQUALS: case A_NOT_EQUALS: {
 				auto* op = (AST_binop*)ast;
 
-				IR_Var lhs = IRgen(op->lhs);
-				IR_Var rhs = IRgen(op->rhs);
+				Var lhs = IRgen(op->lhs);
+				Var rhs = IRgen(op->rhs);
 
 				assert(op->lhs->valtype == op->rhs->valtype);
 
@@ -698,8 +647,8 @@ struct IRGen {
 				throw CompilerExcept{"error: math ops not valid for this type", node->source};
 				}*/
 
-				IR_Var tmp = { 1, ir.temp_count++ };
-				emit(IR::BINOP, ast, tmp, lhs, rhs);
+				Var tmp = { TEMP, ir.temp_count++ };
+				emit(BINOP, ast, tmp, lhs, rhs);
 				return tmp;
 			}
 
@@ -710,8 +659,8 @@ struct IRGen {
 				auto* lhs_var = (AST_var*)op->lhs;
 				auto* lhs_decl = (AST_vardecl*)lhs_var->decl;
 
-				IR_Var var = { 0, lhs_decl->var_id };
-				IR_Var rhs = IRgen(op->rhs);
+				Var var = { VAR, lhs_decl->var_id };
+				Var rhs = IRgen(op->rhs);
 
 				/*
 				if (op->lhs->valtype != op->rhs->valtype)
@@ -729,30 +678,27 @@ struct IRGen {
 				throw CompilerExcept{"error: remainder operator not valid for floats", ast->source};
 				*/
 
-				emit(IR::BINOP, ast, var, var, rhs);
+				emit(BINOP, ast, var, var, rhs);
 				return {};
 			}
 
 			case A_ASSIGN: {
 				auto* op = (AST_binop*)ast;
 
-				IR_Var dst = IRgen(op->lhs);
-				IR_Var var = IRgen(op->rhs);
+				Var dst = IRgen(op->lhs);
+				Var var = IRgen(op->rhs);
 
-				emit(IR::MOVE, ast, dst, var);
+				emit(MOVE, ast, dst, var);
 				return {};
 			}
 
 			case A_BLOCK: {
 				auto* block = (AST_block*)ast;
 
-				emit(IR::STK_PUSH, ast);
-
 				for (auto* n=block->statements; n != nullptr; n = n->next) {
 					IRgen(n);
 				}
 
-				emit(IR::STK_POP, ast);
 				return {};
 			}
 
@@ -760,65 +706,74 @@ struct IRGen {
 			case A_SELECT: {
 				auto* aif = (AST_if*)ast;
 
+				Var tmp = {};
+				if (ast->type == A_SELECT)
+					tmp = { TEMP, ir.temp_count++ };
+
 				size_t else_lbl = ir.create_label(ast, "else");
 
 				// condition
-				IR_Var cond = IRgen(aif->cond);
-				emit(IR::JUMP_CF, ast, else_lbl, cond);
+				Var cond = IRgen(aif->cond);
+				emit(JUMP_CF, ast, { T_LABEL, else_lbl }, cond);
 
 				// if body
-				IRgen(aif->if_body);
+				Var val = IRgen(aif->if_body);
+				if (ast->type == A_SELECT)
+					emit(MOVE, ast, tmp, val);
 
 				// no else body
 				if (!aif->else_body) {
-					emit(IR::LABEL, ast, else_lbl);
+					emit(LABEL, ast, { T_LABEL, else_lbl });
 				}
 				// else body
 				else {
 					size_t endif_lbl = ir.create_label(ast, "endif");
 
-					emit(IR::JUMP, ast, endif_lbl);
-					emit(IR::LABEL, ast, else_lbl);
+					emit(JUMP, ast, { T_LABEL, endif_lbl });
+					emit(LABEL, ast, { T_LABEL, else_lbl });
 
 					// false body
-					IRgen(aif->else_body);
+					Var val = IRgen(aif->else_body);
+					if (ast->type == A_SELECT)
+						emit(MOVE, ast, tmp, val);
 
-					emit(IR::LABEL, ast, endif_lbl);
+					emit(LABEL, ast, { T_LABEL, endif_lbl });
 				}
-				return {};
+
+				return tmp;
 			}
 
 			case A_LOOP: {
 				auto* loop = (AST_loop*)ast;
 
-				emit(IR::STK_PUSH); // stk for loop header variable
-
 				// start
 				IRgen(loop->start);
 
-				size_t loop_lbl = ir.create_label(ast, "loop");
-				size_t end_lbl  = ir.create_label(ast, "loopend");
+				size_t loop_lbl     = ir.create_label(ast, "loop");
+				size_t loopcont_lbl = ir.create_label(ast, "loopcont");
+				size_t end_lbl      = ir.create_label(ast, "loopend");
 
-				emit(IR::LABEL, ast, loop_lbl);
+				emit(LABEL, ast, { T_LABEL, loop_lbl });
 
-				loop_lbls.push_back({ loop_lbl, end_lbl });
+				loop_lbls.push_back({ loopcont_lbl, end_lbl });
 
 				// condition
-				IR_Var cond = IRgen(loop->cond);
-				emit(IR::JUMP_CF, ast, end_lbl, cond);
+				Var cond = IRgen(loop->cond);
+				emit(JUMP_CF, ast, { T_LABEL, end_lbl }, cond);
 				
 				// body
 				IRgen(loop->body);
+
+				emit(LABEL, ast, { T_LABEL, loopcont_lbl });
 
 				// end
 				IRgen(loop->end);
 
 				// unconditional jump to loop top
-				emit(IR::JUMP, ast, loop_lbl);
+				emit(JUMP, ast, { T_LABEL, loop_lbl });
 
-				emit(IR::LABEL, ast, end_lbl);
+				emit(LABEL, ast, { T_LABEL, end_lbl });
 
-				emit(IR::STK_POP); // stk for loop header variable
 				loop_lbls.pop_back();
 				return {};
 			}
@@ -827,50 +782,72 @@ struct IRGen {
 				auto* call = (AST_call*)ast;
 				auto* fdef = (AST_funcdef*)call->fdef;
 
+				for (auto* ret = fdef->decl.rets; ret != nullptr; ret = ret->next) {
+					size_t retid = ret_stack.size();
+
+					emit(RET_PUSH, ret, { T_ARG, retid });
+
+					ret_stack.push_back(ret);
+				}
+
 				auto* argdecl = fdef->decl.args;
 				for (auto* arg = call->args; arg != nullptr; arg = arg->next) {
 					size_t argid = arg_stack.size();
 					
-					IR_Var arg_ir = IRgen(arg);
-					emit(IR::ARG_PUSH, argdecl, { 0, argid }, arg_ir);
+					Var arg_ir = IRgen(arg);
+					emit(ARG_PUSH, argdecl, { T_ARG, argid + ret_stack.size() }, arg_ir);
 
 					arg_stack.push_back({ arg, argdecl });
 					
 					if (argdecl->type != A_VARARGS) argdecl = argdecl->next;
 				}
 
-				ir.max_args = std::max(ir.max_args, arg_stack.size());
+				ir.max_retargs = std::max(ir.max_retargs, ret_stack.size() + arg_stack.size());
 
-				emit(IR::CALL, ast);
+				emit(CALL, ast);
 
-				// get return arg
+				// get return value
+				Var tmp = {};
 
 				for (size_t argid = arg_stack.size(); argid>0; ) {
 					argid--;
 
-					emit(IR::ARG_POP, arg_stack[argid].decl, { 0, argid });
+					emit(ARG_POP, arg_stack[argid].decl, { UNDEFINED, 0 }, { T_ARG, argid + ret_stack.size() });
 				}
 				arg_stack.clear();
 
-				return {};
+				for (size_t retid = ret_stack.size(); retid>0; ) {
+					retid--;
+
+					if (retid == 0) {
+						tmp = { TEMP, ir.temp_count++ };
+						emit(RET_POP, ret_stack[retid], tmp, { T_ARG, retid });
+					}
+					else {
+						emit(RET_POP, ret_stack[retid], { UNDEFINED, 0 }, { T_ARG, retid });
+					}
+				}
+				ret_stack.clear();
+
+				return tmp;
 			}
 
 			case A_RETURN: {
-				emit(IR::JUMP, ast, return_lbl);
+				emit(JUMP, ast, { T_LABEL, return_lbl });
 				return {};
 			}
 			case A_BREAK: {
 				if (loop_lbls.empty())
-					throw CompilerExcept{"error: break not inside of any loop", ast->tok->source};
+					throw CompilerExcept{"error: break not inside of any loop", ast->src_tok->source};
 				
-				emit(IR::JUMP, ast, loop_lbls.back().end);
+				emit(JUMP, ast, { T_LABEL, loop_lbls.back().end });
 				return {};
 			}
 			case A_CONTINUE: {
 				if (loop_lbls.empty())
-					throw CompilerExcept{"error: continue not inside of any loop", ast->tok->source};
+					throw CompilerExcept{"error: continue not inside of any loop", ast->src_tok->source};
 
-				emit(IR::JUMP, ast, loop_lbls.back().repeat);
+				emit(JUMP, ast, { T_LABEL, loop_lbls.back().cont });
 				return {};
 			}
 
@@ -880,3 +857,5 @@ struct IRGen {
 		}
 	}
 };
+
+}

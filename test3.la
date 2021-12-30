@@ -12,13 +12,13 @@
 h := "foo";
 h2 := "bar";
 
-printf("start {} {}\n", h, h2);
+printf("start {s} {s}\n", h, h2);
 printf("\n");
 
 capt2 := "cap2";
 capt1 := "cap1";
 
-func indent (depth) {
+func indent (depth : int) {
 	for i:=0; i<depth; i++ {
 		printf("  ");
 	}
@@ -35,9 +35,9 @@ func indent (depth) {
 B("from main before", 0);
 printf("\n");
 
-func B (msg, depth) {
-	indent(depth); printf("B ^{\n");
-	indent(depth+1); printf("{}!\n", msg);
+func B (msg : str, depth : int) {
+	indent(depth);   printf("B ^{\n");
+	indent(depth+1); printf("{s}!\n", msg);
 
 	//indent(depth+1); printf("var capture does not work!");
 	//indent(depth+1); printf("this should say \"cap2\" -> \"{capt2}\"\n", capt2);
@@ -53,12 +53,12 @@ func B (msg, depth) {
 A(0); // does not work yet, resolver would have to do a prescan
 printf("\n");
 
-func A (depth) {
+func A (depth : int) {
 	indent(depth); printf("A ^{\n");
 
 	mymsg := "Hello from A";
 	B("test", depth+1);
-	B(mymsg, depth+1);
+	B(mymsg,  depth+1);
 
 	//indent(depth+1); printf("\n");
 	//indent(depth+1); printf("var capture should not work! {capt1}\n", capt1);
@@ -72,15 +72,18 @@ printf("\n");
 A(0);
 printf("\n");
 
-func myprint (msg) {
-	printf(" prin {}", msg);
+func myprint (msg : str) {
+	printf(" prin {s}", msg);
+}
+func myprinti (i : int) {
+	printf(" prin {i}", i);
 }
 
 printf("-----------\n");
 for i:=0; i<10; i++ {
-	myprint(i);
+	myprinti(i);
 	
-	func get_msg () = (msg) {
+	func get_msg () = (msg : str) {
 		msg = "---";
 	} 
 	mymsg := get_msg();

@@ -2,20 +2,56 @@
 #include "common.hpp"
 #include "ir_gen.hpp"
 
+/*  calling convention:
+	A() calls B() calls C():
+
+	A::local vars   <-  A frame ptr
+	A::local temps
+
+	...
+	B::arg1
+	B::arg0
+	...
+	B::ret1
+	B::ret0         <-  A stack ptr
+
+	A frame ptr
+	A return address
+
+	B::local vars   <-  B frame ptr
+	B::local temps
+
+	...
+	C::arg1
+	C::arg0
+	...
+	C::ret1
+	C::ret0         <-  B stack ptr
+
+	B frame ptr
+	B return address
+
+	C::local vars   <-  C frame ptr
+	C::local temps
+*/
+
 enum Opcode : uint32_t {
 	OP_IMM = 1u << 6,
 
 	OP_NOP=0,
 
-	OP_MOV,      // MEM, MEM
+	OP_MOV,   
 
-	OP_PUSH,     // IMM
-	OP_POP,      // IMM
+	OP_SPUSH, 
+	OP_SPOP,  
+
+	OP_PUSH,  
+	OP_POP,   
 
 	// call bytecode function
 	OP_CALL,
 	// call builtin (native) function
-	OP_CALLB, // dst=func ptr src=frame ptr (at func args)
+	OP_CALLB,
 
 	OP_RET,
 
@@ -23,36 +59,36 @@ enum Opcode : uint32_t {
 	OP_JNZ,     // JUMP DST, COND     jump if nonzero  
 	OP_JZ,      // JUMP DST, COND     jump if zero     
 
-	OP_NEG,     // MEM
-	OP_NOT,     // MEM
-	OP_INC,     // MEM
-	OP_DEC,     // MEM
+	OP_NEG,    
+	OP_NOT,    
+	OP_INC,    
+	OP_DEC,    
 
-	OP_ADD,	    // MEM, MEM
-	OP_SUB,	    // MEM, MEM
-	OP_MUL,	    // MEM, MEM
-	OP_DIV,	    // MEM, MEM
-	OP_REMAIND, // MEM, MEM
-	OP_LT,      // MEM, MEM
-	OP_LTE,     // MEM, MEM
-	OP_GT,      // MEM, MEM
-	OP_GTE,     // MEM, MEM
-	OP_EQ,      // MEM, MEM
-	OP_NEQ,     // MEM, MEM
+	OP_ADD,	   
+	OP_SUB,	   
+	OP_MUL,	   
+	OP_DIV,	   
+	OP_REMAIND,
+	OP_LT,     
+	OP_LTE,    
+	OP_GT,     
+	OP_GTE,    
+	OP_EQ,     
+	OP_NEQ,    
 
-	OP_FNEG,    // MEM
+	OP_FNEG,
 
-	OP_FADD,    // MEM, MEM
-	OP_FSUB,    // MEM, MEM
-	OP_FMUL,    // MEM, MEM
-	OP_FDIV,    // MEM, MEM
+	OP_FADD, 
+	OP_FSUB, 
+	OP_FMUL, 
+	OP_FDIV, 
 	_OP_FREMAIND, // dummy
-	OP_FLT,      // MEM, MEM
-	OP_FLTE,     // MEM, MEM
-	OP_FGT,      // MEM, MEM
-	OP_FGTE,     // MEM, MEM
-	OP_FEQ,      // MEM, MEM
-	OP_FNEQ,     // MEM, MEM
+	OP_FLT,  
+	OP_FLTE, 
+	OP_FGT,  
+	OP_FGTE, 
+	OP_FEQ,  
+	OP_FNEQ, 
 
 	_OP_COUNT,
 };
@@ -60,6 +96,9 @@ inline constexpr const char* Opcode_str[] = {
 	"NOP",  
 
 	"MOV",  
+
+	"SPUSH", 
+	"SPOP", 
 
 	"PUSH", 
 	"POP", 
@@ -107,11 +146,11 @@ static_assert(_OP_COUNT < OP_IMM, "");
 ENUM_BITFLAG_OPERATORS_TYPE(Opcode, uint32_t)
 
 struct Instruction {
-	Opcode  code;
-	size_t  dst; // address of destination
-	size_t  src; // address of source or immediate 64 bit value
+	Opcode   code;
+	intptr_t dst; // address of destination
+	intptr_t src; // address of source or immediate 64 bit value
 
-	Instruction (Opcode code, size_t dst=0, size_t src=0): code{code}, dst{dst}, src{src} {}
+	Instruction (Opcode code, int64_t dst=0, int64_t src=0): code{code}, dst{dst}, src{src} {}
 };
 
 Opcode unary2opcode (AST* ast) {
@@ -146,10 +185,10 @@ Opcode unary2opcode (AST* ast) {
 	}
 	return (Opcode)0;
 }
-Opcode binary2opcode (AST* ast) {
-	switch (ast->valtype) {
+Opcode binary2opcode (ASTType optype, Type valtype) {
+	switch (valtype) {
 		case INT: {
-			switch (ast->type) {
+			switch (optype) {
 				case A_ADD: case A_ADDEQ:             return OP_ADD;
 				case A_SUB: case A_SUBEQ:             return OP_SUB;
 				case A_MUL: case A_MULEQ:             return OP_MUL;
@@ -165,14 +204,14 @@ Opcode binary2opcode (AST* ast) {
 			}
 		} break;
 		case BOOL: {
-			switch (ast->type) {
+			switch (optype) {
 				case A_EQUALS:     return OP_EQ; 
 				case A_NOT_EQUALS: return OP_NEQ;
 				INVALID_DEFAULT;
 			}
 		} break;
 		case FLT: {
-			switch (ast->type) {
+			switch (optype) {
 				case A_ADD: case A_ADDEQ:             return OP_FADD;
 				case A_SUB: case A_SUBEQ:             return OP_FSUB;
 				case A_MUL: case A_MULEQ:             return OP_FMUL;
@@ -199,32 +238,41 @@ struct Codegen {
 		const char*  str;
 	};
 
-	std::vector<size_t> labels_ordered; // lbl ids in order of code addr
+	std::vector<Info> code_labels; // lbl ids in order of code addr
+
+	struct InstrRange {
+		size_t first, end;
+	};
+	std::vector<InstrRange> func_code;
 
 	std::vector<Info> istrs;
 
 	std::vector<size_t> vars;
 	std::vector<size_t> temps;
 
-	void dbg_print (IR::IR const& ir) {
+	void dbg_print () {
 		printf("--------------------------------------------------------------------------------\n");
 		printf("bytecode:\n");
 
-		auto cur_lbl_id = labels_ordered.begin();
+		auto cur_lbli = code_labels.begin();
 		auto cur_istr = istrs.begin();
 
 		for (size_t i=0; i<code.size(); ++i) {
 			auto& instr = code[i];
 
-			while (cur_lbl_id < labels_ordered.end() && ir.labels[*cur_lbl_id].codeaddr == i) {
-				printf("       %s:\n", ir.labels[*cur_lbl_id].name);
-				cur_lbl_id++;
+			while (cur_lbli < code_labels.end() && cur_lbli->addr == i) {
+				printf("       %s:\n", cur_lbli->str);
+				cur_lbli++;
 			}
 
-			bool dst=true, src=true, jmp=false;
+			bool dst=true, src=true;
 
 			Opcode code  = instr.code & ~OP_IMM;
-			bool src_imm = (instr.code & OP_IMM) != 0;
+
+			bool imm = (instr.code & OP_IMM) != 0;
+
+			bool src_imm = false;
+			bool dst_imm = false;
 
 			switch (code) {
 				case OP_RET:
@@ -232,18 +280,24 @@ struct Codegen {
 					src = false;
 					break;
 
-				case OP_PUSH:
-				case OP_POP:
+				case OP_SPUSH:
+				case OP_SPOP:
+					dst_imm = true;
 					src = false;
 					break;
 
+				case OP_PUSH:
+				case OP_POP:
+					dst = false;
+					break;
+
 				case OP_JMP:
-					src = false;
-					jmp = true;
+					dst_imm = true;
+					src     = false;
 					break;
 				case OP_JNZ:
 				case OP_JZ:
-					jmp = true;
+					dst_imm = true;
 					break;
 
 				case OP_NEG:
@@ -253,26 +307,33 @@ struct Codegen {
 				case OP_FNEG:
 					src = false;
 					break;
+
+				case OP_CALL:
+				case OP_CALLB:
+					dst_imm = true;
+					src = false;
+					break;
+			}
+
+			if (imm) {
+				if (!src) dst_imm = true;
+				else      src_imm = true;
 			}
 
 			printf("%5llx |", i);
 
-			auto print_operand = [] (size_t val) {
-				printf(" %18s", prints("[%llx]", val).c_str());
+			auto print_operand = [] (intptr_t val) {
+				printf(" %18s", prints(val >= 0 ? "[%llx]" : "[-%llx]", abs(val)).c_str());
 			};
-			auto print_imm = [] (size_t val) {
+			auto print_imm = [] (intptr_t val) {
 				printf(" %18llx", val);
 			};
 
-			printf("  %-5s", Opcode_str[code]);
+			printf("  %-7s", prints("%s%s", Opcode_str[code], imm ? "i":"").c_str());
 			
-			if (jmp) {
-				print_imm(instr.dst);
-			}
-			else {
-				if (dst)        print_operand(instr.dst);
-				else            printf(" %18s", "");
-			}
+			if (dst && dst_imm) print_imm(instr.dst);
+			else if (dst)       print_operand(instr.dst);
+			else                printf(" %18s", "");
 
 			if (src && src_imm) print_imm(instr.src);
 			else if (src)       print_operand(instr.src);
@@ -289,101 +350,170 @@ struct Codegen {
 		}
 	}
 
-	void generate (IR::IR& ir) {
+	void generate (IR::IRGen& ir) {
 
 		code .reserve(1024 * 8);
 		istrs.reserve(1024 * 8);
+
+		func_code.resize(ir.funcdefs.size());
+
+		for (size_t funcid=0; funcid<ir.funcdefs.size(); ++funcid) {
+			auto& funcdef = ir.funcdefs[funcid];
+			auto& fir     = ir.func_irs[funcid];
+
+			func_code[funcid].first = code.size();
+
+			auto func_lbl_name = format("##### func %.*s()", (int)funcdef->decl.ident.size(), funcdef->decl.ident.data());
+			code_labels.push_back({ code.size(), func_lbl_name });
+
+			add_func_code(fir);
+
+			func_code[funcid].end = code.size();
+		}
+
+		// patch up jump addresses
+		for (size_t funcid=0; funcid<ir.funcdefs.size(); ++funcid) {
+			auto& func_ir = ir.func_irs[funcid];
+
+			for (size_t iaddr = func_code[funcid].first; iaddr < func_code[funcid].end; ++iaddr) {
+				auto& instr = code[iaddr];
+
+				switch (instr.code) {
+
+					case OP_JMP:
+					case OP_JNZ:
+					case OP_JZ: {
+						size_t func_lbl_id = instr.dst;
+						size_t code_lbl_id = func_ir.labels[func_lbl_id].code_lbl_id;
+						instr.dst = code_labels[code_lbl_id].addr;
+					} break;
+
+					case OP_CALL: {
+						size_t func_id = instr.dst;
+						instr.dst = func_code[func_id].first;
+					} break;
+				}
+			}
+		}
+	}
+
+	const char* format_const (AST* ast) {
+		std::string_view text;
+		if (ast->type == A_ASSIGN) {
+			auto* op = (AST_binop*)ast;
+
+			text = op->rhs->src_tok->source.text();
+		}
+		else {
+			assert(ast->type == A_LITERAL);
+			text = ast->src_tok->source.text();
+		}
+		return format("=%.*s", (int)text.size(), text.data());
+	}
+	const char* format_source (AST* ast) {
+		auto text = ast->src_tok->source.text();
+		return format("%.*s", (int)text.size(), text.data());
+	}
+	
+	void add_func_code (IR::IR& ir) {
+		std::vector<size_t> temp_locs;
+
+		temp_locs.resize(ir.temp_count);
+
+		size_t temps_count = 0;
+
+		for (size_t i=0; i<ir.code.size(); ++i) {
+			auto& iri = ir.code[i];
+
+			switch (iri.type) {
+				case IR::MOVE:
+				case IR::UNOP:
+				case IR::BINOP: {
+					if (iri.dst.type == IR::VT_TEMPID)
+						temp_locs[iri.dst.id] = temps_count++;
+				} break;
+			}
+		}
+
+		//// generate code
 		
-		auto get_addr = [&] (IR::Var var) {
-			size_t addr = var.id;
-			if (var.type == IR::TEMP) addr += ir.var_count;
-			return addr;
-		};
-		auto format_const = [] (AST* ast) {
-			std::string_view text;
-			if (ast->type == A_ASSIGN) {
-				auto* op = (AST_binop*)ast;
+		size_t stk_sz = ir.var_count + temps_count + ir.max_retargs;
 
-				text = op->rhs->src_tok->source.text();
-			}
-			else {
-				assert(ast->type == A_LITERAL);
-				text = ast->src_tok->source.text();
-			}
-			return format("=%.*s", (int)text.size(), text.data());
-		};
-		auto format_source = [] (AST* ast) {
-			auto text = ast->src_tok->source.text();
-			return format("%.*s", (int)text.size(), text.data());
-		};
-		auto format_jmp = [&] (AST* ast, size_t lbl_id) {
-			auto text = ast->src_tok->source.text();
-			return format("%s, %.*s", ir.labels[lbl_id].name, (int)text.size(), text.data());
-		};
+		size_t retarg_base = stk_sz-1;
 
-		size_t args_addr = ir.var_count + ir.temp_count;
-		size_t stk_sz    = ir.var_count + ir.temp_count + ir.max_retargs;
+		auto get_addr = [&] (IR::Var var) -> intptr_t {
+			if (var.type == IR::VT_CONST)
+				return (intptr_t)var.id;
 
-		// code for function prologe
-		code.emplace_back(OP_PUSH, stk_sz);
+			if (var.type == IR::VT_ARGID)
+				return -1-2 - (intptr_t)var.id;
+			if (var.type == IR::VT_TEMPID)
+				return (intptr_t)temp_locs[var.id] + ir.var_count; // temps are after vars
+			return (intptr_t)var.id;
+		};
 
 		auto imm = [] (Opcode op, IR::Var rhs) {
-			if (rhs.type == IR::T_CONST)
+			if (rhs.type == IR::VT_CONST)
 				op |= OP_IMM;
 			return op;
 		};
 
-		// generate code
+		auto nonimm = [] (IR::VarType type) {
+			return type == IR::VT_VARID || type == IR::VT_TEMPID || type == IR::VT_ARGID;
+		};
+		auto maybeimm = [] (IR::VarType type) {
+			return type == IR::VT_VARID || type == IR::VT_TEMPID || type == IR::VT_ARGID || type == IR::VT_CONST;
+		};
+
+		// code for function prologe
+		code.emplace_back(OP_SPUSH, stk_sz);
+
+		size_t retargid = 0;
+
 		for (size_t i=0; i<ir.code.size(); ++i) {
 			auto& iri = ir.code[i];
 
-			size_t dst = get_addr(iri.dst);
-			size_t lhs = get_addr(iri.lhs);
-			size_t rhs = get_addr(iri.rhs);
+			intptr_t dst = get_addr(iri.dst);
+			intptr_t lhs = get_addr(iri.lhs);
+			intptr_t rhs = get_addr(iri.rhs);
+			
 			switch (iri.type) {
 				case IR::LABEL: {
-					assert(iri.dst.type == IR::T_LABEL);
+					assert(iri.dst.type == IR::VT_LABELID);
 				} break;
 
 				case IR::MOVE: {
-					assert(iri.dst.type == IR::VAR || iri.dst.type == IR::TEMP);
-					assert(iri.lhs.type == IR::VAR || iri.lhs.type == IR::TEMP || iri.lhs.type == IR::T_CONST);
+					assert(nonimm(iri.dst.type));
+					assert(maybeimm(iri.lhs.type));
 				} break;
 
 				case IR::UNOP: {
-					assert(iri.dst.type == IR::VAR || iri.dst.type == IR::TEMP);
-					assert(iri.lhs.type == IR::VAR || iri.lhs.type == IR::TEMP); // unary op arg should not be a constant, since const folding should remove the unary op then
+					assert(nonimm(iri.dst.type));
+					assert(maybeimm(iri.lhs.type));
 				} break;
 
 				case IR::BINOP: {
-					assert(iri.dst.type == IR::VAR || iri.dst.type == IR::TEMP);
-					assert(iri.lhs.type == IR::VAR || iri.lhs.type == IR::TEMP);
-					assert(iri.rhs.type == IR::VAR || iri.rhs.type == IR::TEMP || iri.rhs.type == IR::T_CONST);
-				} break;
-
-				case IR::ARG_PUSH: {
-					assert(iri.dst.type == IR::T_ARG);
-					assert(iri.lhs.type == IR::VAR || iri.lhs.type == IR::TEMP || iri.lhs.type == IR::T_CONST);
-					assert(iri.rhs.type == IR::UNDEFINED);
+					assert(nonimm(iri.dst.type));
+					assert(maybeimm(iri.lhs.type));
+					assert(maybeimm(iri.rhs.type));
 				} break;
 
 				case IR::JUMP: {
-					assert(iri.dst.type == IR::T_LABEL);
-					assert(iri.lhs.type == IR::UNDEFINED);
+					assert(iri.dst.type == IR::VT_LABELID);
+					assert(iri.lhs.type == IR::VT_UNDEFINED);
 				} break;
 				case IR::JUMP_CT:
 				case IR::JUMP_CF: {
-					assert(iri.dst.type == IR::T_LABEL);
-					assert(iri.lhs.type == IR::VAR || iri.lhs.type == IR::TEMP); // cond can't be CONSTVAR since that should be turned into a unconditional jmp
+					assert(iri.dst.type == IR::VT_LABELID);
+					assert(nonimm(iri.lhs.type)); // cond can't be CONSTVAR since that should be turned into a unconditional jmp
 				} break;
 			}
 
 			switch (iri.type) {
 				case IR::LABEL: {
 					size_t lbl_id = iri.dst.id;
-					ir.labels[lbl_id].codeaddr = code.size();
-
-					labels_ordered.push_back(lbl_id);
+					ir.labels[lbl_id].code_lbl_id = code_labels.size();
+					code_labels.push_back({ code.size(), ir.labels[lbl_id].name });
 				} break;
 
 				case IR::MOVE: {
@@ -393,55 +523,64 @@ struct Codegen {
 					//	istrs.push_back({ code.size(), format_source(alhs) });
 					//}
 
-					if (iri.lhs.type == IR::T_CONST)
+					if (iri.lhs.type == IR::VT_CONST)
 						istrs.push_back({ code.size(), format_const(iri.ast) });
-					
+
 					code.emplace_back(imm(OP_MOV, iri.lhs), dst, lhs);
 				} break;
 
 				case IR::UNOP: {
+					auto opc = unary2opcode(iri.ast);
+
 					if (dst != lhs) // make INC/DEC not generate useless MOVs
-						code.emplace_back(OP_MOV, dst, lhs);
-					code.emplace_back(unary2opcode(iri.ast), dst);
+						code.emplace_back(imm(OP_MOV, iri.lhs), dst, lhs);
+					code.emplace_back(opc, dst);
 				} break;
 
 				case IR::BINOP: {
+					auto* op = (AST_binop*)iri.ast;
+
+					// HACK: since += operators don't have a type on the += AST node, we have to pull the type from one of the operands
+					// ideally our IR nodes would already have resolved to a enum operation type in the IR gen phase
+					// which maps more or less directly to asm operations (add, flt_add etc.)
+					auto opc = binary2opcode(op->a.type, op->lhs->valtype);
+
 					if (dst != lhs)
-						code.emplace_back(OP_MOV, dst, lhs);
-					code.emplace_back(imm(binary2opcode(iri.ast), iri.rhs), dst, rhs);
+						code.emplace_back(imm(OP_MOV, iri.lhs), dst, lhs);
+					code.emplace_back(imm(opc, iri.rhs), dst, rhs);
 				} break;
 
-				case IR::RET_PUSH: {
-					
+				case IR::PUSH_RET: {
+					retargid++;
 				} break;
-				case IR::RET_POP: {
-					size_t addr = args_addr + lhs;
-					code.emplace_back(OP_MOV, dst, addr);
-				} break;
-
-				case IR::ARG_PUSH: {
-					size_t addr = args_addr + dst;
+				case IR::PUSH_ARG: {
+					intptr_t addr = retarg_base - retargid;
 					code.emplace_back(imm(OP_MOV, iri.lhs), addr, lhs);
-				} break;
-				case IR::ARG_POP: {
-					
+
+					retargid++;
 				} break;
 
 				case IR::CALL: {
 					auto* call = (AST_call*)iri.ast;
+					auto* fdef = (AST_funcdef*)call->fdef;
 
 					istrs.push_back({ code.size(), format_source(iri.ast) });
 
 					if (call->fdef->type == A_FUNCDEF_BUILTIN) {
 						auto* fdef = (AST_funcdef_builtin*)call->fdef;
-
-						code.emplace_back(OP_CALLB, (size_t)(void*)fdef->func_ptr, args_addr);
+						code.emplace_back(OP_CALLB, (size_t)(void*)fdef->func_ptr);
 					}
 					else {
 						auto* fdef = (AST_funcdef*)call->fdef;
-
-						//code.emplace_back(OP_CALL);
+						code.emplace_back(OP_CALL, fdef->codegen_funcid);
 					}
+
+					retargid = 0;
+				} break;
+
+				case IR::GET_RET: {
+					intptr_t addr = retarg_base - iri.lhs.id;
+					code.emplace_back(OP_MOV, dst, addr);
 				} break;
 
 				case IR::JUMP:
@@ -461,11 +600,10 @@ struct Codegen {
 
 				case IR::RETURN: {
 					// code for function epilogue
-					code.emplace_back(OP_POP, stk_sz);
+					code.emplace_back(OP_SPOP, stk_sz);
 					code.emplace_back(OP_RET);
 				} break;
 
-				case IR::VARDECL:
 				case IR::DEAD: {
 					// do nothing
 				} break;
@@ -478,18 +616,5 @@ struct Codegen {
 		//{ // code for function epilogue
 		//	code.emplace_back(OP_POP, stk_sz);
 		//}
-
-		// patch up jump addresses
-		for (size_t iaddr=0; iaddr<code.size(); ++iaddr) {
-			auto& instr = code[iaddr];
-
-			switch (instr.code) {
-				case OP_JMP:
-				case OP_JNZ:
-				case OP_JZ: {
-					instr.dst = ir.labels[instr.dst].codeaddr;
-				} break;
-			}
-		}
 	}
 };

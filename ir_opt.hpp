@@ -12,13 +12,13 @@ struct IROpt {
 		// since temps are only assigned once and only used after assignment copy propagation should be safe across blocks
 		
 		std::vector<Var> vars;
-		vars.resize(ir.temp_count, Var{ UNDEFINED, 0 });
+		vars.resize(ir.temp_count, Var{ VT_UNDEFINED, 0 });
 
 		for (auto& i : ir.code) {
-			if (i.lhs.type == TEMP && vars[i.lhs.id].type != UNDEFINED) i.lhs = vars[i.lhs.id];
-			if (i.rhs.type == TEMP && vars[i.rhs.id].type != UNDEFINED) i.rhs = vars[i.rhs.id];
+			if (i.lhs.type == VT_TEMPID && vars[i.lhs.id].type != VT_UNDEFINED) i.lhs = vars[i.lhs.id];
+			if (i.rhs.type == VT_TEMPID && vars[i.rhs.id].type != VT_UNDEFINED) i.rhs = vars[i.rhs.id];
 
-			if (i.type == MOVE && i.dst.type == TEMP) {
+			if (i.type == MOVE && i.dst.type == VT_TEMPID) {
 				vars[i.dst.id] = i.lhs;
 			}
 		}
@@ -32,33 +32,44 @@ struct IROpt {
 		vars.resize(ir.temp_count, false);
 
 		for (auto& i : ir.code) {
-			if (i.lhs.type == TEMP) vars[i.lhs.id] = true;
-			if (i.rhs.type == TEMP) vars[i.rhs.id] = true;
+			if (i.lhs.type == VT_TEMPID) vars[i.lhs.id] = true;
+			if (i.rhs.type == VT_TEMPID) vars[i.rhs.id] = true;
 		}
 
 		for (auto& i : ir.code) {
-			if (i.dst.type == TEMP && vars[i.dst.id] == false) {
+			if (i.dst.type == VT_TEMPID && vars[i.dst.id] == false) {
 				i = { DEAD };
 			}
 		}
 	}
 };
 
-void ir_opt (IR& ir) {
+void func_opt (IR& ir, strview const& funcname) {
 	IROpt opt = {ir};
+
+	printf(":: %.*s:\n", (int)funcname.size(), funcname.data());
 
 	printf(">>> Before copy propagate:\n");
 	ir.dbg_print();
-	
+
 	opt.copy_prop();
-	
+
 	printf(">>> After copy propagate:\n");
 	ir.dbg_print();
-	
+
 	opt.dead_code();
-	
+
 	printf(">>> After dead code elimination:\n");
 	ir.dbg_print();
+}
+
+void ir_opt (IRGen& ir) {
+	ZoneScoped;
+	
+	for (auto& func : ir.funcdefs) {
+		auto& fir = ir.func_irs[func->codegen_funcid];
+		func_opt(fir, func->decl.ident);
+	}
 }
 
 }

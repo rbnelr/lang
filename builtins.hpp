@@ -23,8 +23,10 @@ void print (const char* str) {
 void my_printf (Value* vals) {
 	auto& format = vals[0];
 
-	auto* varargs = &vals[1];
-	//auto  varargc = valc-1;
+	auto* varargs = &vals[-1];
+	auto get_arg = [&] (size_t idx) -> Value& {
+		return varargs[-(intptr_t)idx];
+	};
 
 	const char* cur = format.str;
 
@@ -47,7 +49,7 @@ void my_printf (Value* vals) {
 				if (params.size() != 1)
 					throw RuntimeExcept{"runtime error: printf: expected type specifier"};
 				
-				auto& val = varargs[i++];
+				auto& val = get_arg(i++);
 
 				switch (params[0]) {
 					case 'b': print(val.b);   break;
@@ -85,7 +87,7 @@ inline AST_funcdef_builtin BF_TIMER = {
 };
 
 void timer_end (Value* vals) {
-	auto start = vals[1];
+	auto start = vals[-1];
 	auto end = (int64_t)get_timestamp();
 	vals[0].f = (double)(end - start.i) / (double)timestamp_freq;
 }

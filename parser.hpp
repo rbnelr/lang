@@ -264,7 +264,8 @@ struct AST_literal { AST a;
 
 struct AST_vardecl { AST a;
 	strview      ident;
-	size_t       var_id; // for IR gen
+	size_t       var_id;     // for IR gen
+	bool         var_is_arg; // for IR gen, is this variable a function argument?
 };
 
 struct AST_var { AST a;
@@ -285,6 +286,7 @@ struct AST_funcdef { AST a;
 	AST_funcdecl decl;
 
 	AST*         body;
+	size_t       codegen_funcid;
 };
 struct AST_funcdef_builtin { AST a;
 	AST_funcdecl decl;
@@ -624,36 +626,43 @@ struct Parser {
 		return lhs;
 	}
 
+	AST* var_decl () {
+		if (!(tok[0].type == T_IDENTIFIER && tok[1].type == T_COLON))
+			throw_error("syntax error: expected variable declaration", *tok);
+
+		auto* var = ast_alloc<AST_vardecl>(A_VARDECL, tok);
+		var->ident = tok[0].source.text();
+
+		tok+=2;
+
+		// type specifier
+		if (tok->type == T_IDENTIFIER) {
+			auto ident = tok->source.text();
+
+			if      (ident == "bool") var->a.valtype = BOOL;
+			else if (ident == "int" ) var->a.valtype = INT;
+			else if (ident == "flt" ) var->a.valtype = FLT;
+			else if (ident == "str" ) var->a.valtype = STR;
+
+			tok++;
+		}
+		else {
+			var->a.valtype = VOID;
+
+			if (tok->type != T_ASSIGN)
+				throw_error_after("syntax error: \neither specify type during variable declaration with \"<var> : <type>;\"\n"
+					"or let type be inferred with \"<var> := <expr>;\"", tok[-1]);
+		}
+
+		return (AST*)var;
+	}
+
 	AST* assign_expr () {
 		AST* lhs;
 
 		// lhs is var decl
 		if (tok[0].type == T_IDENTIFIER && tok[1].type == T_COLON) {
-			auto* var = ast_alloc<AST_vardecl>(A_VARDECL, tok);
-			var->ident = tok[0].source.text();
-			
-			tok+=2;
-
-			// type specifier
-			if (tok->type == T_IDENTIFIER) {
-				auto ident = tok->source.text();
-
-				if      (ident == "bool") var->a.valtype = BOOL;
-				else if (ident == "int" ) var->a.valtype = INT;
-				else if (ident == "flt" ) var->a.valtype = FLT;
-				else if (ident == "str" ) var->a.valtype = STR;
-				
-				tok++;
-			}
-			else {
-				var->a.valtype = VOID;
-
-				if (tok->type != T_ASSIGN)
-					throw_error_after("syntax error: \neither specify type during variable declaration with \"<var> : <type>;\"\n"
-						                              "or let type be inferred with \"<var> := <expr>;\"", tok[-1]);
-			}
-
-			lhs = (AST*)var;
+			lhs = var_decl();
 		}
 		// lhs is expression
 		else {
@@ -731,16 +740,8 @@ struct Parser {
 		if (tok->type != T_PAREN_OPEN)
 			throw_error_after("syntax error: '(' expected after function identifer!", tok[-1]);
 		
-		func->decl.argc = comma_seperated_list(&func->decl.args, [this] () {
-			if (tok->type != T_IDENTIFIER)
-				throw_error_after("syntax error: function argument identifer expected!", tok[-1]);
-
-			auto* arg = ast_alloc<AST_vardecl>(A_VARDECL, tok);
-			arg->ident = tok->source.text();
-			tok++;
-
-			return (AST*)arg;
-		});
+		auto fvar_decl = [this] () { return var_decl(); };
+		func->decl.argc = comma_seperated_list(&func->decl.args, fvar_decl);
 
 		// implicit (void) return list
 		if (tok->type != T_ASSIGN) {
@@ -751,16 +752,7 @@ struct Parser {
 		else {
 			tok++;
 
-			func->decl.retc = comma_seperated_list(&func->decl.rets, [this] () {
-				if (tok->type != T_IDENTIFIER)
-					throw_error_after("syntax error: function return identifer expected!", tok[-1]);
-
-				auto* arg = ast_alloc<AST_vardecl>(A_VARDECL, tok);
-				arg->ident = tok->source.text();
-				tok++;
-
-				return (AST*)arg;
-			});
+			func->decl.retc = comma_seperated_list(&func->decl.rets, fvar_decl);
 		}
 
 		func->body = block();

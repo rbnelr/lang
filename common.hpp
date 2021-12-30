@@ -47,7 +47,7 @@ typedef std::string_view strview;
 	#define _NOINLINE     
 #endif
 
-#define INVALID_DEFAULT assert(false); _UNREACHABLE
+#define INVALID_DEFAULT default: { assert(false); _UNREACHABLE; } break
 
 #if 1
 	#define TRACY_REPEAT 100000

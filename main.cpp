@@ -22,7 +22,6 @@ _NOINLINE void fib (int n) {
 
 	printf("\n");
 }
-
 _NOINLINE int pascal_tri (int i, int row) {
 	if (i < 0 || i > row)
 		return 0;
@@ -34,7 +33,6 @@ _NOINLINE int pascal_tri (int i, int row) {
 	int b = pascal_tri(i  , row-1);
 	return a + b;
 }
-
 _NOINLINE void pascal_tri (int rows) {
 	for (int row=0; row < rows; ++row) {
 
@@ -67,6 +65,8 @@ int main (int argc, const char** argv) {
 			return 1;
 		}
 	}
+
+	VM vm; // don't recreate when profling due to stack allocation
 
 #if TRACY_ENABLE
 	for (int profi=0; profi<TRACY_REPEAT; ++profi) {
@@ -112,31 +112,27 @@ int main (int argc, const char** argv) {
 				funcdefs = std::move(resolve.funcs);
 			}
 
-			IR::IRGen irgen;
+			IR::IRGen irgen = { funcdefs };
 			{
-				ZoneScopedN("ir_gen");
-				irgen.generate(funcdefs);
+				irgen.generate();
 			}
 
 			{
-				ZoneScopedN("ir_opt");
-
-				IR::ir_opt(irgen.ir);
+				IR::ir_opt(irgen);
 			}
 
 			Codegen codegen;
 			{
 				ZoneScopedN("codegen");
-				codegen.generate(irgen.ir);
+				codegen.generate(irgen);
 
-				codegen.dbg_print(irgen.ir);
+				codegen.dbg_print();
 
 				code = std::move(codegen.code);
 			}
 		}
 
 	//#ifndef TRACY_ENABLE
-		VM vm;
 		{
 			ZoneScopedN("vm.execute");
 			vm.execute(code.data(), code.size(), 0);

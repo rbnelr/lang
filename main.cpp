@@ -56,7 +56,7 @@ int main (int argc, const char** argv) {
 
 	setvbuf(stderr, nullptr, _IOFBF, BUFSIZ);
 
-	std::string filename = "test3.la";
+	std::string filename = "test.la";
 	std::string tok;
 	{
 		ZoneScopedN("load_text_file");

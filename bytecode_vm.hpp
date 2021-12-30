@@ -3,62 +3,69 @@
 #include "builtins.hpp"
 #include "codegen.hpp"
 
-_NOINLINE void _execute (Instruction* code, size_t code_sz, int64_t* stack, size_t stack_size, size_t entry_point) {
+_NOINLINE void _execute (Instruction* code, size_t code_sz, intptr_t* stack, size_t stack_size, size_t entry_point) {
 
-	size_t program_counter = entry_point;
-	size_t frame_ptr = 0;
-	size_t stack_ptr = 0;
+	// Use ugly pointers instead of simple indices since this is faster to execute due to simpler address calculation
+
+	Instruction* pentry_point = &code[entry_point];
+	Instruction* program_counter = pentry_point;
+	intptr_t*    frame_ptr = stack;
+	intptr_t*    stack_ptr = stack;
+
+	Instruction* code_end  = code + code_sz;
+	intptr_t*    stack_end = stack + stack_size;
 
 #define DBG_UNINIT 0xcc
 #define DBG_FREED  0xcd
 
 #ifdef _DEBUG
-#define STK_CLEAR(N, VAL) memset(&stack[stack_ptr], VAL, sizeof(stack[0])*(N))
+#define STK_CLEAR(N, VAL) memset(stack_ptr, VAL, sizeof(stack[0])*(N))
 #else
 #define STK_CLEAR(N, VAL) 
 #endif
 
-	auto PUSH = [&] (size_t val) {
-		assert(stack_ptr < stack_size);
-		stack[stack_ptr++] = val;
+	auto PUSH = [&] (int64_t val) {
+		assert(stack_ptr < stack_end);
+		*stack_ptr++ = val;
 	};
 	auto POP = [&] () {
-		assert(stack_ptr > 0);
-		auto val = stack[--stack_ptr];
+		assert(stack_ptr > stack);
+		--stack_ptr;
+		auto val = *stack_ptr;
 		STK_CLEAR(1, DBG_FREED);
 		return val;
 	};
 
-	auto PUSHN = [&] (size_t N) {
-		assert(stack_ptr + N <= stack_size);
+	auto PUSHN = [&] (int64_t N) {
+		assert(stack_ptr + N <= stack_end);
 		STK_CLEAR(N, DBG_UNINIT);
 		stack_ptr += N;
 	};
-	auto POPN = [&] (size_t N) {
-		assert(stack_ptr >= N);
+	auto POPN  = [&] (int64_t N) {
+		assert(stack_ptr >= stack + N);
 		stack_ptr -= N;
 		STK_CLEAR(N, DBG_FREED);
 	};
 
 	STK_CLEAR(stack_size, DBG_FREED);
 	
-	PUSH(frame_ptr);
-	PUSH(entry_point); // entry_point return address is special signal that we returned from main, so we know when to stop running
+	PUSH((intptr_t)frame_ptr);
+	PUSH(0); // 0 return address signals return from main
 
 	frame_ptr = stack_ptr;
 
 	while (true) {
-		assert(program_counter < code_sz);
-		auto& op = code[program_counter++];
+		assert(program_counter < code_end);
+		auto& op = *program_counter++;
 
 		size_t dst_val = op.dst;
 		size_t src_val = op.src;
 
-	#define SRC (assert(frame_ptr + src_val < stack_size), stack[frame_ptr + src_val])
-	#define DST (assert(frame_ptr + dst_val < stack_size), stack[frame_ptr + dst_val])
+	#define SRC (assert(frame_ptr + src_val < stack_end), frame_ptr[src_val])
+	#define DST (assert(frame_ptr + dst_val < stack_end), frame_ptr[dst_val])
 
-	#define FSRC (assert(frame_ptr + src_val < stack_size), *(double*)&stack[frame_ptr + src_val])
-	#define FDST (assert(frame_ptr + dst_val < stack_size), *(double*)&stack[frame_ptr + dst_val])
+	#define FSRC (assert(frame_ptr + src_val < stack_end), *(double*)(frame_ptr + src_val))
+	#define FDST (assert(frame_ptr + dst_val < stack_end), *(double*)(frame_ptr + dst_val))
 
 		switch (op.code) {
 			case OP_NOP: {
@@ -91,37 +98,37 @@ _NOINLINE void _execute (Instruction* code, size_t code_sz, int64_t* stack, size
 
 			case OP_CALLB: {
 				auto* builtin_func = (builtin_func_t)dst_val;
-				auto* argptr = (Value*)&stack[stack_ptr-1];
+				auto* argptr = (Value*)(stack_ptr-1);
 
 				builtin_func(argptr);
 			} continue;
 
 			case OP_CALL: {
-				PUSH(frame_ptr);
-				PUSH(program_counter);
+				PUSH((intptr_t)frame_ptr);
+				PUSH((intptr_t)program_counter);
 
 				frame_ptr       = stack_ptr;
-				program_counter = dst_val;
+				program_counter = dst_val + code;
 			} continue;
 
 			case OP_RET: {
-				program_counter = POP();
-				frame_ptr = POP();
+				program_counter = (Instruction*)POP();
+				frame_ptr       = (intptr_t*)   POP();
 
-				if (program_counter == entry_point)
+				if (program_counter == 0)
 					goto return_main;
 			} continue;
 
 			case OP_JMP: {
-				program_counter = dst_val;
+				program_counter     = dst_val + code;
 			} continue;
 			case OP_JNZ: {
 				if (SRC != 0)
-					program_counter = dst_val;
+					program_counter = dst_val + code;
 			} continue;
 			case OP_JZ: {
 				if (SRC == 0)
-					program_counter = dst_val;
+					program_counter = dst_val + code;
 			} continue;
 
 			case OP_NEG: {
@@ -193,8 +200,8 @@ _NOINLINE void _execute (Instruction* code, size_t code_sz, int64_t* stack, size
 	}
 
 return_main:
-	assert(frame_ptr == 0);
-	assert(stack_ptr == 0);
+	assert(frame_ptr == stack);
+	assert(stack_ptr == stack);
 }
 
 struct VM {

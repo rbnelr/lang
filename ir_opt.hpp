@@ -47,20 +47,26 @@ struct IROpt {
 void func_opt (IR& ir, strview const& funcname) {
 	IROpt opt = {ir};
 
+#ifndef TRACY_ENABLE
 	printf(":: %.*s:\n", (int)funcname.size(), funcname.data());
 
-	printf(">>> Before copy propagate:\n");
-	ir.dbg_print();
+	//printf(">>> Before copy propagate:\n");
+	//ir.dbg_print();
+#endif
 
 	opt.copy_prop();
 
-	printf(">>> After copy propagate:\n");
-	ir.dbg_print();
+#ifndef TRACY_ENABLE
+	//printf(">>> After copy propagate:\n");
+	//ir.dbg_print();
+#endif
 
 	opt.dead_code();
 
+#ifndef TRACY_ENABLE
 	printf(">>> After dead code elimination:\n");
 	ir.dbg_print();
+#endif
 }
 
 void ir_opt (IRGen& ir) {

@@ -14,7 +14,7 @@ namespace kiss {
 	// Printf that outputs to a std::string
 	std::string prints (char const* format, ...);
 
-	//bool starts_with (std::string const& str, std::string_view substr);
+	bool starts_with (std::string_view const& str, std::string_view const& substr);
 
 	// remove whitespace at front and back
 	std::string_view trim (std::string_view sv);

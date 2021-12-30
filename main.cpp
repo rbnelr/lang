@@ -56,7 +56,7 @@ int main (int argc, const char** argv) {
 
 	setvbuf(stderr, nullptr, _IOFBF, BUFSIZ);
 
-	std::string filename = "test2.la";
+	std::string filename = "test3.la";
 	std::string tok;
 	{
 		ZoneScopedN("load_text_file");
@@ -99,8 +99,10 @@ int main (int argc, const char** argv) {
 				parser.tok = &tokens[0];
 				ast = parser.file();
 
+			#ifndef TRACY_ENABLE
 				//printf("AST:\n");
 				//dbg_print(ast);
+			#endif
 			}
 
 			std::vector<AST_funcdef*> funcdefs;
@@ -126,7 +128,9 @@ int main (int argc, const char** argv) {
 				ZoneScopedN("codegen");
 				codegen.generate(irgen);
 
+			#ifndef TRACY_ENABLE
 				codegen.dbg_print();
+			#endif
 
 				code = std::move(codegen.code);
 			}

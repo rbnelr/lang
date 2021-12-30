@@ -206,8 +206,10 @@ struct VM {
 	}
 
 	void execute (Instruction* code, size_t code_sz, size_t entry_point) {
+	#ifndef TRACY_ENABLE
 		printf("--------------------------------------------------------------------------------\n");
 		printf("VM execute:\n");
+	#endif
 
 		_execute(code, code_sz, stack, stack_size, entry_point);
 	}

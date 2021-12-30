@@ -261,7 +261,13 @@ struct Codegen {
 			auto& instr = code[i];
 
 			while (cur_lbli < code_labels.end() && cur_lbli->addr == i) {
-				printf("       %s:\n", cur_lbli->str);
+				// detect function label and print it a little more highlighted
+				if (memcmp(cur_lbli->str, "func", 4) == 0) {
+					printf("\n%s:\n", cur_lbli->str);
+				}
+				else {
+					printf("       %s:\n", cur_lbli->str);
+				}
 				cur_lbli++;
 			}
 
@@ -363,7 +369,7 @@ struct Codegen {
 
 			func_code[funcid].first = code.size();
 
-			auto func_lbl_name = format("##### func %.*s()", (int)funcdef->decl.ident.size(), funcdef->decl.ident.data());
+			auto func_lbl_name = format("func %.*s()", (int)funcdef->decl.ident.size(), funcdef->decl.ident.data());
 			code_labels.push_back({ code.size(), func_lbl_name });
 
 			add_func_code(fir);

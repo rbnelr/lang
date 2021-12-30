@@ -45,9 +45,9 @@ namespace kiss {
 		return ret;
 	}
 
-	//bool starts_with (std::string const& str, std::string_view substr) {
-	//	return str.size() >= substr.size() && memcmp(str.data(), substr.data(), substr.size()) == 0;
-	//}
+	bool starts_with (std::string_view const& str, std::string_view const& substr) {
+		return str.size() >= substr.size() && memcmp(str.data(), substr.data(), substr.size()) == 0;
+	}
 
 	constexpr inline bool _is_whitespace_c (char c) {
 		return c == ' ' || c == '\t';

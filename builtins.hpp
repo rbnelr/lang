@@ -21,6 +21,10 @@ void print (const char* str) {
 }
 
 void my_printf (Value* vals) {
+#ifdef TRACY_ENABLE  // disable prints for profiling
+	return;
+#endif
+
 	auto& format = vals[0];
 
 	auto* varargs = &vals[-1];

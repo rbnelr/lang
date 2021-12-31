@@ -32,18 +32,21 @@ struct SourceLines {
 		lines.emplace_back(src);
 
 		while (*cur != '\0') {
-			while (!(*cur == '\n' || *cur == '\r'))
-				cur++;
-			// newline found
-			char c = *cur++;
+			if (*cur == '\n' || *cur == '\r') {
+				// newline found
+				char c = *cur++;
 
-			// this code should even handle files with inconsistent unix vs windows newlines reasonably
-			// "\n" "\r" "\n\r" "\r\n" each count as one newline while "\n\n" "\r\r" count as two
-			if ((*cur == '\n' || *cur == '\r') && c != *cur)
-				cur++;
+				// this code should even handle files with inconsistent unix vs windows newlines reasonably
+				// "\n" "\r" "\n\r" "\r\n" each count as one newline while "\n\n" "\r\r" count as two
+				if ((*cur == '\n' || *cur == '\r') && c != *cur)
+					cur++;
 
-			// add next line
-			lines.emplace_back(cur);
+				// add next line
+				lines.emplace_back(cur);
+			}
+			else {
+				cur++;
+			}
 		}
 
 		// add dummy line after EOF starting on the EOF character

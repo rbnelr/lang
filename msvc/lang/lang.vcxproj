@@ -151,6 +151,7 @@
     <ClInclude Include="..\..\ir_opt.hpp" />
     <ClInclude Include="..\..\line_map.hpp" />
     <ClInclude Include="..\..\ir_gen.hpp" />
+    <ClInclude Include="..\..\options.hpp" />
     <ClInclude Include="..\..\parser.hpp" />
     <ClInclude Include="..\..\tokenizer.hpp" />
     <ClInclude Include="..\..\basic_types.hpp" />

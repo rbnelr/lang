@@ -47,26 +47,25 @@ struct IROpt {
 void func_opt (IR& ir, strview const& funcname) {
 	IROpt opt = {ir};
 
-#ifndef TRACY_ENABLE
-	printf(":: %.*s:\n", (int)funcname.size(), funcname.data());
+	if (options.print_ir) {
+		printf(":: %.*s:\n", (int)funcname.size(), funcname.data());
 
-	//printf(">>> Before copy propagate:\n");
-	//ir.dbg_print();
-#endif
+		printf(">>> Before copy propagate:\n");
+		ir.dbg_print();
+	}
 
 	opt.copy_prop();
 
-#ifndef TRACY_ENABLE
-	//printf(">>> After copy propagate:\n");
-	//ir.dbg_print();
-#endif
+	if (options.print_ir) {
+		printf(">>> After copy propagate:\n");
+		ir.dbg_print();
+	}
 
 	opt.dead_code();
 
-#ifndef TRACY_ENABLE
-	printf(">>> After dead code elimination:\n");
-	ir.dbg_print();
-#endif
+	if (options.print_ir) {
+		printf(">>> After dead code elimination:\n");
+	}
 }
 
 void ir_opt (IRGen& ir) {
@@ -74,7 +73,12 @@ void ir_opt (IRGen& ir) {
 	
 	for (auto& func : ir.funcdefs) {
 		auto& fir = ir.func_irs[func->codegen_funcid];
-		func_opt(fir, func->decl.ident);
+		
+		if (options.optimized)
+			func_opt(fir, func->decl.ident);
+
+		if (options.print_ir)
+			fir.dbg_print();
 	}
 }
 

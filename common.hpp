@@ -24,6 +24,8 @@
 
 #include "Tracy.hpp"
 
+#include "options.hpp"
+
 using namespace kiss;
 
 typedef std::string_view strview;

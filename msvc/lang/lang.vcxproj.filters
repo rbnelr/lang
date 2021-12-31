@@ -63,6 +63,7 @@
     <ClInclude Include="..\..\ir_gen.hpp" />
     <ClInclude Include="..\..\codegen.hpp" />
     <ClInclude Include="..\..\ir_opt.hpp" />
+    <ClInclude Include="..\..\options.hpp" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="util">

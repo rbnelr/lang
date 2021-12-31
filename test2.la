@@ -1,40 +1,20 @@
-//n : int;
-//{
-//	a := 5;
-//	b := 10;
-//	n = a * b - 5;
-//}
-//
-//a := 0;
-//b := 1;
-//
-//printf("Fibbonaci: {i} {i}", a, b);
-//
-//for i := 0; i < n-2; i++ {
-//	c := a + b;
-//	printf(" {i}", c);
-//	a = b;
-//	b = c;
-//}
-//
-//printf("\n");
-//
+n : int;
+{
+	a := 5;
+	b := 10;
+	n = a * b - 5;
+}
 
-a : int;
-b : int;
-c : int;
+a := 0;
+b := 1;
 
-c = 5;
+printf("Fibbonaci: {i} {i}", a, b);
 
--c; // ignored expression as statement
-b = c++; // b = 5, c = 6
-b = b++; // b++: 6  but overwritten with 5 -> b=5
+for i := 0; i < n-2; i++ {
+	c := a + b;
+	printf(" {i}", c);
+	a = b;
+	b = c;
+}
 
-a = c; // a = 6
-a = a++ + a; // a + a+1 = 13
-
-c = -c;
-
-c = -c;
-// a: 13  b: 5  c: -6
-printf("a: {i}  b: {i}  c: {i}\n", a, b, c);
+printf("\n");

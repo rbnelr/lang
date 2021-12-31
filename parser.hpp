@@ -7,7 +7,7 @@
 typedef void (*builtin_func_t)(Value* vals);
 
 inline constexpr bool is_binary_or_ternary_op (TokenType tok) {
-	return tok >= T_ADD && tok <= T_QUESTIONMARK;
+	return (tok >= T_ADD && tok <= T_NOT_EQUALS) || tok == T_QUESTIONMARK;
 }
 inline constexpr bool is_binary_assignemnt_op (TokenType tok) {
 	return tok >= T_ASSIGN && tok <= T_REMAINDEREQ;
@@ -125,35 +125,11 @@ enum ASTType {
 	A_BREAK,
 	A_CONTINUE,
 
-	// binary operators
-	A_ADD,
-	A_SUB,
-	A_MUL,
-	A_DIV,
-	A_REMAINDER,
-
-	A_LESS,
-	A_LESSEQ,
-	A_GREATER,
-	A_GREATEREQ,
-	A_EQUALS,
-	A_NOT_EQUALS,
-
+	A_UNOP,
+	A_BINOP,
+	A_ASSIGNOP,
 	// ternary operator
 	A_SELECT,
-
-	// unary operators
-	A_NEGATE,
-	A_NOT,
-	A_INC,
-	A_DEC,
-
-	A_ASSIGN,
-	A_ADDEQ,
-	A_SUBEQ,
-	A_MULEQ,
-	A_DIVEQ,
-	A_REMAINDEREQ,
 };
 inline const char* ASTType_str[] = {
 	"A_BLOCK",
@@ -176,50 +152,68 @@ inline const char* ASTType_str[] = {
 	"A_BREAK",
 	"A_CONTINUE",
 
-	"A_ADD",
-	"A_SUB",
-	"A_MUL",
-	"A_DIV",
-	"A_REMAINDER",
-
-	"A_LESS",
-	"A_LESSEQ",
-	"A_GREATER",
-	"A_GREATEREQ",
-	"A_EQUALS",
-	"A_NOT_EQUALS",
-
+	"A_UNOP",
+	"A_BINOP",
+	"A_ASSIGNOP",
 	"A_SELECT",
-
-	"A_NEGATE",
-	"A_NOT",
-	"A_INC",
-	"A_DEC",
-
-	"A_ASSIGN",
-	"A_ADDEQ",
-	"A_SUBEQ",
-	"A_MULEQ",
-	"A_DIVEQ",
-	"A_REMAINDEREQ",
 };
 
-inline constexpr ASTType tok2btop (TokenType tok) {
-	return (ASTType)( tok + (A_ADD - T_ADD) );
+enum OpType {
+	OP_ASSIGN=0, // used for =
+
+	// binary operators
+	OP_ADD, // used for + and +=
+	OP_SUB,
+	OP_MUL,
+	OP_DIV,
+	OP_REMAINDER,
+
+	OP_LESS,
+	OP_LESSEQ,
+	OP_GREATER,
+	OP_GREATEREQ,
+	OP_EQUALS,
+	OP_NOT_EQUALS,
+
+	// unary operators
+	OP_NEGATE,
+	OP_NOT,
+	OP_INC,
+	OP_DEC,
+};
+inline const char* OpType_str[] = {
+	"=",
+
+	"+",
+	"-",
+	"*",
+	"/",
+	"%",
+
+	"<",
+	"<=",
+	">",
+	">=",
+	"==",
+	"!=",
+
+	"-",
+	"!",
+	"x++",
+	"x--",
+};
+
+inline constexpr OpType tok2binop (TokenType tok) {
+	return (OpType)( tok + (OP_ADD - T_ADD) );
 }
-inline constexpr ASTType tok2unop (TokenType tok) {
+inline constexpr OpType tok2unop (TokenType tok) {
 	assert(tok != T_ADD);
-	if (tok == T_SUB) return A_NEGATE;
+	if (tok == T_SUB) return OP_NEGATE;
 
-	return (ASTType)( tok + (A_NOT - T_NOT) );
+	return (OpType)( tok + (OP_NOT - T_NOT) );
 }
-inline constexpr ASTType tok2assign (TokenType tok) {
-	return (ASTType)( tok + (A_ASSIGN - T_ASSIGN) );
-}
-
-inline constexpr ASTType assignop2binop (ASTType type) {
-	assert(type >= A_ADDEQ && type <= A_REMAINDEREQ);
-	return (ASTType)( type + (A_ADD - A_ADDEQ) );
+inline constexpr OpType tok2assignop (TokenType tok) {
+	return (OpType)( tok + (OP_ASSIGN - T_ASSIGN) );
 }
 
 struct AST {
@@ -316,9 +310,11 @@ struct AST_loop { AST a;
 };
 
 struct AST_unop { AST a;
+	OpType       op;
 	AST*         operand;
 };
 struct AST_binop { AST a;
+	OpType       op;
 	AST*         lhs;
 	AST*         rhs;
 };
@@ -362,16 +358,12 @@ void visit (AST* node, FUNC func) {
 			func(loop->body );
 		} break;
 
-		case A_NEGATE: case A_NOT:
-		case A_INC: case A_DEC: { auto* op = (AST_unop*)node;
+		case A_UNOP: { auto* op = (AST_unop*)node;
 			func(op->operand);
 		} break;
 
-		case A_ADD: case A_SUB: case A_MUL: case A_DIV: case A_REMAINDER:
-		case A_LESS: case A_LESSEQ: case A_GREATER: case A_GREATEREQ:
-		case A_EQUALS: case A_NOT_EQUALS:
-		case A_ASSIGN:
-		case A_ADDEQ: case A_SUBEQ: case A_MULEQ: case A_DIVEQ: case A_REMAINDEREQ: {
+		case A_BINOP:
+		case A_ASSIGNOP: {
 			auto* op = (AST_binop*)node;
 			func(op->lhs);
 			func(op->rhs);
@@ -446,6 +438,17 @@ void dbg_print (AST* node, int depth=0) {
 		case A_BREAK:
 		case A_CONTINUE: {
 			printf("\n");
+		} break;
+
+		case A_UNOP: { auto* op = (AST_unop*)node;
+			printf("(%s)", OpType_str[op->op]);
+			children = true;
+		} break;
+
+		case A_BINOP: 
+		case A_ASSIGNOP: { auto* op = (AST_binop*)node;
+			printf("(%s)", OpType_str[op->op]);
+			children = true;
 		} break;
 
 		default:
@@ -565,7 +568,8 @@ struct Parser {
 
 		if (is_unary_prefix_op(tok->type)) {
 			unsigned prec = un_prec(tok->type);
-			auto* unary_op = ast_alloc<AST_unop>(tok2unop(tok->type), tok);
+			auto* unary_op = ast_alloc<AST_unop>(A_UNOP, tok);
+			unary_op->op = tok2unop(tok->type);
 			tok++;
 
 			unary_op->operand = expression(prec);
@@ -581,7 +585,8 @@ struct Parser {
 			if (prec < min_prec)
 				return lhs;
 
-			auto* post_op = ast_alloc<AST_unop>(tok2unop(tok->type), tok);
+			auto* post_op = ast_alloc<AST_unop>(A_UNOP, tok);
+			post_op->op = tok2unop(tok->type);
 			tok++;
 
 			post_op->operand = lhs;
@@ -605,7 +610,7 @@ struct Parser {
 					throw_error_after("syntax error: ':' expected after true case of select operator", tok[-1]);
 				tok++;
 
-				auto* op = ast_alloc<AST_if>(tok2btop(op_tok->type), op_tok);
+				auto* op = ast_alloc<AST_if>(A_SELECT, op_tok);
 				op->cond     = lhs;
 				op->if_body  = rhs;
 
@@ -615,8 +620,8 @@ struct Parser {
 				lhs = (AST*)op;
 			}
 			else {
-				auto* op = ast_alloc<AST_binop>(tok2btop(op_tok->type), op_tok);
-
+				auto* op = ast_alloc<AST_binop>(A_BINOP, op_tok);
+				op->op = tok2binop(op_tok->type);
 				op->lhs = lhs;
 				op->rhs = rhs;
 				lhs = (AST*)op;
@@ -674,7 +679,8 @@ struct Parser {
 			if (lhs->type == A_VARDECL && tok->type != T_ASSIGN)
 				throw_error("syntax error: cannot modify variable during declaration", *tok);
 
-			auto* op = ast_alloc<AST_binop>(tok2assign(tok->type), tok);
+			auto* op = ast_alloc<AST_binop>(A_ASSIGNOP, tok);
+			op->op = tok2assignop(tok->type);
 			tok++;
 
 			AST* rhs = expression(0);

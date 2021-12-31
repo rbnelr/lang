@@ -2,6 +2,7 @@
 #include "errors.hpp"
 #include "tokenizer.hpp"
 #include "parser.hpp"
+#include "resolver.hpp"
 #include "ir_gen.hpp"
 #include "ir_opt.hpp"
 #include "codegen.hpp"

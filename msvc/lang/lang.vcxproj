@@ -153,6 +153,7 @@
     <ClInclude Include="..\..\ir_gen.hpp" />
     <ClInclude Include="..\..\options.hpp" />
     <ClInclude Include="..\..\parser.hpp" />
+    <ClInclude Include="..\..\resolver.hpp" />
     <ClInclude Include="..\..\tokenizer.hpp" />
     <ClInclude Include="..\..\basic_types.hpp" />
     <ClInclude Include="..\..\util\console_colors.hpp" />

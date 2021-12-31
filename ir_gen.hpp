@@ -1,304 +1,198 @@
 #pragma once
 #include "common.hpp"
 #include "parser.hpp"
-#include "builtins.hpp"
-
-struct ScopedIdentifer {
-	size_t     scope;
-	strview    ident;
-};
-
-_FORCEINLINE bool operator== (ScopedIdentifer const& l, ScopedIdentifer const& r) {
-	return l.scope == r.scope && l.ident == r.ident;
-}
-template<> struct std::hash<ScopedIdentifer> {
-	_FORCEINLINE std::size_t operator()(ScopedIdentifer const& i) const noexcept {
-		return MurmurHash64A(i.ident.data(), i.ident.size(), (uint64_t)i.scope);
-	}
-};
-
-struct IdentiferStack {
-	// scope_idx, identifer -> vardef or funcdef AST
-	std::unordered_map<ScopedIdentifer, AST*> ident_map;
-
-	std::vector<strview> vars_stack;
-	std::vector<strview> funcs_stack;
-
-	size_t scope_id = 0;
-
-	struct Scope {
-		// index of first variable of each scope in <vars_stack>
-		size_t vars_base;
-		// index of first variable of each scope in <funcs_stack>
-		size_t funcs_base;
-		// 
-		size_t func_vars_base;
-		size_t func_scope_id;
-	};
-	Scope cur_scope = {0,0,0};
-
-	Scope push_scope (bool func_scope=false) {
-		Scope old_scope = cur_scope;
-
-		scope_id++;
-
-		cur_scope.vars_base  = vars_stack .size();
-		cur_scope.funcs_base = funcs_stack.size();
-
-		if (func_scope) {
-			cur_scope.func_vars_base = cur_scope.vars_base;
-			cur_scope.func_scope_id = scope_id;
-		}
-
-		return old_scope;
-	}
-	void reset_scope (Scope& old_scope, bool func_scope=false) {
-		assert(scope_id > 0);
-
-		for (size_t i=cur_scope.vars_base; i<vars_stack.size(); ++i) {
-			ident_map.erase({ scope_id, vars_stack[i] });
-		}
-		for (size_t i=cur_scope.funcs_base; i<funcs_stack.size(); ++i) {
-			ident_map.erase({ scope_id, funcs_stack[i] });
-		}
-
-		vars_stack .resize(cur_scope.vars_base);
-		funcs_stack.resize(cur_scope.funcs_base);
-
-		scope_id--;
-		cur_scope = old_scope;
-	}
-
-	void declare_ident (AST* ast, strview const& ident) {
-		auto res = ident_map.try_emplace(ScopedIdentifer{ scope_id, ident }, ast);
-		if (!res.second)
-			throw CompilerExcept{"error: identifer already declared in this scope", ast->src_tok->source}; // TODO: print declaration of that identifer
-	}
-
-	void declare_var (AST_vardecl* var) {
-		declare_ident((AST*)var, var->ident);
-
-		vars_stack.emplace_back(var->ident);
-	}
-	void declare_func (AST_funcdef* func) {
-		declare_ident((AST*)func, func->decl.ident);
-
-		funcs_stack.emplace_back(func->decl.ident);
-	}
-
-	AST* resolve_ident (AST* node, strview const& ident, size_t min_scope) {
-		assert(scope_id > 0);
-
-		for (size_t i=scope_id; ; i--) {
-			auto it = ident_map.find({ i, ident });
-			if (it != ident_map.end())
-				return it->second;
-
-			if (i == min_scope)
-				break;
-		}
-		throw CompilerExcept{"error: unknown identifer", node->src_tok->source};
-	}
-	void resolve_var (AST_var* var) {
-		// min_scope = func_scope_id, functions can only access their own variables
-		AST* ast = resolve_ident((AST*)var, var->ident, cur_scope.func_scope_id);
-		if (ast->type != A_VARDECL)
-			throw CompilerExcept{"error: identifer was not declared as variable", var->a.src_tok->source};
-
-		var->decl = (AST_vardecl*)ast;
-	}
-
-	void resolve_func_call (AST_call* call) {
-		// min_scope = 0, functions can call all functions visible to them
-		AST* ast = resolve_ident((AST*)call, call->ident, 0);
-		if (!(ast->type == A_FUNCDEF || ast->type == A_FUNCDEF_BUILTIN))
-			throw CompilerExcept{"error: identifer was not declared as function", call->a.src_tok->source};
-		
-		call->fdef = ast;
-	}
-};
-
-void match_call_args (AST_call* call, AST_funcdecl const& fdef) {
-	AST* declarg = fdef.args;
-	AST* callarg = call->args;
-
-	for (size_t i=0; ; i++) {
-		if (!declarg && !callarg) {
-			// argument lists match
-			return;
-		}
-
-		if (!declarg) // no more args in func
-			throw CompilerExcept{"error: too many arguments to function", call->a.src_tok->source};
-
-		if (declarg->type == A_VARARGS) {
-			// last func arg is varargs, any number of remaining call args match (including 0)
-			assert(!declarg->next);
-			return;
-		}
-
-		assert(declarg->type == A_VARDECL);
-
-		if (!callarg) // no args left in call
-			throw CompilerExcept{"error: too few arguments to function", call->a.src_tok->source};
-
-		if (callarg->valtype != declarg->valtype)
-			throw CompilerExcept{"error: call argument type mismatch", callarg->src_tok->source};
-
-		declarg = declarg->next;
-		callarg = callarg->next;
-	}
-}
-
-struct IdentResolver {
-	IdentiferStack stack;
-
-	std::vector<AST_funcdef*> funcs;
-
-	void resolve (AST* root) {
-		for (AST_funcdef_builtin const* f : BUILTIN_FUNCS)
-			stack.declare_func((AST_funcdef*)f); // cast is safe
-
-		{
-			AST_funcdef* module_main = ast_alloc<AST_funcdef>(A_FUNCDEF, root->src_tok);
-			module_main->decl.ident = "main";
-			module_main->decl.retc = 0;
-			module_main->decl.rets = nullptr;
-			module_main->decl.argc = 0;
-			module_main->decl.args = nullptr;
-			module_main->body = root;
-
-			funcs.emplace_back(module_main);
-		}
-
-		recurse(root);
-	}
-
-	void recurse (AST* node) {
-		switch (node->type) {
-
-			case A_LITERAL: {
-				auto* lit = (AST_literal*)node;
-			} break;
-
-			case A_VARDECL: {
-				auto* vardecl = (AST_vardecl*)node;
-				stack.declare_var(vardecl);
-			} break;
-
-			case A_VAR: {
-				auto* var = (AST_var*)node;
-				stack.resolve_var(var);
-				node->valtype = var->decl->a.valtype;
-			} break;
-
-			case A_ASSIGN:
-			case A_ADDEQ: case A_SUBEQ: case A_MULEQ: case A_DIVEQ: case A_REMAINDEREQ: {
-				auto* op = (AST_binop*)node;
-				recurse(op->lhs);
-				recurse(op->rhs);
-
-				if (op->lhs->type == A_VARDECL) {
-					assert(node->type == A_ASSIGN);
-
-					if (op->lhs->valtype == VOID) {
-						if (op->rhs->valtype == VOID) {
-							assert(op->rhs->type == A_CALL); // everything on the rhs of assignments except calls should have a resolved type
-							throw CompilerExcept{"error: assignment: can't assign void return type", op->a.src_tok->source};
-						}
-						op->lhs->valtype = op->rhs->valtype;
-					}
-					else {
-						if (op->lhs->valtype != op->rhs->valtype)
-							throw CompilerExcept{"error: variable declaration assignment: types do not match", op->a.src_tok->source};
-					}
-				}
-				else {
-					if (op->lhs->valtype != op->rhs->valtype)
-						throw CompilerExcept{"error: assignment: types do not match", op->a.src_tok->source};
-				}
-			} break;
-
-			case A_CALL: {
-				auto* call = (AST_call*)node;
-				stack.resolve_func_call(call);
-
-				for (auto* n=call->args; n != nullptr; n = n->next)
-					recurse(n);
-
-				auto* funcdef = (AST_funcdef*)call->fdef;
-				match_call_args(call, funcdef->decl);
-				call->a.valtype = funcdef->decl.retc > 0 ? funcdef->decl.rets->valtype : VOID;
-			} break;
-
-			case A_NEGATE: case A_NOT:
-			case A_INC: case A_DEC: {
-				auto* op = (AST_unop*)node;
-				recurse(op->operand);
-				op->a.valtype = op->operand->valtype;
-			} break;
-
-			case A_ADD: case A_SUB: case A_MUL: case A_DIV: case A_REMAINDER:
-			case A_LESS: case A_LESSEQ: case A_GREATER: case A_GREATEREQ:
-			case A_EQUALS: case A_NOT_EQUALS: {
-				auto* op = (AST_binop*)node;
-				recurse(op->lhs);
-				recurse(op->rhs);
-
-				if (op->lhs->valtype != op->rhs->valtype)
-					throw CompilerExcept{"error: binary operator: types do not match", op->a.src_tok->source};
-				
-				op->a.valtype = op->lhs->valtype;
-			} break;
-
-			case A_IF:
-			case A_SELECT: {
-				auto* aif = (AST_if*)node;
-
-				visit(node, [this] (AST* node) { recurse(node); });
-
-				if (node->type == A_SELECT) {
-					if (aif->if_body->valtype != aif->else_body->valtype)
-						throw CompilerExcept{"error: select expression: types do not match", aif->a.src_tok->source};
-					aif->a.valtype = aif->if_body->valtype;
-				}
-			} break;
-
-			case A_BLOCK:
-			case A_LOOP:
-			case A_FUNCDEF: {
-				bool is_func_scope = node->type == A_FUNCDEF;
-
-				auto old_scope = stack.push_scope(is_func_scope);
-
-				visit(node, [this] (AST* n) {
-					if (n->type == A_FUNCDEF) {
-						auto* def = (AST_funcdef*)n;
-						stack.declare_func(def);
-						funcs.emplace_back(def);
-					}
-				});
-				visit(node, [this] (AST* node) { recurse(node); });
-
-				stack.reset_scope(old_scope, is_func_scope);
-			} break;
-
-			case A_RETURN:
-			case A_BREAK:
-			case A_CONTINUE: {
-				// nothing to resolve
-			} break;
-
-			default: {
-				assert(false);
-				_UNREACHABLE;
-			}
-		}
-	}
-};
 
 namespace IR {
 
+enum IROpType {
+	OP_NONE=0,
+
+	//// Bools
+	// binary
+	OP_b_EQ,
+	OP_b_NEQ,
+	// unary
+	OP_b_NOT,
+
+	//// Ints
+	// binary
+	OP_i_ADD,
+	OP_i_SUB,
+	OP_i_MUL,
+	OP_i_DIV,
+	OP_i_REMAIND,
+
+	OP_i_LT,
+	OP_i_LE,
+	OP_i_GT,
+	OP_i_GE,
+	OP_i_EQ,
+	OP_i_NEQ,
+
+	// unary
+	OP_i_NEG,
+	OP_i_NOT,
+	OP_i_INC,
+	OP_i_DEC,
+
+	//// Floats
+	// binary
+	OP_f_ADD,
+	OP_f_SUB,
+	OP_f_MUL,
+	OP_f_DIV,
+
+	OP_f_LT,
+	OP_f_LE,
+	OP_f_GT,
+	OP_f_GE,
+	OP_f_EQ,
+	OP_f_NEQ,
+
+	// unary
+	OP_f_NEG,
+};
+inline const char* IROpType_str[] = {
+	"",
+
+	//// Bools
+	// binary
+	"b_EQ",
+	"b_NEQ",
+	// unary
+	"b_NOT",
+
+	//// Ints
+	// binary
+	"i_ADD",
+	"i_SUB",
+	"i_MUL",
+	"i_DIV",
+	"i_REMAIND",
+
+	"i_LT",
+	"i_LE",
+	"i_GT",
+	"i_GE",
+	"i_EQ",
+	"i_NEQ",
+
+	// unary
+	"i_NEGATE",
+	"i_NOT",
+	"i_INC",
+	"i_DEC",
+
+	//// Floats
+	// binary
+	"f_ADD",
+	"f_SUB",
+	"f_MUL",
+	"f_DIV",
+
+	"f_LT",
+	"f_LE",
+	"f_GT",
+	"f_GE",
+	"f_EQ",
+	"f_NEQ",
+
+	// unary
+	"f_NEG",
+};
+
+IROpType unary2ir (AST* ast, OpType op, Type type) {
+	switch (op) {
+		case OP_NEGATE: {
+			switch (type) {
+				case INT: return OP_i_NEG;
+				case FLT: return OP_f_NEG;
+				default: throw CompilerExcept{"error: negate is not valid for type", ast->src_tok->source};
+			}
+		}
+		case OP_NOT: {
+			switch (type) {
+				case INT : return OP_i_NOT;
+				case BOOL: return OP_b_NOT;
+				default: throw CompilerExcept{"error: not is not valid for type", ast->src_tok->source};
+			}
+		}
+		case OP_INC: {
+			switch (type) {
+				case INT : return OP_i_INC;
+				default: throw CompilerExcept{"error: increment is not valid for type", ast->src_tok->source};
+			}
+		}
+		case OP_DEC: {
+			switch (type) {
+				case INT : return OP_i_DEC;
+				default: throw CompilerExcept{"error: decrement is not valid for type", ast->src_tok->source};
+			}
+		}
+		INVALID_DEFAULT;
+	}
+}
+IROpType binary2ir (AST* ast, OpType op, Type type) {
+	switch (type) {
+		case INT: {
+			switch (op) {
+				case OP_ADD:        return OP_i_ADD;
+				case OP_SUB:        return OP_i_SUB;
+				case OP_MUL:        return OP_i_MUL;
+				case OP_DIV:        return OP_i_DIV;
+				case OP_REMAINDER:  return OP_i_REMAIND;
+				case OP_LESS:       return OP_i_LT;
+				case OP_LESSEQ:     return OP_i_LE;
+				case OP_GREATER:    return OP_i_GT;
+				case OP_GREATEREQ:  return OP_i_GE;
+				case OP_EQUALS:     return OP_i_EQ;
+				case OP_NOT_EQUALS: return OP_i_NEQ;
+				INVALID_DEFAULT;
+			}
+		} break;
+		case BOOL: {
+			switch (op) {
+				case OP_ADD:        return OP_i_ADD;
+				case OP_SUB:        return OP_i_SUB;
+				case OP_MUL:        return OP_i_MUL;
+				case OP_DIV:        return OP_i_DIV;
+				case OP_REMAINDER:  return OP_i_REMAIND;
+					throw CompilerExcept{ "error: math ops not valid for this type", ast->src_tok->source };
+
+				case OP_LESS:       return OP_i_LT;
+				case OP_LESSEQ:     return OP_i_LE;
+				case OP_GREATER:    return OP_i_GT;
+				case OP_GREATEREQ:  return OP_i_GE;
+					throw CompilerExcept{ "error: can't compare bools like that", ast->src_tok->source };
+
+				case OP_EQUALS:     return OP_b_EQ; 
+				case OP_NOT_EQUALS: return OP_b_NEQ;
+				INVALID_DEFAULT;
+			}
+		} break;
+		case FLT: {
+			switch (op) {
+				case OP_REMAINDER:
+					throw CompilerExcept{ "error: remainder operator not valid for floats", ast->src_tok->source };
+				case OP_ADD:        return OP_f_ADD;
+				case OP_SUB:        return OP_f_SUB;
+				case OP_MUL:        return OP_f_MUL;
+				case OP_DIV:        return OP_f_DIV;
+				case OP_LESS:       return OP_f_LT;
+				case OP_LESSEQ:     return OP_f_LE;
+				case OP_GREATER:    return OP_f_GT;
+				case OP_GREATEREQ:  return OP_f_GE;
+				case OP_EQUALS:     return OP_f_EQ;
+				case OP_NOT_EQUALS: return OP_f_NEQ;
+				INVALID_DEFAULT;
+			}
+		} break;
+		default:
+			throw CompilerExcept{ "error: math ops not valid for this type", ast->src_tok->source };
+	}
+}
+
+	
 enum VarType : uint8_t {
 	VT_UNDEFINED=0, // unused operand
 	VT_CONST,     // operand is a constant (codegen will try to turn into into a imm if possible)
@@ -313,7 +207,7 @@ struct Var {
 	size_t   id;
 };
 
-enum Type : uint8_t {
+enum NodeType : uint8_t {
 	DEAD,     // eliminated by dead code elimination
 
 	LABEL,    // used to mark places the jumps go to
@@ -355,7 +249,8 @@ static inline constexpr const char* Type_str[] = {
 };
 
 struct Instruction {
-	Type type;
+	NodeType type;
+	IROpType op;
 
 	Var  dst = { VT_UNDEFINED, 0 }; // dst.id is label id for jumps (type ignored)
 	Var  lhs = { VT_UNDEFINED, 0 };
@@ -391,9 +286,10 @@ struct IR {
 
 	std::vector<Instruction> code;
 
-	size_t emit (Type type, AST* ast=nullptr, Var dst={}, Var lhs={}, Var rhs={}) {
+	size_t emit (NodeType type, AST* ast=nullptr, Var dst={}, Var lhs={}, Var rhs={}, IROpType optype=OP_NONE) {
 		auto& instr = code.emplace_back();
 		instr.type = type;
+		instr.op  = optype;
 		instr.dst = dst;
 		instr.lhs = lhs;
 		instr.rhs = rhs;
@@ -423,11 +319,11 @@ struct IR {
 			std::string str;
 			switch (var.type) {
 				case VT_UNDEFINED: str = ""; break;
-				case VT_CONST:     str = prints("%llx",   var.id); break;
-				case VT_TEMPID:    str = prints("_t%llu", var.id); break;
-				case VT_VARID:     str = prints("v%llu",  var.id); break;
-				case VT_LABELID:   str = prints("L%llu",  var.id); break;
-				case VT_ARGID:     str = prints("arg%llu",   var.id); break;
+				case VT_CONST:     str = prints("%llx",    var.id); break;
+				case VT_TEMPID:    str = prints("_t%llu",  var.id); break;
+				case VT_VARID:     str = prints("v%llu",   var.id); break;
+				case VT_LABELID:   str = prints("L%llu",   var.id); break;
+				case VT_ARGID:     str = prints("arg%llu", var.id); break;
 			}
 			printf(pad ? " %16s" : "%s", str.c_str());
 		};
@@ -547,155 +443,79 @@ struct IRGen {
 				auto* vardecl = (AST_vardecl*)var->decl;
 				return { vardecl->var_is_arg ? VT_ARGID : VT_VARID, vardecl->var_id };
 			}
-
-			case A_NEGATE: case A_NOT: {
+			
+			case A_UNOP: {
 				auto* op = (AST_unop*)ast;
 
-				Var operand = IRgen(ir, op->operand);
+				auto optype = unary2ir(ast, op->op, ast->valtype);
 
-				/*
-				Opcode opc;
-				switch (ast->type) {
-				case A_NEGATE: {
-				switch (op->operand->valtype) {
-				case INT: opc = OP_NEG; break;
-				case FLT: opc = OP_FNEG; break;
-				default: throw CompilerExcept{"error: negate is not valid for type", ast->source};
-				}
-				} break;
-				case A_NOT: {
-				switch (op->operand->valtype) {
-				case INT : opc = OP_NOT; break;
-				case BOOL: opc = OP_NOT; break;
-				default: throw CompilerExcept{"error: not is not valid for type", ast->source};
-				}
-				} break;
-				}*/
+				switch (op->op) {
+					case OP_NEGATE: case OP_NOT: {
+						Var operand = IRgen(ir, op->operand);
 
-				Var tmp = { VT_TEMPID, ir.temp_count++ };
-				ir.emit(UNOP, ast, tmp, operand);
-				return tmp;
+						Var tmp = { VT_TEMPID, ir.temp_count++ };
+
+						ir.emit(UNOP, ast, tmp, operand, {}, optype);
+						return tmp;
+					}
+
+					case OP_INC: case OP_DEC: {
+						assert(op->operand->type == A_VAR);
+						auto* oper_var = (AST_var*)op->operand;
+						auto* oper_decl = (AST_vardecl*)oper_var->decl;
+
+						Var var = { VT_VARID, oper_decl->var_id };
+
+						Var tmp = { VT_TEMPID, ir.temp_count++ };
+						ir.emit(MOVE, ast, tmp, var); // copy old var value
+						ir.emit(UNOP, ast, var, var, {}, optype); // inc/dec var
+						return tmp;
+					}
+				}
 			}
 
-			case A_INC: case A_DEC: {
-				auto* op = (AST_unop*)ast;
-
-				assert(op->operand->type == A_VAR);
-				auto* oper_var = (AST_var*)op->operand;
-				auto* oper_decl = (AST_vardecl*)oper_var->decl;
-
-				Var var = { VT_VARID, oper_decl->var_id };
-
-				Var tmp = { VT_TEMPID, ir.temp_count++ };
-				ir.emit(MOVE, ast, tmp, var); // copy old var value
-				ir.emit(UNOP, ast, var, var); // inc/dec var
-				return tmp;
-			}
-
-			case A_ADD: case A_SUB: case A_MUL: case A_DIV: case A_REMAINDER:
-			case A_LESS: case A_LESSEQ: case A_GREATER: case A_GREATEREQ:
-			case A_EQUALS: case A_NOT_EQUALS: {
+			case A_BINOP: {
 				auto* op = (AST_binop*)ast;
+
+				assert(op->lhs->valtype == op->rhs->valtype);
+				auto optype = binary2ir(ast, op->op, op->lhs->valtype);
 
 				Var lhs = IRgen(ir, op->lhs);
 				Var rhs = IRgen(ir, op->rhs);
 
 				assert(op->lhs->valtype == op->rhs->valtype);
 
-				/*
-				switch (op->lhs->valtype) {
-				case INT: {
-				switch (node->type) {
-				case A_ADD: case A_SUB: case A_MUL: case A_DIV: case A_REMAINDER:
-				opc = (Opcode)(node->type + (OP_ADD - A_ADD));
-				break;
-				case A_LESS:       opc = OP_LT;                 break;
-				case A_LESSEQ:     opc = OP_LTE;                break;
-				case A_GREATER:    opc = OP_LTE;  flip = true;  break;
-				case A_GREATEREQ:  opc = OP_LT;   flip = true;  break;
-				case A_EQUALS:     opc = OP_EQ;                 break;
-				case A_NOT_EQUALS: opc = OP_NEQ;                break;
-				default: assert(false);
-				}
-				} break;
-				case BOOL: {
-				switch (node->type) {
-				case A_ADD: case A_SUB: case A_MUL: case A_DIV: case A_REMAINDER:
-				throw CompilerExcept{"error: math ops not valid for this type", node->source};
-				case A_LESS:     
-				case A_LESSEQ:   
-				case A_GREATER:  
-				case A_GREATEREQ:
-				throw CompilerExcept{"error: can't compare bools like that", node->source};
-
-				case A_EQUALS:     opc = OP_EQ;                 break;
-				case A_NOT_EQUALS: opc = OP_NEQ;                break;
-				default: assert(false);
-				}
-				} break;
-				case FLT: {
-				switch (node->type) {
-				case A_ADD: case A_SUB: case A_MUL: case A_DIV:
-				opc = (Opcode)(node->type + (OP_FADD - A_ADD));
-				break;
-				case A_REMAINDER:
-				throw CompilerExcept{"error: remainder operator not valid for floats", node->source};
-				case A_LESS:       opc = OP_FLT;                 break;
-				case A_LESSEQ:     opc = OP_FLTE;                break;
-				case A_GREATER:    opc = OP_FLT;   flip = true;  break;
-				case A_GREATEREQ:  opc = OP_FLTE;  flip = true;  break;
-				case A_EQUALS:     opc = OP_FEQ;                 break;
-				case A_NOT_EQUALS: opc = OP_FNEQ;                break;
-				default: assert(false);
-				}
-				} break;
-				default:
-				throw CompilerExcept{"error: math ops not valid for this type", node->source};
-				}*/
-
 				Var tmp = { VT_TEMPID, ir.temp_count++ };
-				ir.emit(BINOP, ast, tmp, lhs, rhs);
+				ir.emit(BINOP, ast, tmp, lhs, rhs, optype);
 				return tmp;
 			}
 
-			case A_ADDEQ: case A_SUBEQ: case A_MULEQ: case A_DIVEQ: case A_REMAINDEREQ: {
+			case A_ASSIGNOP: {
 				auto* op = (AST_binop*)ast;
 
-				assert(op->lhs->type == A_VAR);
-				auto* lhs_var = (AST_var*)op->lhs;
-				auto* lhs_decl = (AST_vardecl*)lhs_var->decl;
+				if (op->op == OP_ASSIGN) {
+					auto* op = (AST_binop*)ast;
 
-				Var var = { VT_VARID, lhs_decl->var_id };
-				Var rhs = IRgen(ir, op->rhs);
+					Var dst = IRgen(ir, op->lhs);
+					Var var = IRgen(ir, op->rhs);
 
-				/*
-				if (op->lhs->valtype != op->rhs->valtype)
-				throw CompilerExcept{"error: compund assignment operator: types do not match", op->a.source};
-
-				Opcode opc;
-				switch (op->lhs->valtype) {
-				case INT: opc = OP_ADD; break;
-				case FLT: opc = OP_FADD; break;
-				default:
-				throw CompilerExcept{"error: math ops not valid for this type", ast->source};
+					ir.emit(MOVE, ast, dst, var);
+					return {};
 				}
+				else {
+					assert(op->lhs->valtype == op->rhs->valtype);
+					auto optype = binary2ir(ast, op->op, op->lhs->valtype);
 
-				if (op->lhs->valtype == FLT && ast->type == A_REMAINDEREQ)
-				throw CompilerExcept{"error: remainder operator not valid for floats", ast->source};
-				*/
+					assert(op->lhs->type == A_VAR);
+					auto* lhs_var = (AST_var*)op->lhs;
+					auto* lhs_decl = (AST_vardecl*)lhs_var->decl;
 
-				ir.emit(BINOP, ast, var, var, rhs);
-				return {};
-			}
+					Var var = { VT_VARID, lhs_decl->var_id };
+					Var rhs = IRgen(ir, op->rhs);
 
-			case A_ASSIGN: {
-				auto* op = (AST_binop*)ast;
-
-				Var dst = IRgen(ir, op->lhs);
-				Var var = IRgen(ir, op->rhs);
-
-				ir.emit(MOVE, ast, dst, var);
-				return {};
+					ir.emit(BINOP, ast, var, var, rhs, optype);
+					return {};
+				}
 			}
 
 			case A_BLOCK: {

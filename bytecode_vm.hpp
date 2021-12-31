@@ -68,42 +68,42 @@ _NOINLINE void _execute (Instruction* code, size_t code_sz, intptr_t* stack, siz
 	#define FDST (assert(frame_ptr + dst_val < stack_end), *(double*)(frame_ptr + dst_val))
 
 		switch (op.code) {
-			case OP_NOP: {
+			case OPC_NOP: {
 
 			} continue;
 
-			case OP_SPUSH: {
+			case OPC_SPUSH: {
 				PUSHN(dst_val);
 			} continue;
-			case OP_SPOP: {
+			case OPC_SPOP: {
 				POPN(dst_val);
 			} continue;
 
-			case OP_PUSH: {
+			case OPC_PUSH: {
 				PUSH(SRC);
 			} continue;
-			case OP_PUSH | OP_IMM: {
+			case OPC_PUSH | OPC_IMM: {
 				PUSH(src_val);
 			} continue;
-			case OP_POP: {
+			case OPC_POP: {
 				DST = POP();
 			} continue;
 
-			case OP_MOV: {
+			case OPC_MOV: {
 				DST = SRC;
 			} continue;
-			case OP_MOV | OP_IMM: {
+			case OPC_MOV | OPC_IMM: {
 				DST = src_val;
 			} continue;
 
-			case OP_CALLB: {
+			case OPC_CALLB: {
 				auto* builtin_func = (builtin_func_t)dst_val;
 				auto* argptr = (Value*)(stack_ptr-1);
 
 				builtin_func(argptr);
 			} continue;
 
-			case OP_CALL: {
+			case OPC_CALL: {
 				PUSH((intptr_t)frame_ptr);
 				PUSH((intptr_t)program_counter);
 
@@ -111,7 +111,7 @@ _NOINLINE void _execute (Instruction* code, size_t code_sz, intptr_t* stack, siz
 				program_counter = dst_val + code;
 			} continue;
 
-			case OP_RET: {
+			case OPC_RET: {
 				program_counter = (Instruction*)POP();
 				frame_ptr       = (intptr_t*)   POP();
 
@@ -119,80 +119,80 @@ _NOINLINE void _execute (Instruction* code, size_t code_sz, intptr_t* stack, siz
 					goto return_main;
 			} continue;
 
-			case OP_JMP: {
+			case OPC_JMP: {
 				program_counter     = dst_val + code;
 			} continue;
-			case OP_JNZ: {
+			case OPC_JNZ: {
 				if (SRC != 0)
 					program_counter = dst_val + code;
 			} continue;
-			case OP_JZ: {
+			case OPC_JZ: {
 				if (SRC == 0)
 					program_counter = dst_val + code;
 			} continue;
 
-			case OP_NEG: {
+			case OPC_NEG: {
 				auto& i = DST;
 				i = -i;
 			} continue;
-			case OP_NOT: {
+			case OPC_NOT: {
 				auto& i = DST;
 				i = !i;
 			} continue;
 
-			case OP_INC              : DST++;                                      continue;
-			case OP_DEC              : DST--;                                      continue;
+			case OPC_INC              : DST++;                                      continue;
+			case OPC_DEC              : DST--;                                      continue;
 
-			case OP_ADD              : DST += SRC;                                 continue;
-			case OP_SUB              : DST -= SRC;                                 continue;
-			case OP_MUL              : DST *= SRC;                                 continue;
-			case OP_DIV              : DST /= SRC;                                 continue;
-			case OP_REMAIND          : DST %= SRC;                                 continue;
-			case OP_ADD     | OP_IMM : DST += (int64_t)src_val;                    continue;
-			case OP_SUB     | OP_IMM : DST -= (int64_t)src_val;                    continue;
-			case OP_MUL     | OP_IMM : DST *= (int64_t)src_val;                    continue;
-			case OP_DIV     | OP_IMM : DST /= (int64_t)src_val;                    continue;
-			case OP_REMAIND | OP_IMM : DST %= (int64_t)src_val;                    continue;
+			case OPC_ADD              : DST += SRC;                                 continue;
+			case OPC_SUB              : DST -= SRC;                                 continue;
+			case OPC_MUL              : DST *= SRC;                                 continue;
+			case OPC_DIV              : DST /= SRC;                                 continue;
+			case OPC_REMAIND          : DST %= SRC;                                 continue;
+			case OPC_ADD     | OPC_IMM : DST += (int64_t)src_val;                    continue;
+			case OPC_SUB     | OPC_IMM : DST -= (int64_t)src_val;                    continue;
+			case OPC_MUL     | OPC_IMM : DST *= (int64_t)src_val;                    continue;
+			case OPC_DIV     | OPC_IMM : DST /= (int64_t)src_val;                    continue;
+			case OPC_REMAIND | OPC_IMM : DST %= (int64_t)src_val;                    continue;
 
-			case OP_LT               : DST = (int64_t)(DST <  SRC);                continue;
-			case OP_LTE              : DST = (int64_t)(DST <= SRC);                continue;
-			case OP_GT               : DST = (int64_t)(DST >  SRC);                continue;
-			case OP_GTE              : DST = (int64_t)(DST >= SRC);                continue;
-			case OP_EQ               : DST = (int64_t)(DST == SRC);                continue;
-			case OP_NEQ              : DST = (int64_t)(DST != SRC);                continue;
-			case OP_LT      | OP_IMM : DST = (int64_t)(DST <  (int64_t)src_val);   continue;
-			case OP_LTE     | OP_IMM : DST = (int64_t)(DST <= (int64_t)src_val);   continue;
-			case OP_GT      | OP_IMM : DST = (int64_t)(DST >  (int64_t)src_val);   continue;
-			case OP_GTE     | OP_IMM : DST = (int64_t)(DST >= (int64_t)src_val);   continue;
-			case OP_EQ      | OP_IMM : DST = (int64_t)(DST == (int64_t)src_val);   continue;
-			case OP_NEQ     | OP_IMM : DST = (int64_t)(DST != (int64_t)src_val);   continue;
+			case OPC_LT               : DST = (int64_t)(DST <  SRC);                continue;
+			case OPC_LE               : DST = (int64_t)(DST <= SRC);                continue;
+			case OPC_GT               : DST = (int64_t)(DST >  SRC);                continue;
+			case OPC_GE               : DST = (int64_t)(DST >= SRC);                continue;
+			case OPC_EQ               : DST = (int64_t)(DST == SRC);                continue;
+			case OPC_NEQ              : DST = (int64_t)(DST != SRC);                continue;
+			case OPC_LT      | OPC_IMM : DST = (int64_t)(DST <  (int64_t)src_val);   continue;
+			case OPC_LE      | OPC_IMM : DST = (int64_t)(DST <= (int64_t)src_val);   continue;
+			case OPC_GT      | OPC_IMM : DST = (int64_t)(DST >  (int64_t)src_val);   continue;
+			case OPC_GE      | OPC_IMM : DST = (int64_t)(DST >= (int64_t)src_val);   continue;
+			case OPC_EQ      | OPC_IMM : DST = (int64_t)(DST == (int64_t)src_val);   continue;
+			case OPC_NEQ     | OPC_IMM : DST = (int64_t)(DST != (int64_t)src_val);   continue;
 
-			case OP_FNEG: {
+			case OPC_FNEG: {
 				auto& d = FDST;
 				d = -d;
 			} continue;
 
-			case OP_FADD             : FDST += FSRC;                               continue;
-			case OP_FSUB             : FDST -= FSRC;                               continue;
-			case OP_FMUL             : FDST *= FSRC;                               continue;
-			case OP_FDIV             : FDST /= FSRC;                               continue;
-			case OP_FADD    | OP_IMM : FDST += *(double*)&op.src;                  continue;
-			case OP_FSUB    | OP_IMM : FDST -= *(double*)&op.src;                  continue;
-			case OP_FMUL    | OP_IMM : FDST *= *(double*)&op.src;                  continue;
-			case OP_FDIV    | OP_IMM : FDST /= *(double*)&op.src;                  continue;
+			case OPC_FADD             : FDST += FSRC;                               continue;
+			case OPC_FSUB             : FDST -= FSRC;                               continue;
+			case OPC_FMUL             : FDST *= FSRC;                               continue;
+			case OPC_FDIV             : FDST /= FSRC;                               continue;
+			case OPC_FADD    | OPC_IMM : FDST += *(double*)&op.src;                  continue;
+			case OPC_FSUB    | OPC_IMM : FDST -= *(double*)&op.src;                  continue;
+			case OPC_FMUL    | OPC_IMM : FDST *= *(double*)&op.src;                  continue;
+			case OPC_FDIV    | OPC_IMM : FDST /= *(double*)&op.src;                  continue;
 
-			case OP_FLT              : DST = (int64_t)(FDST <  FSRC);              continue;
-			case OP_FLTE             : DST = (int64_t)(FDST <= FSRC);              continue;
-			case OP_FGT              : DST = (int64_t)(FDST >  FSRC);              continue;
-			case OP_FGTE             : DST = (int64_t)(FDST >= FSRC);              continue;
-			case OP_FEQ              : DST = (int64_t)(FDST == FSRC);              continue;
-			case OP_FNEQ             : DST = (int64_t)(FDST != FSRC);              continue;
-			case OP_FLT     | OP_IMM : DST = (int64_t)(FDST <  *(double*)&op.src); continue;
-			case OP_FLTE    | OP_IMM : DST = (int64_t)(FDST <= *(double*)&op.src); continue;
-			case OP_FGT     | OP_IMM : DST = (int64_t)(FDST >  *(double*)&op.src); continue;
-			case OP_FGTE    | OP_IMM : DST = (int64_t)(FDST >= *(double*)&op.src); continue;
-			case OP_FEQ     | OP_IMM : DST = (int64_t)(FDST == *(double*)&op.src); continue;
-			case OP_FNEQ    | OP_IMM : DST = (int64_t)(FDST != *(double*)&op.src); continue;
+			case OPC_FLT              : DST = (int64_t)(FDST <  FSRC);              continue;
+			case OPC_FLE              : DST = (int64_t)(FDST <= FSRC);              continue;
+			case OPC_FGT              : DST = (int64_t)(FDST >  FSRC);              continue;
+			case OPC_FGE              : DST = (int64_t)(FDST >= FSRC);              continue;
+			case OPC_FEQ              : DST = (int64_t)(FDST == FSRC);              continue;
+			case OPC_FNEQ             : DST = (int64_t)(FDST != FSRC);              continue;
+			case OPC_FLT     | OPC_IMM : DST = (int64_t)(FDST <  *(double*)&op.src); continue;
+			case OPC_FLE     | OPC_IMM : DST = (int64_t)(FDST <= *(double*)&op.src); continue;
+			case OPC_FGT     | OPC_IMM : DST = (int64_t)(FDST >  *(double*)&op.src); continue;
+			case OPC_FGE     | OPC_IMM : DST = (int64_t)(FDST >= *(double*)&op.src); continue;
+			case OPC_FEQ     | OPC_IMM : DST = (int64_t)(FDST == *(double*)&op.src); continue;
+			case OPC_FNEQ    | OPC_IMM : DST = (int64_t)(FDST != *(double*)&op.src); continue;
 
 			default:
 				assert(false);

@@ -36,61 +36,61 @@
 */
 
 enum Opcode : uint32_t {
-	OP_IMM = 1u << 6,
+	OPC_IMM = 1u << 6,
 
-	OP_NOP=0,
+	OPC_NOP=0,
 
-	OP_MOV,   
+	OPC_MOV,   
 
-	OP_SPUSH, 
-	OP_SPOP,  
+	OPC_SPUSH, 
+	OPC_SPOP,  
 
-	OP_PUSH,  
-	OP_POP,   
+	OPC_PUSH,  
+	OPC_POP,   
 
 	// call bytecode function
-	OP_CALL,
+	OPC_CALL,
 	// call builtin (native) function
-	OP_CALLB,
+	OPC_CALLB,
 
-	OP_RET,
+	OPC_RET,
 
-	OP_JMP,     // JUMP DST
-	OP_JNZ,     // JUMP DST, COND     jump if nonzero  
-	OP_JZ,      // JUMP DST, COND     jump if zero     
+	OPC_JMP,     // JUMP DST
+	OPC_JNZ,     // JUMP DST, COND     jump if nonzero  
+	OPC_JZ,      // JUMP DST, COND     jump if zero     
 
-	OP_NEG,    
-	OP_NOT,    
-	OP_INC,    
-	OP_DEC,    
+	OPC_NEG,    
+	OPC_NOT,    
+	OPC_INC,    
+	OPC_DEC,    
 
-	OP_ADD,	   
-	OP_SUB,	   
-	OP_MUL,	   
-	OP_DIV,	   
-	OP_REMAIND,
-	OP_LT,     
-	OP_LTE,    
-	OP_GT,     
-	OP_GTE,    
-	OP_EQ,     
-	OP_NEQ,    
+	OPC_ADD,	   
+	OPC_SUB,	   
+	OPC_MUL,	   
+	OPC_DIV,	   
+	OPC_REMAIND,
+	OPC_LT,     
+	OPC_LE,    
+	OPC_GT,     
+	OPC_GE,    
+	OPC_EQ,     
+	OPC_NEQ,    
 
-	OP_FNEG,
+	OPC_FNEG,
 
-	OP_FADD, 
-	OP_FSUB, 
-	OP_FMUL, 
-	OP_FDIV, 
-	_OP_FREMAIND, // dummy
-	OP_FLT,  
-	OP_FLTE, 
-	OP_FGT,  
-	OP_FGTE, 
-	OP_FEQ,  
-	OP_FNEQ, 
+	OPC_FADD, 
+	OPC_FSUB, 
+	OPC_FMUL, 
+	OPC_FDIV, 
+	_OPC_FREMAIND, // dummy
+	OPC_FLT,  
+	OPC_FLE, 
+	OPC_FGT,  
+	OPC_FGE, 
+	OPC_FEQ,  
+	OPC_FNEQ, 
 
-	_OP_COUNT,
+	_OPC_COUNT,
 };
 inline constexpr const char* Opcode_str[] = {
 	"NOP",  
@@ -141,7 +141,7 @@ inline constexpr const char* Opcode_str[] = {
 	"FNEQ",       
 };
 
-static_assert(_OP_COUNT < OP_IMM, "");
+static_assert(_OPC_COUNT < OPC_IMM, "");
 
 ENUM_BITFLAG_OPERATORS_TYPE(Opcode, uint32_t)
 
@@ -153,81 +153,47 @@ struct Instruction {
 	Instruction (Opcode code, int64_t dst=0, int64_t src=0): code{code}, dst{dst}, src{src} {}
 };
 
-Opcode unary2opcode (AST* ast) {
-	switch (ast->type) {
-		case A_NEGATE: {
-			switch (ast->valtype) {
-				case INT: return OP_NEG;
-				case FLT: return OP_FNEG;
-				INVALID_DEFAULT;
-			}
-		}
-		case A_NOT: {
-			switch (ast->valtype) {
-				case INT : return OP_NOT;
-				case BOOL: return OP_NOT;
-				INVALID_DEFAULT;
-			}
-		}
-		case A_INC: {
-			switch (ast->valtype) {
-				case INT : return OP_INC;
-				INVALID_DEFAULT;
-			}
-		}
-		case A_DEC: {
-			switch (ast->valtype) {
-				case INT : return OP_DEC;
-				INVALID_DEFAULT;
-			}
-		}
+Opcode ir2opcode (IR::IROpType op) {
+	using namespace IR;
+	switch (op) {
+		case OP_b_EQ       : return OPC_EQ ;
+		case OP_b_NEQ      : return OPC_NEQ;
+		case OP_b_NOT      : return OPC_NOT;
+		
+		case OP_i_ADD      : return OPC_ADD    ;
+		case OP_i_SUB      : return OPC_SUB    ;
+		case OP_i_MUL      : return OPC_MUL    ;
+		case OP_i_DIV      : return OPC_DIV    ;
+		case OP_i_REMAIND  : return OPC_REMAIND;
+		
+		case OP_i_LT       : return OPC_LT ;
+		case OP_i_LE       : return OPC_LE ;
+		case OP_i_GT       : return OPC_GT ;
+		case OP_i_GE       : return OPC_GE ;
+		case OP_i_EQ       : return OPC_EQ ;
+		case OP_i_NEQ      : return OPC_NEQ;
+		
+		case OP_i_NEG      : return OPC_NEG;
+		case OP_i_NOT      : return OPC_NOT;
+		case OP_i_INC      : return OPC_INC;
+		case OP_i_DEC      : return OPC_DEC;
+		
+		case OP_f_ADD      : return OPC_FADD;
+		case OP_f_SUB      : return OPC_FSUB;
+		case OP_f_MUL      : return OPC_FMUL;
+		case OP_f_DIV      : return OPC_FDIV;
+		
+		case OP_f_LT       : return OPC_FLT ;
+		case OP_f_LE       : return OPC_FLE ;
+		case OP_f_GT       : return OPC_FGT ;
+		case OP_f_GE       : return OPC_FGE ;
+		case OP_f_EQ       : return OPC_FEQ ;
+		case OP_f_NEQ      : return OPC_FNEQ;
+		
+		case OP_f_NEG      : return OPC_FNEG;
+
 		INVALID_DEFAULT;
 	}
-	return (Opcode)0;
-}
-Opcode binary2opcode (ASTType optype, Type valtype) {
-	switch (valtype) {
-		case INT: {
-			switch (optype) {
-				case A_ADD: case A_ADDEQ:             return OP_ADD;
-				case A_SUB: case A_SUBEQ:             return OP_SUB;
-				case A_MUL: case A_MULEQ:             return OP_MUL;
-				case A_DIV: case A_DIVEQ:             return OP_DIV;
-				case A_REMAINDER: case A_REMAINDEREQ: return OP_REMAIND;
-				case A_LESS:                          return OP_LT;
-				case A_LESSEQ:                        return OP_LTE;
-				case A_GREATER:                       return OP_GT;
-				case A_GREATEREQ:                     return OP_GTE;
-				case A_EQUALS:                        return OP_EQ;
-				case A_NOT_EQUALS:                    return OP_NEQ;
-				INVALID_DEFAULT;
-			}
-		} break;
-		case BOOL: {
-			switch (optype) {
-				case A_EQUALS:     return OP_EQ; 
-				case A_NOT_EQUALS: return OP_NEQ;
-				INVALID_DEFAULT;
-			}
-		} break;
-		case FLT: {
-			switch (optype) {
-				case A_ADD: case A_ADDEQ:             return OP_FADD;
-				case A_SUB: case A_SUBEQ:             return OP_FSUB;
-				case A_MUL: case A_MULEQ:             return OP_FMUL;
-				case A_DIV: case A_DIVEQ:             return OP_FDIV;
-				case A_LESS:                          return OP_FLT;
-				case A_LESSEQ:                        return OP_FLTE;
-				case A_GREATER:                       return OP_FGT;
-				case A_GREATEREQ:                     return OP_FGTE;
-				case A_EQUALS:                        return OP_FEQ;
-				case A_NOT_EQUALS:                    return OP_FNEQ;
-				INVALID_DEFAULT;
-			}
-		} break;
-		INVALID_DEFAULT;
-	}
-	return (Opcode)0;
 }
 
 struct Codegen {
@@ -273,49 +239,49 @@ struct Codegen {
 
 			bool dst=true, src=true;
 
-			Opcode code  = instr.code & ~OP_IMM;
+			Opcode code  = instr.code & ~OPC_IMM;
 
-			bool imm = (instr.code & OP_IMM) != 0;
+			bool imm = (instr.code & OPC_IMM) != 0;
 
 			bool src_imm = false;
 			bool dst_imm = false;
 
 			switch (code) {
-				case OP_RET:
+				case OPC_RET:
 					dst = false;
 					src = false;
 					break;
 
-				case OP_SPUSH:
-				case OP_SPOP:
+				case OPC_SPUSH:
+				case OPC_SPOP:
 					dst_imm = true;
 					src = false;
 					break;
 
-				case OP_PUSH:
-				case OP_POP:
+				case OPC_PUSH:
+				case OPC_POP:
 					dst = false;
 					break;
 
-				case OP_JMP:
+				case OPC_JMP:
 					dst_imm = true;
 					src     = false;
 					break;
-				case OP_JNZ:
-				case OP_JZ:
+				case OPC_JNZ:
+				case OPC_JZ:
 					dst_imm = true;
 					break;
 
-				case OP_NEG:
-				case OP_NOT:
-				case OP_INC:
-				case OP_DEC:
-				case OP_FNEG:
+				case OPC_NEG:
+				case OPC_NOT:
+				case OPC_INC:
+				case OPC_DEC:
+				case OPC_FNEG:
 					src = false;
 					break;
 
-				case OP_CALL:
-				case OP_CALLB:
+				case OPC_CALL:
+				case OPC_CALLB:
 					dst_imm = true;
 					src = false;
 					break;
@@ -386,15 +352,15 @@ struct Codegen {
 
 				switch (instr.code) {
 
-					case OP_JMP:
-					case OP_JNZ:
-					case OP_JZ: {
+					case OPC_JMP:
+					case OPC_JNZ:
+					case OPC_JZ: {
 						size_t func_lbl_id = instr.dst;
 						size_t code_lbl_id = func_ir.labels[func_lbl_id].code_lbl_id;
 						instr.dst = code_labels[code_lbl_id].addr;
 					} break;
 
-					case OP_CALL: {
+					case OPC_CALL: {
 						size_t func_id = instr.dst;
 						instr.dst = func_code[func_id].first;
 					} break;
@@ -405,7 +371,7 @@ struct Codegen {
 
 	const char* format_const (AST* ast) {
 		std::string_view text;
-		if (ast->type == A_ASSIGN) {
+		if (ast->type == A_ASSIGNOP && ((AST_binop*)ast)->op == OP_ASSIGN) {
 			auto* op = (AST_binop*)ast;
 
 			text = op->rhs->src_tok->source.text();
@@ -460,7 +426,7 @@ struct Codegen {
 
 		auto imm = [] (Opcode op, IR::Var rhs) {
 			if (rhs.type == IR::VT_CONST)
-				op |= OP_IMM;
+				op |= OPC_IMM;
 			return op;
 		};
 
@@ -472,7 +438,7 @@ struct Codegen {
 		};
 
 		// code for function prologe
-		code.emplace_back(OP_SPUSH, stk_sz);
+		code.emplace_back(OPC_SPUSH, stk_sz);
 
 		size_t retargid = 0;
 
@@ -532,27 +498,22 @@ struct Codegen {
 					if (iri.lhs.type == IR::VT_CONST)
 						istrs.push_back({ code.size(), format_const(iri.ast) });
 
-					code.emplace_back(imm(OP_MOV, iri.lhs), dst, lhs);
+					code.emplace_back(imm(OPC_MOV, iri.lhs), dst, lhs);
 				} break;
 
 				case IR::UNOP: {
-					auto opc = unary2opcode(iri.ast);
+					auto opc = ir2opcode(iri.op);
 
 					if (dst != lhs) // make INC/DEC not generate useless MOVs
-						code.emplace_back(imm(OP_MOV, iri.lhs), dst, lhs);
+						code.emplace_back(imm(OPC_MOV, iri.lhs), dst, lhs);
 					code.emplace_back(opc, dst);
 				} break;
 
 				case IR::BINOP: {
-					auto* op = (AST_binop*)iri.ast;
-
-					// HACK: since += operators don't have a type on the += AST node, we have to pull the type from one of the operands
-					// ideally our IR nodes would already have resolved to a enum operation type in the IR gen phase
-					// which maps more or less directly to asm operations (add, flt_add etc.)
-					auto opc = binary2opcode(op->a.type, op->lhs->valtype);
+					auto opc = ir2opcode(iri.op);
 
 					if (dst != lhs)
-						code.emplace_back(imm(OP_MOV, iri.lhs), dst, lhs);
+						code.emplace_back(imm(OPC_MOV, iri.lhs), dst, lhs);
 					code.emplace_back(imm(opc, iri.rhs), dst, rhs);
 				} break;
 
@@ -561,7 +522,7 @@ struct Codegen {
 				} break;
 				case IR::PUSH_ARG: {
 					intptr_t addr = retarg_base - retargid;
-					code.emplace_back(imm(OP_MOV, iri.lhs), addr, lhs);
+					code.emplace_back(imm(OPC_MOV, iri.lhs), addr, lhs);
 
 					retargid++;
 				} break;
@@ -574,11 +535,11 @@ struct Codegen {
 
 					if (call->fdef->type == A_FUNCDEF_BUILTIN) {
 						auto* fdef = (AST_funcdef_builtin*)call->fdef;
-						code.emplace_back(OP_CALLB, (size_t)(void*)fdef->func_ptr);
+						code.emplace_back(OPC_CALLB, (size_t)(void*)fdef->func_ptr);
 					}
 					else {
 						auto* fdef = (AST_funcdef*)call->fdef;
-						code.emplace_back(OP_CALL, fdef->codegen_funcid);
+						code.emplace_back(OPC_CALL, fdef->codegen_funcid);
 					}
 
 					retargid = 0;
@@ -586,7 +547,7 @@ struct Codegen {
 
 				case IR::GET_RET: {
 					intptr_t addr = retarg_base - iri.lhs.id;
-					code.emplace_back(OP_MOV, dst, addr);
+					code.emplace_back(OPC_MOV, dst, addr);
 				} break;
 
 				case IR::JUMP:
@@ -594,9 +555,9 @@ struct Codegen {
 				case IR::JUMP_CF: {
 					Opcode op;
 					switch (iri.type) {
-						case IR::JUMP:    op = OP_JMP; break;
-						case IR::JUMP_CT: op = OP_JNZ; break;
-						case IR::JUMP_CF: op = OP_JZ;  break;
+						case IR::JUMP:    op = OPC_JMP; break;
+						case IR::JUMP_CT: op = OPC_JNZ; break;
+						case IR::JUMP_CF: op = OPC_JZ;  break;
 					}
 
 					size_t lbl_id = iri.dst.id;
@@ -606,8 +567,8 @@ struct Codegen {
 
 				case IR::RETURN: {
 					// code for function epilogue
-					code.emplace_back(OP_SPOP, stk_sz);
-					code.emplace_back(OP_RET);
+					code.emplace_back(OPC_SPOP, stk_sz);
+					code.emplace_back(OPC_RET);
 				} break;
 
 				case IR::DEAD: {
@@ -620,7 +581,7 @@ struct Codegen {
 		}
 
 		//{ // code for function epilogue
-		//	code.emplace_back(OP_POP, stk_sz);
+		//	code.emplace_back(OPC_POP, stk_sz);
 		//}
 	}
 };

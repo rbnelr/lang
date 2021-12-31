@@ -186,8 +186,6 @@ inline constexpr const char* TokenType_char[] = {
 	"==",
 	"!=",
 
-	"?",
-
 	"!",
 	"++",
 	"--",
@@ -199,6 +197,7 @@ inline constexpr const char* TokenType_char[] = {
 	"/=",
 	"%=",
 
+	"?",
 	":",
 	";",
 	",",

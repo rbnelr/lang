@@ -1,9 +1,9 @@
 #pragma once
 
 struct Options {
-	std::string  filename  = "test4.la";
+	std::string  filename  = "test.la";
 
-	bool         optimized = true;
+	bool         optimized = 1;
 
 #ifdef TRACY_ENABLE
 	bool         print_ast  = false;

@@ -174,6 +174,16 @@ struct IdentResolver {
 		recurse(root);
 	}
 
+	void prescan_block_for_funcs (AST_block* block) {
+		for (auto* n=block->statements; n != nullptr; n = n->next) {
+			if (n->type == A_FUNCDEF) {
+				auto* def = (AST_funcdef*)n;
+				stack.declare_func(def);
+				funcs.emplace_back(def);
+			}
+		}
+	}
+
 	void recurse (AST* node) {
 		switch (node->type) {
 
@@ -251,7 +261,10 @@ struct IdentResolver {
 			case A_SELECT: {
 				auto* aif = (AST_if*)node;
 
-				visit(node, [this] (AST* node) { recurse(node); });
+				recurse(aif->cond);
+				recurse(aif->if_body);
+				if (aif->else_body)
+					recurse(aif->else_body);
 
 				if (node->type == A_SELECT) {
 					if (aif->if_body->valtype != aif->else_body->valtype)
@@ -260,23 +273,77 @@ struct IdentResolver {
 				}
 			} break;
 
-			case A_BLOCK:
-			case A_LOOP:
+			case A_BLOCK: {
+				auto* block = (AST_block*)node;
+
+				auto old_scope = stack.push_scope();
+
+				prescan_block_for_funcs(block); // can call functions before they are declared from anywhere inside the block
+
+				for (auto* n=block->statements; n != nullptr; n = n->next)
+					recurse(n);
+
+				stack.reset_scope(old_scope);
+			} break;
+
 			case A_FUNCDEF: {
-				bool is_func_scope = node->type == A_FUNCDEF;
+				auto* fdef = (AST_funcdef*)node;
 
-				auto old_scope = stack.push_scope(is_func_scope);
+				for (auto* n=fdef->decl.args; n != nullptr; n = n->next)
+					recurse(n);
+				for (auto* n=fdef->decl.rets; n != nullptr; n = n->next)
+					recurse(n);
+				recurse(fdef->body);
+			} break;
 
-				visit(node, [this] (AST* n) {
-					if (n->type == A_FUNCDEF) {
-						auto* def = (AST_funcdef*)n;
-						stack.declare_func(def);
-						funcs.emplace_back(def);
-					}
-					});
-				visit(node, [this] (AST* node) { recurse(node); });
+			case A_WHILE: {
+				auto* loop = (AST_loop*)node;
 
-				stack.reset_scope(old_scope, is_func_scope);
+				assert(!loop->start);
+				recurse(loop->cond);
+				recurse(loop->body);
+				assert(!loop->end);
+			} break;
+
+			case A_FOR: {
+				auto* loop = (AST_loop*)node;
+
+				// open extra scope for for-header variables
+				auto old_scope = stack.push_scope();
+
+				// resolve for-header first so that even though loop->end is executed last
+				// it still can't see vars inside the loop (since C does it this way and also since it comes before the body)
+				if (loop->start)
+					recurse(loop->start);
+
+				recurse(loop->cond);
+
+				if (loop->end)
+					recurse(loop->end);
+
+				// resolve body last
+				recurse(loop->body);
+
+				stack.reset_scope(old_scope);
+			} break;
+
+			// need special handling for do-while due to special scoping rules
+			case A_DO_WHILE: {
+				auto* loop = (AST_loop*)node;
+				auto* block = (AST_block*)loop->body;
+
+				// open scope
+				auto old_scope = stack.push_scope();
+
+				// can call functions before they are declared from anywhere inside the block
+				// _and_ from inside the while condition
+				prescan_block_for_funcs(block);
+
+				for (auto* n=block->statements; n != nullptr; n = n->next)
+					recurse(n);
+				recurse(loop->cond); // can access vars and funcs declared inside the loop body
+
+				stack.reset_scope(old_scope);
 			} break;
 
 			case A_RETURN:

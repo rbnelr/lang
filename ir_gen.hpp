@@ -216,7 +216,7 @@ enum NodeType : uint8_t {
 	UNOP,     // dst = <op from ast->type> applied to lhs
 	BINOP,    // dst = lhs <op from ast->type> rhs
 
-	PUSH_RET, // push return value slot for function (needed to simply argument stack locations computation)
+	PUSH_RET, // push return value slot for function (needed to simplify argument stack locations computation)
 	PUSH_ARG, // push argument for function
 	CALL,     // call function with arguments
 	GET_RET,  // get return value by id
@@ -569,34 +569,50 @@ struct IRGen {
 				return tmp;
 			}
 
-			case A_LOOP: {
+			case A_WHILE:
+			case A_DO_WHILE:
+			case A_FOR: {
 				auto* loop = (AST_loop*)ast;
 
 				// start
-				IRgen(ir, loop->start);
+				if (loop->start)
+					IRgen(ir, loop->start);
 
-				size_t loop_lbl     = ir.create_label(ast, "loop");
-				size_t loopcont_lbl = ir.create_label(ast, "loopcont");
-				size_t end_lbl      = ir.create_label(ast, "loopend");
+				size_t loop_lbl     = ir.create_label(ast, "loop");     // for loop itself, jumps to top of loop
+				size_t loopcont_lbl = ir.create_label(ast, "loopcont"); // for continue,    jumps to end of body
+				size_t end_lbl      = ir.create_label(ast, "loopend");  // for break,       jumps to end of loop
 
 				ir.emit(LABEL, ast, { VT_LABELID, loop_lbl });
 
 				loop_lbls.push_back({ loopcont_lbl, end_lbl });
 
-				// condition
-				Var cond = IRgen(ir, loop->cond);
-				ir.emit(JUMP_CF, ast, { VT_LABELID, end_lbl }, cond);
-				
-				// body
-				IRgen(ir, loop->body);
+				if (ast->type == A_DO_WHILE) {
+					// body
+					IRgen(ir, loop->body);
+					ir.emit(LABEL, ast, { VT_LABELID, loopcont_lbl });
 
-				ir.emit(LABEL, ast, { VT_LABELID, loopcont_lbl });
+					// condition
+					Var cond = IRgen(ir, loop->cond);
+					ir.emit(JUMP_CT, ast, { VT_LABELID, loop_lbl }, cond);
 
-				// end
-				IRgen(ir, loop->end);
+					assert(!loop->end);
+				}
+				else {
+					// condition
+					Var cond = IRgen(ir, loop->cond);
+					ir.emit(JUMP_CF, ast, { VT_LABELID, end_lbl }, cond);
 
-				// unconditional jump to loop top
-				ir.emit(JUMP, ast, { VT_LABELID, loop_lbl });
+					// body
+					IRgen(ir, loop->body);
+					ir.emit(LABEL, ast, { VT_LABELID, loopcont_lbl });
+
+					// end
+					if (loop->end)
+						IRgen(ir, loop->end);
+
+					// unconditional jump to loop top
+					ir.emit(JUMP, ast, { VT_LABELID, loop_lbl });
+				}
 
 				ir.emit(LABEL, ast, { VT_LABELID, end_lbl });
 

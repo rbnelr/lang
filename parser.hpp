@@ -119,7 +119,10 @@ enum ASTType {
 
 	// flow control
 	A_IF,
-	A_LOOP,
+
+	A_WHILE,
+	A_DO_WHILE,
+	A_FOR,
 
 	A_RETURN,
 	A_BREAK,
@@ -146,7 +149,10 @@ inline const char* ASTType_str[] = {
 	"A_CALL",
 
 	"A_IF",
-	"A_LOOP",
+
+	"A_WHILE",
+	"A_DO_WHILE",
+	"A_FOR",
 
 	"A_RETURN",
 	"A_BREAK",
@@ -351,11 +357,18 @@ void visit (AST* node, FUNC func) {
 				func(aif->else_body);
 		} break;
 
-		case A_LOOP: { auto* loop = (AST_loop*)node;
-			func(loop->start);
+		case A_WHILE:
+		case A_DO_WHILE:
+		case A_FOR: { auto* loop = (AST_loop*)node;
+			if (loop->start)
+				func(loop->start);
+
 			func(loop->cond );
-			func(loop->end  );
-			func(loop->body );
+
+			if (loop->end)
+				func(loop->end);
+
+			func(loop->body);
 		} break;
 
 		case A_UNOP: { auto* op = (AST_unop*)node;
@@ -693,22 +706,6 @@ struct Parser {
 		return lhs;
 	}
 
-	AST* for_loop () {
-		auto* loop = ast_alloc<AST_loop>(A_LOOP, tok++);
-
-		loop->start = assign_expr();
-		eat_semicolon();
-
-		loop->cond  = expression(0);
-		eat_semicolon();
-
-		loop->end   = assign_expr();
-
-		loop->body = block();
-
-		return (AST*)loop;
-	}
-
 	// parses  if <cond> {} elif <cond> {} elif <cond> else {}
 	// where each elif and else is optional
 	AST* if_statement () {
@@ -732,6 +729,44 @@ struct Parser {
 			return block();
 		}
 		return nullptr;
+	}
+
+	AST* while_loop () {
+		auto* loop = ast_alloc<AST_loop>(A_WHILE, tok++);
+
+		loop->cond = expression(0);
+		loop->body = block();
+
+		return (AST*)loop;
+	}
+	AST* do_while_loop () {
+		auto* loop = ast_alloc<AST_loop>(A_DO_WHILE, tok++);
+
+		loop->body = block();
+
+		if (tok->type != T_WHILE)
+			throw_error_after("syntax error: while expected after do block!", tok[-1]);
+		tok++;
+
+		loop->cond = expression(0);
+		eat_semicolon();
+
+		return (AST*)loop;
+	}
+	AST* for_loop () {
+		auto* loop = ast_alloc<AST_loop>(A_FOR, tok++);
+
+		loop->start = assign_expr();
+		eat_semicolon();
+
+		loop->cond  = expression(0);
+		eat_semicolon();
+
+		loop->end   = assign_expr();
+
+		loop->body = block();
+
+		return (AST*)loop;
 	}
 
 	AST* function_def () {
@@ -776,17 +811,18 @@ struct Parser {
 
 		switch (tok[0].type) {
 
-			case T_BLOCK_OPEN: {
+			case T_BLOCK_OPEN:
 				return block();
-			}
 
-			case T_IF: {
+			case T_IF:
 				return if_statement();
-			}
 
-			case T_FOR: {
+			case T_WHILE:
+				return while_loop();
+			case T_DO:
+				return do_while_loop();
+			case T_FOR:
 				return for_loop();
-			}
 
 			case T_RETURN:
 			case T_BREAK:

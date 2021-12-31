@@ -104,7 +104,10 @@ enum TokenType {
 	T_IF,
 	T_ELIF,
 	T_ELSE,
+
+	T_WHILE,
 	T_FOR,
+	T_DO,
 
 	T_FUNC,
 
@@ -160,7 +163,10 @@ inline constexpr const char* TokenType_str[] = {
 	"T_IF",
 	"T_ELIF",
 	"T_ELSE",
+
+	"T_WHILE",
 	"T_FOR",
+	"T_DO",
 
 	"T_FUNC",
 
@@ -217,7 +223,9 @@ inline constexpr const char* TokenType_char[] = {
 	"elif",
 	"else",
 
+	"while",
 	"for",
+	"do",
 
 	"return",
 	"break",
@@ -495,7 +503,9 @@ std::vector<Token> tokenize (const char* src) {
 					if      (text == "if"       ) { tok.type = T_IF;                           }
 					else if (text == "elif"     ) { tok.type = T_ELIF;                         }
 					else if (text == "else"     ) { tok.type = T_ELSE;                         }
+					else if (text == "while"    ) { tok.type = T_WHILE;                        }
 					else if (text == "for"      ) { tok.type = T_FOR;                          }
+					else if (text == "do"       ) { tok.type = T_DO;                           }
 
 					//else if (text == "null"     ) { tok.type = T_LITERAL; tok.lit_type = BOOL; tok.lit_val.b = {};        }
 					else if (text == "true"     ) { tok.type = T_LITERAL; tok.lit_type = BOOL; tok.lit_val.b = true;  }

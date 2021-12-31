@@ -192,8 +192,36 @@ printf("---------------\n");
 
 printf("---------------\n");
 
-for i:=0; i<10; i++ {
-	
+//for i:=0; i<10; break {}  // syntax error: number or variable expected.
+
+//for i:=0; break; i++ {} // syntax error: number or variable expected.
+
+printf("for loop:     ");
+for i:=0; i<4; i++ {
+	printf(" {i}", i);
+}
+printf("\n");
+
+{
+	printf("while loop:   ");
+	i := 0;
+	while i<4 {
+		printf(" {i}", i);
+		i++;
+	}
+	printf("\n");
+}
+
+{
+	printf("do while loop:");
+	i := 0;
+	do {
+		i++;
+		z := i*2;
+		printf(" {i}", z);
+	} while z < 8; // do while can look at variables inside block
+	// this is questionable in terms of intuition, but otherwise do while is a lot less useful
+	printf("\n");
 }
 
 printf("---------------\n");

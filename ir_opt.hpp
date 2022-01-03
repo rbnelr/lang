@@ -75,7 +75,7 @@ void ir_opt (IRGen& ir) {
 		auto& fir = ir.func_irs[func->codegen_funcid];
 		
 		if (options.optimized)
-			func_opt(fir, func->decl.ident);
+			func_opt(fir, func->ident);
 
 		if (options.print_ir)
 			fir.dbg_print();

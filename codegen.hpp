@@ -335,7 +335,7 @@ struct Codegen {
 
 			func_code[funcid].first = code.size();
 
-			auto func_lbl_name = format("func %.*s()", (int)funcdef->decl.ident.size(), funcdef->decl.ident.data());
+			auto func_lbl_name = format("func %.*s()", (int)funcdef->ident.size(), funcdef->ident.data());
 			code_labels.push_back({ code.size(), func_lbl_name });
 
 			add_func_code(fir);
@@ -375,6 +375,9 @@ struct Codegen {
 			auto* op = (AST_binop*)ast;
 
 			text = op->rhs->src_tok->source.text();
+		}
+		else if (ast->type == A_VARDECL) {
+			// ???
 		}
 		else {
 			assert(ast->type == A_LITERAL);
@@ -438,7 +441,8 @@ struct Codegen {
 		};
 
 		// code for function prologe
-		code.emplace_back(OPC_SPUSH, stk_sz);
+		if (stk_sz > 0)
+			code.emplace_back(OPC_SPUSH, stk_sz);
 
 		size_t retargid = 0;
 
@@ -567,7 +571,8 @@ struct Codegen {
 
 				case IR::RETURN: {
 					// code for function epilogue
-					code.emplace_back(OPC_SPOP, stk_sz);
+					if (stk_sz > 0)
+						code.emplace_back(OPC_SPOP, stk_sz);
 					code.emplace_back(OPC_RET);
 				} break;
 

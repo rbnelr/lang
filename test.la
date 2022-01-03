@@ -36,6 +36,8 @@ a += 4 + c; // 6
 
 b := 0; // 0
 
+//a + 2 = 4; error: can only assign to variables, not arbitrary expressions.
+
 //b := null; // currently not a literal, since null does not exists as a type
 //b := "null";
 //b = c = a;
@@ -213,7 +215,7 @@ printf("\n");
 }
 
 {
-	printf("do while loop:");
+	printf("do-while loop:");
 	i := 0;
 	do {
 		i++;

@@ -78,7 +78,7 @@ inline AST_vardecl BF_PRINTF_VARARGS = { cAST(A_VARARGS                         
 inline AST_vardecl BF_PRINTF_VAL     = { cAST(A_VARDECL, STR, (AST*)&BF_PRINTF_VARARGS), "format" };
 
 inline AST_funcdef_builtin BF_PRINTF = {
-	cAST(A_FUNCDEF_BUILTIN), "printf", 2, (AST*)&BF_PRINTF_VAL, 0, nullptr, my_printf
+	cAST(A_FUNCDEF_BUILTIN), "printf", 2, &BF_PRINTF_VAL, 0, nullptr, my_printf
 };
 
 void timer (Value* vals) {
@@ -87,7 +87,7 @@ void timer (Value* vals) {
 inline AST_vardecl BF_TIMER_RET = { cAST(A_VARDECL, INT), "timestamp" };
 
 inline AST_funcdef_builtin BF_TIMER = {
-	cAST(A_FUNCDEF_BUILTIN), "timer", 0, nullptr, 1, (AST*)&BF_TIMER_RET, timer
+	cAST(A_FUNCDEF_BUILTIN), "timer", 0, nullptr, 1, &BF_TIMER_RET, timer
 };
 
 void timer_end (Value* vals) {
@@ -99,7 +99,7 @@ inline AST_vardecl BF_TIMER_END_START = { cAST(A_VARDECL, INT), "start_timestamp
 inline AST_vardecl BF_TIMER_END_RET   = { cAST(A_VARDECL, FLT), "timestamp" };
 
 inline AST_funcdef_builtin BF_TIMER_END = {
-	cAST(A_FUNCDEF_BUILTIN), "timer_end", 1, (AST*)&BF_TIMER_END_START, 1, (AST*)&BF_TIMER_END_RET, timer_end
+	cAST(A_FUNCDEF_BUILTIN), "timer_end", 1, &BF_TIMER_END_START, 1, &BF_TIMER_END_RET, timer_end
 };
 
 inline const AST_funcdef_builtin* BUILTIN_FUNCS[] = {

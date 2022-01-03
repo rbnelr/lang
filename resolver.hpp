@@ -81,9 +81,9 @@ struct IdentiferStack {
 		vars_stack.emplace_back(var->ident);
 	}
 	void declare_func (AST_funcdef* func) {
-		declare_ident((AST*)func, func->decl.ident);
+		declare_ident((AST*)func, func->ident);
 
-		funcs_stack.emplace_back(func->decl.ident);
+		funcs_stack.emplace_back(func->ident);
 	}
 
 	AST* resolve_ident (AST* node, strview const& ident, size_t min_scope) {
@@ -103,7 +103,7 @@ struct IdentiferStack {
 		// min_scope = func_scope_id, functions can only access their own variables
 		AST* ast = resolve_ident((AST*)var, var->ident, cur_scope.func_scope_id);
 		if (ast->type != A_VARDECL)
-			throw CompilerExcept{"error: identifer was not declared as variable", var->a.src_tok->source};
+			throw CompilerExcept{"error: identifer was not declared as variable", var->src_tok->source};
 
 		var->decl = (AST_vardecl*)ast;
 	}
@@ -112,15 +112,17 @@ struct IdentiferStack {
 		// min_scope = 0, functions can call all functions visible to them
 		AST* ast = resolve_ident((AST*)call, call->ident, 0);
 		if (!(ast->type == A_FUNCDEF || ast->type == A_FUNCDEF_BUILTIN))
-			throw CompilerExcept{"error: identifer was not declared as function", call->a.src_tok->source};
+			throw CompilerExcept{"error: identifer was not declared as function", call->src_tok->source};
 
 		call->fdef = ast;
 	}
 };
 
-void match_call_args (AST_call* call, AST_funcdecl const& fdef) {
-	AST* declarg = fdef.args;
+void match_call_args (AST_call* call, AST_funcdecl* fdef) {
+	AST_vardecl* declarg = fdef->args;
 	AST* callarg = call->args;
+
+	bool default_args = false;
 
 	for (size_t i=0; ; i++) {
 		if (!declarg && !callarg) {
@@ -129,7 +131,7 @@ void match_call_args (AST_call* call, AST_funcdecl const& fdef) {
 		}
 
 		if (!declarg) // no more args in func
-			throw CompilerExcept{"error: too many arguments to function", call->a.src_tok->source};
+			throw CompilerExcept{"error: too many arguments to function", call->src_tok->source};
 
 		if (declarg->type == A_VARARGS) {
 			// last func arg is varargs, any number of remaining call args match (including 0)
@@ -137,16 +139,28 @@ void match_call_args (AST_call* call, AST_funcdecl const& fdef) {
 			return;
 		}
 
-		assert(declarg->type == A_VARDECL);
+		if (declarg->init) {
+			default_args = true;
+		}
 
-		if (!callarg) // no args left in call
-			throw CompilerExcept{"error: too few arguments to function", call->a.src_tok->source};
+		if (default_args) {
+			if (!declarg->init)
+				throw CompilerExcept{"error: default arguments can only appear on the end of the argument list", declarg->src_tok->source};
 
-		if (callarg->valtype != declarg->valtype)
+			if (!callarg) {
+				// will use default arg
+			}
+		}
+		else {
+			if (!callarg) // no args left in call
+				throw CompilerExcept{"error: too few arguments to function", call->src_tok->source};
+		}
+
+		if (callarg && callarg->valtype != declarg->valtype)
 			throw CompilerExcept{"error: call argument type mismatch", callarg->src_tok->source};
 
-		declarg = declarg->next;
-		callarg = callarg->next;
+		declarg = (AST_vardecl*)declarg->next;
+		callarg = callarg ? callarg->next : nullptr;
 	}
 }
 
@@ -159,13 +173,13 @@ struct IdentResolver {
 		for (AST_funcdef_builtin const* f : BUILTIN_FUNCS)
 			stack.declare_func((AST_funcdef*)f); // cast is safe
 
-		{
+		{ // add a declaration for a main function (global space of the file itself represents the main function)
 			AST_funcdef* module_main = ast_alloc<AST_funcdef>(A_FUNCDEF, root->src_tok);
-			module_main->decl.ident = "main";
-			module_main->decl.retc = 0;
-			module_main->decl.rets = nullptr;
-			module_main->decl.argc = 0;
-			module_main->decl.args = nullptr;
+			module_main->ident = "main";
+			module_main->retc = 0;
+			module_main->rets = nullptr;
+			module_main->argc = 0;
+			module_main->args = nullptr;
 			module_main->body = root;
 
 			funcs.emplace_back(module_main);
@@ -177,9 +191,17 @@ struct IdentResolver {
 	void prescan_block_for_funcs (AST_block* block) {
 		for (auto* n=block->statements; n != nullptr; n = n->next) {
 			if (n->type == A_FUNCDEF) {
-				auto* def = (AST_funcdef*)n;
-				stack.declare_func(def);
-				funcs.emplace_back(def);
+				auto* fdef = (AST_funcdef*)n;
+
+				for (auto* n=(AST*)fdef->args; n != nullptr; n = n->next) {
+					recurse(n);
+				}
+
+				for (auto* n=(AST*)fdef->rets; n != nullptr; n = n->next)
+					recurse(n);
+
+				stack.declare_func(fdef);
+				funcs.emplace_back(fdef);
 			}
 		}
 	}
@@ -194,12 +216,33 @@ struct IdentResolver {
 			case A_VARDECL: {
 				auto* vardecl = (AST_vardecl*)node;
 				stack.declare_var(vardecl);
+
+				if (vardecl->init) {
+
+					recurse(vardecl->init);
+
+					// everything on the rhs of assignments except calls with void return should have a non-void type
+					if (vardecl->init->valtype == VOID) {
+						assert(vardecl->init->type == A_CALL);
+						throw CompilerExcept{"error: variable initialization: void is not a valid variable type", vardecl->init->src_tok->source};
+					}
+
+					// variable declaration without explicit type -> infer type
+					if (vardecl->valtype == VOID) {
+						vardecl->valtype = vardecl->init->valtype;
+					}
+					// variable declaration with explicit type -> check if types match
+					else {
+						if (vardecl->valtype != vardecl->init->valtype)
+							throw CompilerExcept{"error: variable initialization: types do not match", vardecl->init->src_tok->source};
+					}
+				}
 			} break;
 
 			case A_VAR: {
 				auto* var = (AST_var*)node;
 				stack.resolve_var(var);
-				node->valtype = var->decl->a.valtype;
+				node->valtype = var->decl->valtype;
 			} break;
 
 			case A_ASSIGNOP: {
@@ -207,43 +250,42 @@ struct IdentResolver {
 				recurse(op->lhs);
 				recurse(op->rhs);
 
-				if (op->lhs->type == A_VARDECL) {
-					assert(op->op == OP_ASSIGN);
+				if (op->lhs->type != A_VAR)
+					throw CompilerExcept{"error: can only assign to variables, not arbitrary expressions", op->lhs->src_tok->source};
+				
+				// everything on the rhs of assignments except calls with void return should have a non-void type
+				if (op->rhs->valtype == VOID) {
+					assert(op->rhs->type == A_CALL);
+					throw CompilerExcept{"error: variable initialization: void is not a valid variable type", op->rhs->src_tok->source};
+				}
 
-					if (op->lhs->valtype == VOID) {
-						if (op->rhs->valtype == VOID) {
-							assert(op->rhs->type == A_CALL); // everything on the rhs of assignments except calls should have a resolved type
-							throw CompilerExcept{"error: assignment: can't assign void return type", op->a.src_tok->source};
-						}
-						op->lhs->valtype = op->rhs->valtype;
-					}
-					else {
-						if (op->lhs->valtype != op->rhs->valtype)
-							throw CompilerExcept{"error: variable declaration assignment: types do not match", op->a.src_tok->source};
-					}
-				}
-				else {
-					if (op->lhs->valtype != op->rhs->valtype)
-						throw CompilerExcept{"error: assignment: types do not match", op->a.src_tok->source};
-				}
+				// check if types match
+				if (op->lhs->valtype != op->rhs->valtype)
+					throw CompilerExcept{"error: assignment: types do not match", op->src_tok->source};
+
+				op->valtype = op->lhs->valtype;
 			} break;
 
 			case A_CALL: {
 				auto* call = (AST_call*)node;
+				auto* fdef = (AST_funcdef*)call->fdef;
+
 				stack.resolve_func_call(call);
 
-				for (auto* n=call->args; n != nullptr; n = n->next)
+				for (auto* n=call->args; n != nullptr; n = n->next) {
 					recurse(n);
+				}
 
 				auto* funcdef = (AST_funcdef*)call->fdef;
-				match_call_args(call, funcdef->decl);
-				call->a.valtype = funcdef->decl.retc > 0 ? funcdef->decl.rets->valtype : VOID;
+				match_call_args(call, funcdef);
+
+				call->valtype = funcdef->retc > 0 ? funcdef->rets->valtype : VOID;
 			} break;
 
 			case A_UNOP: {
 				auto* op = (AST_unop*)node;
 				recurse(op->operand);
-				op->a.valtype = op->operand->valtype;
+				op->valtype = op->operand->valtype;
 			} break;
 
 			case A_BINOP: {
@@ -252,9 +294,9 @@ struct IdentResolver {
 				recurse(op->rhs);
 
 				if (op->lhs->valtype != op->rhs->valtype)
-					throw CompilerExcept{"error: binary operator: types do not match", op->a.src_tok->source};
+					throw CompilerExcept{"error: binary operator: types do not match", op->src_tok->source};
 
-				op->a.valtype = op->lhs->valtype;
+				op->valtype = op->lhs->valtype;
 			} break;
 
 			case A_IF:
@@ -268,8 +310,8 @@ struct IdentResolver {
 
 				if (node->type == A_SELECT) {
 					if (aif->if_body->valtype != aif->else_body->valtype)
-						throw CompilerExcept{"error: select expression: types do not match", aif->a.src_tok->source};
-					aif->a.valtype = aif->if_body->valtype;
+						throw CompilerExcept{"error: select expression: types do not match", aif->src_tok->source};
+					aif->valtype = aif->if_body->valtype;
 				}
 			} break;
 
@@ -289,10 +331,8 @@ struct IdentResolver {
 			case A_FUNCDEF: {
 				auto* fdef = (AST_funcdef*)node;
 
-				for (auto* n=fdef->decl.args; n != nullptr; n = n->next)
-					recurse(n);
-				for (auto* n=fdef->decl.rets; n != nullptr; n = n->next)
-					recurse(n);
+				// returns and args already resolved by prescan
+
 				recurse(fdef->body);
 			} break;
 

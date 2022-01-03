@@ -103,6 +103,13 @@ inline const char* IROpType_str[] = {
 
 IROpType unary2ir (AST* ast, OpType op, Type type) {
 	switch (op) {
+		case OP_POSITIVE: {
+			switch (type) {
+				case INT: return OP_NONE; // no-op
+				case FLT: return OP_NONE; // no-op
+				default: throw CompilerExcept{"error: positive operator is not valid for type", ast->src_tok->source};
+			}
+		}
 		case OP_NEGATE: {
 			switch (type) {
 				case INT: return OP_i_NEG;
@@ -388,21 +395,17 @@ struct IRGen {
 		loop_lbls.clear();
 
 		size_t retid = 0;
-		for (auto* ret=func->decl.rets; ret != nullptr; ret = ret->next) {
-			auto* var = (AST_vardecl*)ret;
-
+		for (auto* ret=func->rets; ret != nullptr; ret = (AST_vardecl*)ret->next) {
 			Var v = { VT_ARGID, retid++ };
-			var->var_id     = v.id;
-			var->var_is_arg = true;
+			ret->var_id     = v.id;
+			ret->var_is_arg = true;
 		}
 
 		size_t argid = 0;
-		for (auto* arg=func->decl.args; arg != nullptr; arg = arg->next) {
-			auto* var = (AST_vardecl*)arg;
-
+		for (auto* arg=func->args; arg != nullptr; arg = (AST_vardecl*)arg->next) {
 			Var v = { VT_ARGID, argid++ };
-			var->var_id     = v.id;
-			var->var_is_arg = true;
+			arg->var_id     = v.id;
+			arg->var_is_arg = true;
 		}
 
 		return_lbl = ir.create_label((AST*)func, "return");
@@ -432,10 +435,16 @@ struct IRGen {
 			case A_VARDECL: {
 				auto* var = (AST_vardecl*)ast;
 
-				Var v = { VT_VARID, ir.var_count++ };
-				var->var_id = v.id;
+				Var decl = { VT_VARID, ir.var_count++ };
+				var->var_id = decl.id;
 				var->var_is_arg = false;
-				return v;
+
+				if (var->init) {
+					Var val = IRgen(ir, var->init);
+
+					ir.emit(MOVE, ast, decl, val);
+				}
+				return {};
 			}
 
 			case A_VAR: {
@@ -450,8 +459,12 @@ struct IRGen {
 				auto optype = unary2ir(ast, op->op, ast->valtype);
 
 				switch (op->op) {
+					case OP_POSITIVE:
 					case OP_NEGATE: case OP_NOT: {
 						Var operand = IRgen(ir, op->operand);
+
+						if (op->op == OP_POSITIVE)
+							return operand; // unary + is a no-op
 
 						Var tmp = { VT_TEMPID, ir.temp_count++ };
 
@@ -624,25 +637,37 @@ struct IRGen {
 				auto* call = (AST_call*)ast;
 				auto* fdef = (AST_funcdef*)call->fdef;
 
-				ir.max_retargs = std::max(ir.max_retargs, fdef->decl.retc + call->argc);
-
 				size_t ret_count = 0;
-				for (auto* ret = fdef->decl.rets; ret != nullptr; ret = ret->next) {
+				for (auto* ret = (AST*)fdef->rets; ret != nullptr; ret = ret->next) {
 					size_t retid = ret_count++;
 
 					ir.emit(PUSH_RET, ret, { VT_ARGID, retid });
 				}
 
 				size_t arg_count = 0;
-				auto* argdecl = fdef->decl.args;
-				for (auto* arg = call->args; arg != nullptr; arg = arg->next) {
+				auto* argdecl = fdef->args;
+				// push call args
+				for (auto* arg = (AST*)call->args; arg != nullptr; arg = arg->next) {
 					size_t argid = arg_count++;
 					
 					Var val = IRgen(ir, arg);
 					ir.emit(PUSH_ARG, argdecl, { VT_ARGID, argid }, val);
 					
-					if (argdecl->type != A_VARARGS) argdecl = argdecl->next;
+					if (argdecl->type != A_VARARGS) argdecl = (AST_vardecl*)argdecl->next;
 				}
+				// push remaining default args
+				for (; argdecl != nullptr && argdecl->init; argdecl = (AST_vardecl*)argdecl->next) {
+					assert(argdecl->type != A_VARARGS);
+
+					size_t argid = arg_count++;
+
+					assert(argdecl->init->type == A_LITERAL);
+					Var val = IRgen(ir, argdecl->init);
+
+					ir.emit(PUSH_ARG, argdecl, { VT_ARGID, argid }, val);
+				}
+
+				ir.max_retargs = std::max(ir.max_retargs, fdef->retc + arg_count);
 
 				ir.emit(CALL, ast);
 
@@ -651,7 +676,7 @@ struct IRGen {
 
 				if (ret_count > 0) {
 					tmp = { VT_TEMPID, ir.temp_count++ };
-					ir.emit(GET_RET, fdef->decl.rets, tmp, { VT_ARGID, 0 });
+					ir.emit(GET_RET, fdef->rets, tmp, { VT_ARGID, 0 });
 				}
 
 				return tmp;

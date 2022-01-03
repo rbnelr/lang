@@ -1,0 +1,37 @@
+
+func fvoid () {
+	printf("\na\n");
+	return;
+	printf("b\n");
+}
+func fvoid2 (ret := false) = () {
+	printf("\na\n");
+	if (ret) {
+		return;
+	}
+	printf("b\n");
+}
+
+//a := fvoid(); // error: assignment: void is not a valid variable type.
+fvoid();
+fvoid2(true);
+fvoid2();
+
+// -> return already-written-to return vars
+//      func () = (i: int)  { return; }                  // error: uninitialized return var on return
+//      func () = (i:=5)    { return; }                  // no error (already default inited)
+//      func () = (int)     { return 5; }                // ok? (no return value name) -> maybe don't allow this (I dislike how return values are nameless)
+//      func () = (i: int)  { return 5; }                // ok
+//      func () = (i: int)  { i=5; return; }             // ok
+//	  
+// -> return multiple vars
+//      func () = (x: int, y: int) { x=5; return; }      // error: uninitialized return var 'y' on return
+//      func () = (x: int, y: int) { x=5; y=6; return; } // ok
+//      func () = (x: int, y := 3) { return 5, 6; }      // ok (positional return vars)
+//      func () = (x: int, y: int) { y=6; return 5; }    // ok since y already set? maybe not allow this? 
+//      func () = (x: int, y: int) { return x=5, y=6; }  // ok
+//      func () = (x: int, y: int) { x=5; return y=6; }  // ok?
+//	
+//turn IR into real SSA format
+
+

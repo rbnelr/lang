@@ -376,11 +376,7 @@ struct Codegen {
 
 			text = op->rhs->src_tok->source.text();
 		}
-		else if (ast->type == A_VARDECL) {
-			// ???
-		}
-		else {
-			assert(ast->type == A_LITERAL);
+		else if (ast->type == A_LITERAL) {
 			text = ast->src_tok->source.text();
 		}
 		return format("=%.*s", (int)text.size(), text.data());

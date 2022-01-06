@@ -63,7 +63,7 @@ bool compile () {
 				{
 					ZoneScopedN("resolve");
 					IdentResolver resolve;
-					resolve.resolve(ast);
+					resolve.resolve_ast(ast);
 
 					funcdefs = std::move(resolve.funcs);
 				}

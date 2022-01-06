@@ -395,14 +395,23 @@ struct IRGen {
 		loop_lbls.clear();
 
 		size_t retid = 0;
-		for (auto* ret=func->rets; ret != nullptr; ret = (AST_vardecl*)ret->next) {
+		for (auto* ret=(AST_vardecl*)func->rets; ret != nullptr; ret = (AST_vardecl*)ret->next) {
 			Var v = { VT_ARGID, retid++ };
 			ret->var_id     = v.id;
 			ret->var_is_arg = true;
+
+			if (ret->init) {
+				assert(ret->type != A_VARARGS);
+
+				assert(ret->init->type == A_LITERAL);
+				Var val = IRgen(ir, ret->init);
+
+				ir.emit(MOVE, ret, v, val);
+			}
 		}
 
 		size_t argid = 0;
-		for (auto* arg=func->args; arg != nullptr; arg = (AST_vardecl*)arg->next) {
+		for (auto* arg=(AST_vardecl*)func->args; arg != nullptr; arg = (AST_vardecl*)arg->next) {
 			Var v = { VT_ARGID, argid++ };
 			arg->var_id     = v.id;
 			arg->var_is_arg = true;
@@ -637,6 +646,41 @@ struct IRGen {
 				auto* call = (AST_call*)ast;
 				auto* fdef = (AST_funcdef*)call->fdef;
 
+				// collect function args
+				struct Argdecl {
+					AST_vardecl* decl;
+					bool         set;
+					size_t       callarg;
+				};
+				std::vector<Argdecl> declargs;
+				declargs.reserve(32);
+
+				for (auto* arg = (AST_vardecl*)fdef->args; arg != nullptr; arg = (AST_vardecl*)arg->next) {
+					declargs.push_back({ arg, false, (size_t)-1 });
+				}
+
+				// generate IR for callargs first (move into temps)
+				std::vector<Var> callargs;
+				callargs.reserve(32);
+
+				bool vararg     = false;
+				size_t vararg_i = 0;
+
+				size_t calli = 0;
+				for (auto* arg = (AST_callarg*)call->args; arg != nullptr; arg = (AST_callarg*)arg->next) {
+					callargs.push_back( IRgen(ir, arg->expr) );
+
+					if (arg->decl->type == A_VARARGS) {
+						vararg = true;
+						vararg_i = calli;
+					}
+
+					declargs[arg->decli].set = true;
+					declargs[arg->decli].callarg = calli++;
+				}
+
+				// only after the IR of all callargs is done generate PUSH_RET & PUSH_ARG so we don't mix two calls
+				// (arg ids will clash and the stack space for the args will be clobbered)
 				size_t ret_count = 0;
 				for (auto* ret = (AST*)fdef->rets; ret != nullptr; ret = ret->next) {
 					size_t retid = ret_count++;
@@ -645,29 +689,44 @@ struct IRGen {
 				}
 
 				size_t arg_count = 0;
-				auto* argdecl = fdef->args;
+
 				// push call args
-				for (auto* arg = (AST*)call->args; arg != nullptr; arg = arg->next) {
-					size_t argid = arg_count++;
-					
-					Var val = IRgen(ir, arg);
-					ir.emit(PUSH_ARG, argdecl, { VT_ARGID, argid }, val);
-					
-					if (argdecl->type != A_VARARGS) argdecl = (AST_vardecl*)argdecl->next;
+				{
+					auto arg = declargs.begin();
+
+					while (arg != declargs.end() && arg->decl->type != A_VARARGS) {
+						// set provided call argument
+						if (arg->set) {
+							auto& val = callargs[arg->callarg];
+
+							ir.emit(PUSH_ARG, arg->decl, { VT_ARGID, arg_count++ }, val);
+						}
+						// set default call argument
+						else {
+							assert(arg->decl->type != A_VARARGS);
+							assert(arg->decl->init && arg->decl->init->type == A_LITERAL);
+
+							Var val = IRgen(ir, arg->decl->init);
+
+							ir.emit(PUSH_ARG, arg->decl, { VT_ARGID, arg_count++ }, val);
+						}
+
+						arg++;
+					}
+
+					// handle varargs
+					if (vararg) {
+						assert(arg->decl->type == A_VARARGS);
+
+						for (size_t i=vararg_i; i<callargs.size(); ++i) {
+							auto& val = callargs[i];
+
+							ir.emit(PUSH_ARG, arg->decl, { VT_ARGID, arg_count++ }, val);
+						}
+					}
 				}
-				// push remaining default args
-				for (; argdecl != nullptr && argdecl->init; argdecl = (AST_vardecl*)argdecl->next) {
-					assert(argdecl->type != A_VARARGS);
 
-					size_t argid = arg_count++;
-
-					assert(argdecl->init->type == A_LITERAL);
-					Var val = IRgen(ir, argdecl->init);
-
-					ir.emit(PUSH_ARG, argdecl, { VT_ARGID, argid }, val);
-				}
-
-				ir.max_retargs = std::max(ir.max_retargs, fdef->retc + arg_count);
+				ir.max_retargs = std::max(ir.max_retargs, ret_count + arg_count);
 
 				ir.emit(CALL, ast);
 
@@ -683,9 +742,20 @@ struct IRGen {
 			}
 
 			case A_RETURN: {
+				auto* ret = (AST_return*)ast;
+
+				for (auto* arg = (AST_callarg*)ret->args; arg != nullptr; arg = (AST_callarg*)arg->next) {
+					auto val = IRgen(ir, arg->expr);
+
+					Var retv = { VT_ARGID, arg->decli };
+
+					ir.emit(MOVE, arg, retv, val);
+				}
+
 				ir.emit(JUMP, ast, { VT_LABELID, return_lbl });
 				return {};
 			}
+
 			case A_BREAK: {
 				if (loop_lbls.empty())
 					throw CompilerExcept{"error: break not inside of any loop", ast->src_tok->source};

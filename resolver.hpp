@@ -118,58 +118,12 @@ struct IdentiferStack {
 	}
 };
 
-void match_call_args (AST_call* call, AST_funcdecl* fdef) {
-	AST_vardecl* declarg = fdef->args;
-	AST* callarg = call->args;
-
-	bool default_args = false;
-
-	for (size_t i=0; ; i++) {
-		if (!declarg && !callarg) {
-			// argument lists match
-			return;
-		}
-
-		if (!declarg) // no more args in func
-			throw CompilerExcept{"error: too many arguments to function", call->src_tok->source};
-
-		if (declarg->type == A_VARARGS) {
-			// last func arg is varargs, any number of remaining call args match (including 0)
-			assert(!declarg->next);
-			return;
-		}
-
-		if (declarg->init) {
-			default_args = true;
-		}
-
-		if (default_args) {
-			if (!declarg->init)
-				throw CompilerExcept{"error: default arguments can only appear on the end of the argument list", declarg->src_tok->source};
-
-			if (!callarg) {
-				// will use default arg
-			}
-		}
-		else {
-			if (!callarg) // no args left in call
-				throw CompilerExcept{"error: too few arguments to function", call->src_tok->source};
-		}
-
-		if (callarg && callarg->valtype != declarg->valtype)
-			throw CompilerExcept{"error: call argument type mismatch", callarg->src_tok->source};
-
-		declarg = (AST_vardecl*)declarg->next;
-		callarg = callarg ? callarg->next : nullptr;
-	}
-}
-
 struct IdentResolver {
 	IdentiferStack stack;
 
 	std::vector<AST_funcdef*> funcs;
 
-	void resolve (AST* root) {
+	void resolve_ast (AST* root) {
 		for (AST_funcdef_builtin const* f : BUILTIN_FUNCS)
 			stack.declare_func((AST_funcdef*)f); // cast is safe
 
@@ -183,9 +137,126 @@ struct IdentResolver {
 			module_main->body = root;
 
 			funcs.emplace_back(module_main);
+
+			funcs_stack.emplace_back(module_main);
 		}
 
 		recurse(root);
+
+		assert(funcs_stack.size() == 1);
+		funcs_stack.pop_back();
+	}
+
+	void resolve_decl_args (AST_vardecl* declarg) {
+		bool default_args = false;
+
+		while (declarg) {
+			if (declarg->type == A_VARARGS) {
+				// last func arg is varargs, any number of remaining call args match (including 0)
+				if (declarg->next != nullptr)
+					throw CompilerExcept{"error: variadic argument can only appear on the end of the argument list", declarg->src_tok->source};
+				break;
+			}
+
+			if (declarg->init) {
+				default_args = true;
+			}
+			else {
+				if (default_args)
+					throw CompilerExcept{"error: default arguments can only appear after all positional arguments", declarg->src_tok->source};
+			}
+
+			recurse(declarg);
+
+			declarg = (AST_vardecl*)declarg->next;
+		}
+	}
+	void resolve_call_args (AST* call, AST_callarg* callarg, AST_vardecl* declarg, size_t declargc, bool returns=false) {
+		struct Arg {
+			AST_vardecl* decl;
+			bool         required;
+			bool         provided;
+		};
+		std::vector<Arg> declargs;
+		declargs.resize(declargc);
+
+		auto find_named_arg = [] (std::vector<Arg>& declargs, AST_callarg* callarg, size_t* decli) {
+			for (size_t i=0; i<declargs.size(); ++i) {
+				if (declargs[i].decl->ident == callarg->ident) {
+					if (declargs[i].provided)
+						throw CompilerExcept{"error: argument already set in call", callarg->src_tok->source};
+
+					declargs[i].provided = true;
+
+					*decli = i;
+					return declargs[i].decl;
+				}
+			}
+			throw CompilerExcept{"error: unknown argument", callarg->src_tok->source};
+		};
+
+		// collect decl args and have them be not-set
+		size_t decli = 0;
+		for (AST_vardecl* arg=declarg; arg; arg = (AST_vardecl*)arg->next) {
+			if (returns && arg->type == A_VARARGS)
+				throw CompilerExcept{"error: variadic argument no allowed for return values", arg->src_tok->source};
+
+			declargs[decli].decl = arg;
+			// variables do not required if they are default args or if they are varargs
+			declargs[decli].required = arg->type != A_VARARGS && !arg->init;
+			declargs[decli].provided = false;
+			decli++;
+		}
+
+		auto resolve_callarg = [this] (AST_callarg* callarg, AST_vardecl* declarg) {
+			recurse(callarg->expr);
+			callarg->valtype = callarg->expr->valtype;
+
+			if (declarg->type != A_VARARGS && callarg->valtype != declarg->valtype)
+				throw CompilerExcept{"error: argument type mismatch", callarg->src_tok->source};
+		};
+
+		decli = 0;
+		// positional args
+		for (; callarg && callarg->ident.empty(); callarg = (AST_callarg*)callarg->next) {
+
+			if (!declarg) // no more args in func
+				throw CompilerExcept{"error: too many arguments", callarg->src_tok->source};
+
+			callarg->decl = declarg;
+			callarg->decli = decli;
+
+			resolve_callarg(callarg, declarg);
+
+			declargs[decli].provided = true;
+
+			if (declarg->type != A_VARARGS) {
+				declarg = (AST_vardecl*)declarg->next;
+				decli++;
+			}
+		}
+
+		// named args
+		for (; callarg; callarg = (AST_callarg*)callarg->next) {
+			
+			if (callarg->ident.empty())
+				throw CompilerExcept{"error: named arguments can only appear after all positional arguments", callarg->src_tok->source};
+
+			callarg->decl = find_named_arg(declargs, callarg, &callarg->decli);
+
+			if (callarg->decl->type == A_VARARGS)
+				throw CompilerExcept{"error: variadic arguments cannot be assigned directly", callarg->src_tok->source};
+
+			resolve_callarg(callarg, callarg->decl);
+		}
+
+		if (!returns) {
+			// check that all args are set
+			for (size_t i=0; i<declargs.size(); ++i) {
+				if (declargs[i].required && !declargs[i].provided)
+					throw CompilerExcept{"error: too few arguments, required argument not provided", call->src_tok->source};
+			}
+		}
 	}
 
 	void prescan_block_for_funcs (AST_block* block) {
@@ -193,18 +264,13 @@ struct IdentResolver {
 			if (n->type == A_FUNCDEF) {
 				auto* fdef = (AST_funcdef*)n;
 
-				for (auto* n=(AST*)fdef->args; n != nullptr; n = n->next) {
-					recurse(n);
-				}
-
-				for (auto* n=(AST*)fdef->rets; n != nullptr; n = n->next)
-					recurse(n);
-
 				stack.declare_func(fdef);
 				funcs.emplace_back(fdef);
 			}
 		}
 	}
+
+	std::vector<AST_funcdef*> funcs_stack;
 
 	void recurse (AST* node) {
 		switch (node->type) {
@@ -252,7 +318,7 @@ struct IdentResolver {
 
 				if (op->lhs->type != A_VAR)
 					throw CompilerExcept{"error: can only assign to variables, not arbitrary expressions", op->lhs->src_tok->source};
-				
+
 				// everything on the rhs of assignments except calls with void return should have a non-void type
 				if (op->rhs->valtype == VOID) {
 					assert(op->rhs->type == A_CALL);
@@ -271,15 +337,18 @@ struct IdentResolver {
 				auto* fdef = (AST_funcdef*)call->fdef;
 
 				stack.resolve_func_call(call);
-
-				for (auto* n=call->args; n != nullptr; n = n->next) {
-					recurse(n);
-				}
-
 				auto* funcdef = (AST_funcdef*)call->fdef;
-				match_call_args(call, funcdef);
+
+				resolve_call_args(call, (AST_callarg*)call->args, (AST_vardecl*)funcdef->args, funcdef->argc);
 
 				call->valtype = funcdef->retc > 0 ? funcdef->rets->valtype : VOID;
+			} break;
+
+			case A_RETURN: {
+				auto* ret = (AST_return*)node;
+				auto* fdef = funcs_stack.back();
+
+				resolve_call_args(ret, (AST_callarg*)ret->args, (AST_vardecl*)fdef->rets, fdef->retc, true);
 			} break;
 
 			case A_UNOP: {
@@ -331,9 +400,16 @@ struct IdentResolver {
 			case A_FUNCDEF: {
 				auto* fdef = (AST_funcdef*)node;
 
-				// returns and args already resolved by prescan
+				funcs_stack.emplace_back(fdef);
+				auto func_scope = stack.push_scope(true);
+
+				resolve_decl_args((AST_vardecl*)fdef->args);
+				resolve_decl_args((AST_vardecl*)fdef->rets);
 
 				recurse(fdef->body);
+
+				stack.reset_scope(func_scope, true);
+				funcs_stack.pop_back();
 			} break;
 
 			case A_WHILE: {
@@ -386,7 +462,6 @@ struct IdentResolver {
 				stack.reset_scope(old_scope);
 			} break;
 
-			case A_RETURN:
 			case A_BREAK:
 			case A_CONTINUE: {
 				// nothing to resolve

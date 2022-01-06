@@ -48,8 +48,6 @@ void func_opt (IR& ir, strview const& funcname) {
 	IROpt opt = {ir};
 
 	if (options.print_ir) {
-		printf(":: %.*s:\n", (int)funcname.size(), funcname.data());
-
 		printf(">>> Before copy propagate:\n");
 		ir.dbg_print();
 	}
@@ -73,12 +71,18 @@ void ir_opt (IRGen& ir) {
 	
 	for (auto& func : ir.funcdefs) {
 		auto& fir = ir.func_irs[func->codegen_funcid];
-		
-		if (options.optimized)
-			func_opt(fir, func->ident);
 
 		if (options.print_ir)
+			printf("\n%.*s():\n", (int)func->ident.size(), func->ident.data());
+
+	#if 0
+		// Totally buggy without SSA
+		if (options.optimized)
+			func_opt(fir, func->ident);
+	#else
+		if (options.print_ir)
 			fir.dbg_print();
+	#endif
 	}
 }
 

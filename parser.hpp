@@ -100,6 +100,7 @@ inline unsigned bt_assoc (TokenType tok) {
 
 enum ASTType {
 	A_BLOCK,
+	A_TUPLE,
 
 	// values
 	A_LITERAL,
@@ -111,6 +112,8 @@ enum ASTType {
 
 	A_FUNCDEF,
 	A_FUNCDEF_BUILTIN,
+
+	A_CALLARG,
 	A_CALL,
 
 	// flow control
@@ -132,6 +135,7 @@ enum ASTType {
 };
 inline const char* ASTType_str[] = {
 	"A_BLOCK",
+	"A_TUPLE",
 
 	"A_LITERAL",
 
@@ -142,6 +146,8 @@ inline const char* ASTType_str[] = {
 
 	"A_FUNCDEF",
 	"A_FUNCDEF_BUILTIN",
+
+	"A_CALLARG",
 	"A_CALL",
 
 	"A_IF",
@@ -253,7 +259,7 @@ struct AST_literal : public AST {
 struct AST_vardecl : public AST {
 	strview      ident;
 
-	AST*         init;       // initialization
+	AST*         init;       // initialization during declaration
 
 	size_t       var_id;     // for IR gen
 	bool         var_is_arg; // for IR gen, is this variable a function argument?
@@ -268,10 +274,10 @@ struct AST_funcdecl: public AST  {
 	strview      ident;
 
 	size_t       argc;
-	AST_vardecl* args;
+	AST*         args;
 
 	size_t       retc;
-	AST_vardecl* rets;
+	AST*         rets;
 };
 struct AST_funcdef : public AST_funcdecl {
 	AST*         body;
@@ -281,6 +287,13 @@ struct AST_funcdef_builtin : public AST_funcdecl {
 	builtin_func_t func_ptr;
 };
 
+struct AST_callarg : public AST {
+	strview      ident; // empty if positional argument
+	AST*         expr;
+
+	AST_vardecl* decl;
+	size_t       decli;
+};
 struct AST_call : public AST {
 	strview      ident;
 
@@ -312,6 +325,12 @@ struct AST_binop : public AST {
 	AST*         rhs;
 };
 
+struct AST_return : public AST {
+	OpType       op;
+	size_t       argc;
+	AST*         args;
+};
+
 // helper function to iterate all child AST nodes and call a func on them
 template <typename FUNC>
 void visit (AST* node, FUNC func) {
@@ -324,16 +343,24 @@ void visit (AST* node, FUNC func) {
 		} break;
 
 		case A_FUNCDEF: { auto* f = (AST_funcdef*)node;
-			for (auto* n=(AST*)f->args; n != nullptr; n = n->next)
+			for (auto* n=f->args; n != nullptr; n = n->next)
 				func(n);
-			for (auto* n=(AST*)f->rets; n != nullptr; n = n->next)
+			for (auto* n=f->rets; n != nullptr; n = n->next)
 				func(n);
 			func(f->body);
 		} break;
 
+		case A_CALLARG: { auto* arg = (AST_callarg*)node;
+			func(arg->expr);
+		} break;
+
 		case A_CALL: { auto* call = (AST_call*)node;
-			for (auto* n=call->args; n != nullptr; n = n->next)
-				func(n);
+			for (auto* arg=call->args; arg != nullptr; arg = arg->next)
+				func(arg);
+		} break;
+		case A_RETURN: { auto* ret = (AST_return*)node;
+			for (auto* arg=ret->args; arg != nullptr; arg = arg->next)
+				func(arg);
 		} break;
 
 		case A_IF:
@@ -363,14 +390,14 @@ void visit (AST* node, FUNC func) {
 		} break;
 
 		case A_BINOP:
-		case A_ASSIGNOP: {
-			auto* op = (AST_binop*)node;
+		case A_ASSIGNOP: { auto* op = (AST_binop*)node;
 			func(op->lhs);
 			func(op->rhs);
 		} break;
 
 		default:
-			func(node);
+			return;
+			//func(node);
 	}
 }
 void dbg_print (AST* node, int depth=0) {
@@ -428,13 +455,22 @@ void dbg_print (AST* node, int depth=0) {
 			indent(depth); printf(")\n");
 		} break;
 
+		case A_CALLARG: { auto* arg = (AST_callarg*)node;
+			if (!arg->ident.empty()) {
+				std::string str(arg->ident);
+				printf(" %s=", str.c_str());
+			}
+			children = true;
+		} break;
 		case A_CALL: { auto* call = (AST_var*)node;
 			std::string str(call->ident);
 			printf(" %s", str.c_str());
 			children = true;
 		} break;
 		
-		case A_RETURN:
+		case A_RETURN: {
+			children = true;
+		} break;
 		case A_BREAK:
 		case A_CONTINUE: {
 			printf("\n");
@@ -478,42 +514,25 @@ struct Parser {
 		tok++;
 	}
 
-	template <typename T, typename FUNC>
-	size_t comma_seperated_list (T** link, FUNC element) {
-		assert(tok->type == T_PAREN_OPEN);
-		tok++;
-
+	template <typename FUNC>
+	size_t comma_seperated_list (AST** link, FUNC element, TokenType endtok) {
 		*link = nullptr;
 
 		size_t count = 0;
-		while (tok->type != T_PAREN_CLOSE) {
-			*link = (T*)element();
+		while (tok->type != endtok) {
+			*link = element();
 
-			link = (T**)&(*link)->next;
+			link = &(*link)->next;
 			count++;
 
 			if (tok->type == T_COMMA) {
 				tok++;
 			}
-			else if (tok->type != T_PAREN_CLOSE) {
-				throw_error_after("syntax error: ',' or ')' expected!", tok[-1]);
+			else if (tok->type != endtok) {
+				throw_error_after("syntax error: ',' or ')' expected!", tok[-1]); // TODO: use endtok
 			}
 		}
-		tok++; // T_PAREN_CLOSE
 		return count;
-	}
-
-	// <funcname>(<expression>, <expression>)
-	AST* call () {
-		auto* call = ast_alloc<AST_call>(A_CALL, tok);
-		call->ident = tok->source.text();
-		tok++;
-
-		call->argc = comma_seperated_list(&call->args, [this] () {
-			return expression(0);
-		});
-
-		return (AST*)call;
 	}
 
 	//    (<expression>)                               -> Parenthesized expression 
@@ -678,28 +697,93 @@ struct Parser {
 
 	//    <expression>
 	// or <expression> = <expression>
-	// or <vardecl> = <expression>   ie.  <varname> : [typename] = <expression>
 	AST* assignment_or_expression () {
+		AST* expr = expression(0);
+
+		// lhs = rhs   or  lhs += rhs  etc.
+		if (is_binary_assignemnt_op(tok->type)) {
+			auto* op = ast_alloc<AST_binop>(A_ASSIGNOP, tok);
+			op->op = tok2assignop(tok->type);
+			tok++;
+
+			op->lhs = expr;
+			op->rhs = expression(0);
+			return (AST*)op;
+		}
+		return expr;
+	}
+
+	//    <expression>
+	// or <expression> = <expression>
+	// or <vardecl> = <expression>   ie.  <varname> : [typename] = <expression>
+	AST* decl_or_assignment_or_expression () {
 		// lhs is var decl
 		if (tok[0].type == T_IDENTIFIER && tok[1].type == T_COLON) {
 			return var_decl();
 		}
 		// lhs is expression
 		else {
-			AST* expr = expression(0);
-
-			// lhs = rhs   or  lhs += rhs  etc.
-			if (is_binary_assignemnt_op(tok->type)) {
-				auto* op = ast_alloc<AST_binop>(A_ASSIGNOP, tok);
-				op->op = tok2assignop(tok->type);
-				tok++;
-
-				op->lhs = expr;
-				op->rhs = expression(0);
-				return (AST*)op;
-			}
-			return expr;
+			return assignment_or_expression();
 		}
+	}
+
+	//    <expression>
+	// or <argname> = <expression>
+	AST* call_arg (TokenType endtok) {
+		auto* arg = ast_alloc<AST_callarg>(A_CALLARG, tok);
+		arg->ident = strview();
+
+		if (tok[0].type == T_IDENTIFIER && tok[1].type == T_ASSIGN) {
+			arg->ident = tok[0].source.text();
+			tok += 2;
+		}
+
+		arg->expr = expression(0);
+		return (AST*)arg;
+	}
+
+	// (<call_arg>, <call_arg> etc.)
+	size_t call_args (AST** args) {
+		assert(tok->type == T_PAREN_OPEN);
+		tok++;
+
+		auto count = comma_seperated_list(args, [this] () {
+			return call_arg(T_PAREN_CLOSE);
+		}, T_PAREN_CLOSE);
+
+		tok++; // T_PAREN_CLOSE
+		return count;
+	}
+
+	// <funcname><call_args>
+	AST* call () {
+		auto* call = ast_alloc<AST_call>(A_CALL, tok);
+		call->ident = tok->source.text();
+		tok++;
+
+		call->argc = call_args(&call->args);
+
+		return (AST*)call;
+	}
+
+	// <call_arg>, <call_arg> etc.
+	size_t return_args (AST** args) {
+
+		auto count = comma_seperated_list(args, [this] () {
+			return call_arg(T_SEMICOLON);
+		}, T_SEMICOLON);
+
+		return count;
+	}
+
+	// return <return_args>;
+	AST* return_ () {
+		auto* ast = ast_alloc<AST_return>(A_RETURN, tok++);
+
+		ast->argc = return_args(&ast->args);
+
+		eat_semicolon();
+		return ast;
 	}
 
 	// parses  if <cond> {} elif <cond> {} elif <cond> else {} into a recursive if-else chain (else body points to new recursive if-else for elif)
@@ -753,18 +837,18 @@ struct Parser {
 
 		return (AST*)loop;
 	}
-	
+
 	// for [start]; <cond>; [end] <block>
 	AST* for_loop () {
 		auto* loop = ast_alloc<AST_loop>(A_FOR, tok++);
 
-		loop->start = assignment_or_expression();
+		loop->start = decl_or_assignment_or_expression();
 		eat_semicolon();
 
 		loop->cond  = expression(0);
 		eat_semicolon();
 
-		loop->end   = assignment_or_expression();
+		loop->end   = decl_or_assignment_or_expression();
 
 		loop->body = block();
 
@@ -781,16 +865,25 @@ struct Parser {
 			// the question is where the const folding happens -> wait until I get to actually implementing compile-time execution
 			if (decl->init->type != A_LITERAL)
 				throw_error("syntax error: only literals allowed as default argument values (for now)", *decl->init->src_tok);
+
+			// TODO: do this now to simply code during resolving (after funcdef prescan we need to know arg/ret types)
+			//       later we will need a more structured way to handle dependencies between struct members/func args and their use sites
+			decl->valtype = decl->init->valtype;
 		}
 
 		return (AST*)decl;
 	}
 
-	AST* arg_decl () {
-		return _const_vardecl();
-	}
-	AST* ret_decl () {
-		return _const_vardecl();
+	size_t fdef_arglist (AST** link) {
+		assert(tok->type == T_PAREN_OPEN);
+		tok++;
+
+		auto count = comma_seperated_list(link, [this] () {
+			return _const_vardecl();
+		}, T_PAREN_CLOSE);
+
+		tok++; // T_PAREN_CLOSE
+		return count;
 	}
 
 	//    func <funcname> (<arg_decl>, <arg_decl>, ...) <block>
@@ -807,9 +900,7 @@ struct Parser {
 		if (tok->type != T_PAREN_OPEN)
 			throw_error_after("syntax error: '(' expected after function identifer!", tok[-1]);
 
-		auto arg = [this] () { return arg_decl(); };
-
-		func->argc = comma_seperated_list(&func->args, arg);
+		func->argc = fdef_arglist(&func->args);
 
 		// implicit (void) return list
 		if (tok->type != T_ASSIGN) {
@@ -820,7 +911,7 @@ struct Parser {
 		else {
 			tok++;
 
-			func->retc = comma_seperated_list(&func->rets, arg);
+			func->retc = fdef_arglist(&func->rets);
 		}
 
 		func->body = block();
@@ -833,7 +924,7 @@ struct Parser {
 	// or <while_loop>
 	// or <do_while_loop>
 	// or <for_loop>
-	// or return;   or break;   or continue;
+	// or return <tuple>;   or break;   or continue;
 	// or function_def
 	// or <assignment_or_expression>;
 	// or ;   -> empty statement, which does nothing
@@ -860,16 +951,16 @@ struct Parser {
 			case T_FOR:
 				return for_loop();
 
-			case T_RETURN:
-			case T_BREAK:
+			case T_RETURN: {
+				return return_();
+			}
+			case T_BREAK: {
+				auto* ast = ast_alloc<AST>(A_BREAK, tok++);
+				eat_semicolon();
+				return ast;
+			}
 			case T_CONTINUE: {
-				ASTType type;
-				switch (tok->type) {
-					case T_RETURN:   type = A_RETURN;   break;
-					case T_BREAK:    type = A_BREAK;    break;
-					case T_CONTINUE: type = A_CONTINUE; break;
-				}
-				auto* ast = ast_alloc<AST>(type, tok++);
+				auto* ast = ast_alloc<AST>(A_CONTINUE, tok++);
 				eat_semicolon();
 				return ast;
 			}
@@ -885,7 +976,7 @@ struct Parser {
 			}
 
 			default: {
-				AST* statement = assignment_or_expression();
+				AST* statement = decl_or_assignment_or_expression();
 				eat_semicolon();
 				return statement;
 			}

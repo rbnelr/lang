@@ -1,21 +1,65 @@
 
-func fvoid () {
-	printf("\na\n");
-	return;
-	printf("b\n");
+//// void return funcs
+
+//a := fvoid(); // error: assignment: void is not a valid variable type.
+fvoid("a1", "b1");
+fvoid2(ret=false, a="a2");
+fvoid2("a3", ret=true);
+fvoid2(b="b4", a="a4");
+
+func fvoid (a : str, b := "b") {
+	printf("\n{s}\n", a);
+	return; // returns actually returns
+	printf("{s}\n", b);
 }
-func fvoid2 (ret := false) = () {
-	printf("\na\n");
+// default argument
+func fvoid2 (a : str, b := "b", ret := false) = () {
+	printf("\n{s}\n", a);
 	if (ret) {
 		return;
 	}
-	printf("b\n");
+	printf("{s}\n", b);
 }
 
-//a := fvoid(); // error: assignment: void is not a valid variable type.
-fvoid();
-fvoid2(true);
-fvoid2();
+//// single-value return
+printf("----------\n");
+
+//printf("{s}\n", fA0());
+//printf("{s}\n", fA1());
+printf("{s}\n", fA2());
+printf("{s}\n", fA3());
+printf("{s}\n", fA4());
+printf("{s}\n", fA5());
+printf("{s}\n", fA6());
+
+func fA0 () = (msg : str) {
+	
+}
+func fA1 () = (msg : str) {
+	// TODO: could generate this error:
+	// error: too few arguments to function, required argument not provided.
+	// but we do not have uninitialized variable tracking yet
+	// and thus can't generate this error while also allowing this:
+	// msg = "hello4"; return;
+	return;
+}
+func fA2 () = (msg := "none") {
+	return;
+}
+func fA3 () = (msg := "none") {
+	msg = "hello3";
+	return;
+}
+func fA4 () = (msg : str) {
+	msg = "hello4";
+	return;
+}
+func fA5 () = (msg : str) {
+	return "hello5";
+}
+func fA6 () = (msg : str) {
+	return msg = "hello6";
+}
 
 // -> return already-written-to return vars
 //      func () = (i: int)  { return; }                  // error: uninitialized return var on return
@@ -33,5 +77,3 @@ fvoid2();
 //      func () = (x: int, y: int) { x=5; return y=6; }  // ok?
 //	
 //turn IR into real SSA format
-
-

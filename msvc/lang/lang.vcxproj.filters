@@ -26,6 +26,7 @@
     <ClCompile Include="..\..\util\smhasher\MurmurHash3.cpp">
       <Filter>util\smhasher</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\llvm_gen.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\util\string.hpp">
@@ -65,6 +66,7 @@
     <ClInclude Include="..\..\ir_opt.hpp" />
     <ClInclude Include="..\..\options.hpp" />
     <ClInclude Include="..\..\resolver.hpp" />
+    <ClInclude Include="..\..\llvm_gen.hpp" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="util">

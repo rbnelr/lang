@@ -131,10 +131,10 @@ struct BumpAllocator {
 	}
 };
 
-BumpAllocator g_allocator;
+inline BumpAllocator g_allocator;
 
 // g_allocator-backed buffer printf
-char const* format (char const* format, ...) {
+inline char const* format (char const* format, ...) {
 	va_list vl;
 	va_start(vl, format);
 
@@ -154,7 +154,7 @@ char const* format (char const* format, ...) {
 }
 
 // just for printing string to the console which might contain newlines or nulls
-std::string escape_string_capped (std::string_view const& str, size_t max_len=(size_t)-1) {
+inline std::string escape_string_capped (std::string_view const& str, size_t max_len=(size_t)-1) {
 	std::string out;
 	out.reserve(str.size() + 8); // should prevent reallocs most of the time
 
@@ -177,7 +177,7 @@ std::string escape_string_capped (std::string_view const& str, size_t max_len=(s
 }
 
 template <typename T>
-void grow (std::vector<T>& vec, size_t min_sz) {
+inline void grow (std::vector<T>& vec, size_t min_sz) {
 	if (vec.size() < min_sz) {
 		vec.resize(min_sz);
 	}

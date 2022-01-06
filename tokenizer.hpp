@@ -242,7 +242,7 @@ struct Token {
 	Value        lit_val;
 };
 
-const char* parse_escaped_string (const char* start, const char* end) {
+inline const char* parse_escaped_string (const char* start, const char* end) {
 	// resulting strings should be shorter than escaped strings
 	size_t max_len = end - start + 1;
 
@@ -276,7 +276,7 @@ const char* parse_escaped_string (const char* start, const char* end) {
 	return result;
 }
 
-std::vector<Token> tokenize (const char* src) {
+inline std::vector<Token> tokenize (const char* src) {
 	ZoneScoped;
 	std::vector<Token> tokens;
 	tokens.reserve(1024*8);

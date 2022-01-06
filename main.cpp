@@ -8,6 +8,8 @@
 #include "codegen.hpp"
 #include "bytecode_vm.hpp"
 
+#include "llvm_gen.hpp"
+
 
 bool compile () {
 
@@ -19,6 +21,8 @@ bool compile () {
 			return false;
 		}
 	}
+
+	llvm_test();
 
 	VM vm; // don't recreate when profling due to stack allocation
 

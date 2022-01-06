@@ -7,20 +7,20 @@ inline constexpr AST cAST (ASTType type, Type valtype=VOID, AST* next=nullptr) {
 	return { type, nullptr, next, valtype };
 }
 
-void print (bool b) {
+inline void print (bool b) {
 	printf("%s", b ? "true":"false");
 }
-void print (int64_t i) {
+inline void print (int64_t i) {
 	printf("%" PRIi64, i);
 }
-void print (double f) {
+inline void print (double f) {
 	printf("%f", f);
 }
-void print (const char* str) {
+inline void print (const char* str) {
 	printf("%s", str);
 }
 
-void my_printf (Value* vals) {
+inline void my_printf (Value* vals) {
 #ifdef TRACY_ENABLE  // disable prints for profiling
 	return;
 #endif
@@ -81,7 +81,7 @@ inline AST_funcdef_builtin BF_PRINTF = {
 	cAST(A_FUNCDEF_BUILTIN), "printf", 2, &BF_PRINTF_VAL, 0, nullptr, my_printf
 };
 
-void timer (Value* vals) {
+inline void timer (Value* vals) {
 	vals[0].i = (int64_t)get_timestamp();
 }
 inline AST_vardecl BF_TIMER_RET = { cAST(A_VARDECL, INT), "timestamp" };
@@ -90,7 +90,7 @@ inline AST_funcdef_builtin BF_TIMER = {
 	cAST(A_FUNCDEF_BUILTIN), "timer", 0, nullptr, 1, &BF_TIMER_RET, timer
 };
 
-void timer_end (Value* vals) {
+inline void timer_end (Value* vals) {
 	auto start = vals[-1];
 	auto end = (int64_t)get_timestamp();
 	vals[0].f = (double)(end - start.i) / (double)timestamp_freq;

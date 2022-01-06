@@ -1,8 +1,6 @@
 #pragma once
 #include "common.hpp"
 
-#undef NULL
-
 enum Type : uint32_t {
 	VOID=0,
 	BOOL,
@@ -25,7 +23,7 @@ union Value {
 	const char*   str; // non-owning
 };
 
-void dbg_print (Type type, Value const& val) {
+inline void dbg_print (Type type, Value const& val) {
 	switch (type) {
 		case BOOL: case INT:
 			printf("%lli", val.i);

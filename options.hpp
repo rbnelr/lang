@@ -16,4 +16,4 @@ struct Options {
 #endif
 };
 
-Options options;
+inline Options options;

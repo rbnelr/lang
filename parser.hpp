@@ -333,7 +333,7 @@ struct AST_return : public AST {
 
 // helper function to iterate all child AST nodes and call a func on them
 template <typename FUNC>
-void visit (AST* node, FUNC func) {
+inline void visit (AST* node, FUNC func) {
 	assert(node);
 
 	switch (node->type) {
@@ -400,7 +400,7 @@ void visit (AST* node, FUNC func) {
 			//func(node);
 	}
 }
-void dbg_print (AST* node, int depth=0) {
+inline void dbg_print (AST* node, int depth=0) {
 	if (!node) return;
 	
 	auto indent = [] (int depth) {

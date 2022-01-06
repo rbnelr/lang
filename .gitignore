@@ -8,6 +8,7 @@
 *.iobj
 *.ipdb
 *.ilk
+llvm_cmd*.txt
 
 todo.txt
 concept.txt

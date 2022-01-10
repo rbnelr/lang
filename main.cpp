@@ -13,6 +13,8 @@
 
 bool compile () {
 
+	llvm_test();
+
 	std::string tok;
 	{
 		ZoneScopedN("load_text_file");
@@ -21,8 +23,6 @@ bool compile () {
 			return false;
 		}
 	}
-
-	llvm_test();
 
 	VM vm; // don't recreate when profling due to stack allocation
 
@@ -166,6 +166,8 @@ _NOINLINE void pascal_tri (int rows) {
 int main (int argc, const char** argv) {
 	//fib(50);
 	//pascal_tri(13);
+
+	llvm_test();
 
 	enable_console_ansi_color_codes();
 

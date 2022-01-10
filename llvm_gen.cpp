@@ -2,6 +2,7 @@
 #include <inttypes.h>
 
 #pragma warning(push, 0)
+#pragma warning (disable : 4244)
 
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
@@ -13,6 +14,7 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Verifier.h"
 
+#include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/STLExtras.h"
 
@@ -22,86 +24,155 @@
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Scalar/GVN.h"
 
-#include "KaleidoscopeJIT.h"
+#include "llvm/ExecutionEngine/JITSymbol.h"
+#include "llvm/ExecutionEngine/Orc/CompileUtils.h"
+#include "llvm/ExecutionEngine/Orc/Core.h"
+#include "llvm/ExecutionEngine/Orc/ExecutionUtils.h"
+#include "llvm/ExecutionEngine/Orc/ExecutorProcessControl.h"
+#include "llvm/ExecutionEngine/Orc/IRCompileLayer.h"
+#include "llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h"
+#include "llvm/ExecutionEngine/Orc/RTDyldObjectLinkingLayer.h"
+#include "llvm/ExecutionEngine/SectionMemoryManager.h" // warning C4244: 'initializing': conversion from '_Ty' to '_Ty2', possible loss of data
 
 #pragma warning(pop)
 
+//int main () {
+//	llvm_test();
+//	return 0;
+//}
 
-int main () {
-	using namespace llvm;
+using namespace llvm;
+using namespace llvm::orc;
 
-	InitializeNativeTarget();
-	InitializeNativeTargetAsmPrinter();
-	InitializeNativeTargetAsmParser();
+ExitOnError ExitOnErr;
 
-	auto TheContext = std::make_unique<LLVMContext>();
-	auto Builder = IRBuilder<>(*TheContext);
-
-	auto TheModule = std::make_unique<Module>("llvm_test", *TheContext);
-
-	auto TSC = llvm::orc::ThreadSafeContext(std::move(TheContext));
-
-	llvm::orc::ThreadSafeModule TSM(std::move(TheModule), TSC);
-
-	auto TheJIT = llvm::orc::KaleidoscopeJIT::Create();
-	auto jit = TheJIT->get();
+struct JIT {
 	
-	auto ctx = TSM.getContext().getContext();
-	auto modl = TSM.getModuleUnlocked();
-	modl->setDataLayout(jit->getDataLayout());
+	ThreadSafeContext TSC;
+	ThreadSafeModule  TSM;
 
+	std::unique_ptr<ExecutionSession>  ES;
+
+	std::unique_ptr<DataLayout>               DL;
+	std::unique_ptr<MangleAndInterner>        Mangle;
 	
+	std::unique_ptr<RTDyldObjectLinkingLayer> ObjectLayer;
+	std::unique_ptr<IRCompileLayer>           CompileLayer;
 	
-	//
+	JITDylib*                                 MainJD;
+
+	void create () {
+		// TODO: I can't pass -debug to my own app and expect LLVM to set this flag can I?
+		// so just set it manually to print stuff?
+	#ifndef NDEBUG
+		//llvm::DebugFlag = true;
+	#endif
+
+		InitializeNativeTarget();
+		InitializeNativeTargetAsmPrinter();
+		InitializeNativeTargetAsmParser();
+		
+		TSC = ThreadSafeContext(std::make_unique<LLVMContext>());
+		TSM = ThreadSafeModule(std::make_unique<Module>("llvm_test", *TSC.getContext()), TSC);
+
+		auto EPC = ExitOnErr( SelfExecutorProcessControl::Create() );
+		ES = std::make_unique<ExecutionSession>(std::move(EPC));
+
+		JITTargetMachineBuilder JTMB(ES->getExecutorProcessControl().getTargetTriple());
+
+		DL = std::make_unique<DataLayout>(ExitOnErr( JTMB.getDefaultDataLayoutForTarget() ));
+
+		Mangle = std::make_unique<MangleAndInterner>(*ES, *DL);
+
+		ObjectLayer = std::make_unique<RTDyldObjectLinkingLayer>(*this->ES, []() { return std::make_unique<SectionMemoryManager>(); });
+
+		CompileLayer = std::make_unique<IRCompileLayer>(*this->ES, *ObjectLayer, std::make_unique<ConcurrentIRCompiler>(std::move(JTMB)));
+
+		MainJD = &ES->createBareJITDylib("<main>");
+
+		MainJD->addGenerator(cantFail(
+			DynamicLibrarySearchGenerator::GetForCurrentProcess(DL->getGlobalPrefix())
+		));
+
+		TSM.getModuleUnlocked()->setDataLayout(*DL);
+
+		if (JTMB.getTargetTriple().isOSBinFormatCOFF()) {
+			ObjectLayer->setOverrideObjectFlagsWithResponsibilityFlags(true);
+			ObjectLayer->setAutoClaimResponsibilityForObjectSymbols(true);
+		}
+	}
+
+	void destroy () {
+		if (auto Err = ES->endSession())
+			ES->reportError(std::move(Err));
+	}
+
 	typedef float (*func_t)(float arg0, float arg1);
 
-	std::vector<llvm::Type*> args = {
-		llvm::Type::getFloatTy(*ctx),
-		llvm::Type::getFloatTy(*ctx),
-	};
+	static Function* compile_test (LLVMContext* ctx, Module* modl) {
 
-	FunctionType *FT = FunctionType::get(llvm::Type::getFloatTy(*ctx), args, false);
+		auto Builder = IRBuilder<>(*ctx);
 
-	Function *F = Function::Create(FT, Function::ExternalLinkage, "test", *modl);
+		std::vector<Type*> args = {
+			Type::getFloatTy(*ctx),
+			Type::getFloatTy(*ctx),
+		};
 
-	auto arg = F->args().begin();
-	auto& arg0 = *arg++;
-	auto& arg1 = *arg++;
-	
-	arg0.setName("arg0");
-	arg1.setName("arg1");
+		auto* FT = FunctionType::get(Type::getFloatTy(*ctx), args, false);
 
-	BasicBlock *BB = BasicBlock::Create(*ctx, "entry", F);
-	Builder.SetInsertPoint(BB);
+		auto* F = Function::Create(FT, Function::ExternalLinkage, "test", *modl);
 
-	//
-	auto* a = &arg0;
-	auto* b = ConstantFP::get(*ctx, APFloat(2.0f));
+		auto arg = F->args().begin();
+		auto& arg0 = *arg++;
+		auto& arg1 = *arg++;
 
-	auto* c = Builder.CreateFAdd(a, b, "addtmp");
+		arg0.setName("arg0");
+		arg1.setName("arg1");
 
-	auto* d = &arg1;
-	auto* e = Builder.CreateFMul(c, d, "multmp");
+		auto* BB = BasicBlock::Create(*ctx, "entry", F);
+		Builder.SetInsertPoint(BB);
 
-	// Finish off the function.
-	Builder.CreateRet(e);
+		//
+		auto* a = &arg0;
+		auto* b = ConstantFP::get(*ctx, APFloat(2.0f));
 
-	verifyFunction(*F);
-	
-	modl->print(errs(), nullptr);
-	
-	
-	auto err = jit->addModule(std::move(TSM));
+		auto* c = Builder.CreateFAdd(a, b, "addtmp");
 
-	auto func = jit->lookup("test");
-	auto faddr = func->getAddress();
-	
-	auto fptr = (func_t)faddr;
+		auto* d = &arg1;
+		auto* e = Builder.CreateFMul(c, d, "multmp");
 
-	float a0 = 5.0f, a1 = 0.5f;
-	float res = fptr(a0, a1);
+		// Finish off the function.
+		Builder.CreateRet(e);
 
-	printf("test(%f, %f) = %f\n", a0, a1, res);
-	return 0;
+		verifyFunction(*F);
+
+		modl->print(errs(), nullptr);
+
+		return F;
+	}
+
+	void run_test () {
+		auto RT = MainJD->getDefaultResourceTracker();
+		CompileLayer->add(RT, std::move(TSM));
+
+		auto func = ES->lookup({MainJD}, (*Mangle)("test"));
+		auto faddr = func->getAddress();
+
+		auto fptr = (func_t)faddr;
+
+		float a0 = 5.0f, a1 = 0.5f;
+		float res = fptr(a0, a1);
+
+		printf("test(%f, %f) = %f\n", a0, a1, res);
+	}
+};
+
+void llvm_test () {
+	JIT jit;
+	jit.create();
+	jit.compile_test(jit.TSC.getContext(), jit.TSM.getModuleUnlocked());
+	jit.run_test();
+	jit.destroy();
+
+	exit(0);
 }
-

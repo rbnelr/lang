@@ -153,11 +153,46 @@ struct CoffLoader {
 	}
 };
 
+
+class Resolver : public JITSymbolResolver {
+public:
+	Resolver () {}
+
+	virtual ~Resolver() = default;
+		
+	/// Returns the fully resolved address and flags for each of the given
+	///        symbols.
+	///
+	/// This method will return an error if any of the given symbols can not be
+	/// resolved, or if the resolution process itself triggers an error.
+	virtual void lookup(const LookupSet &Symbols,
+						OnResolvedFunction OnResolved) {
+
+	}
+
+	/// Returns the subset of the given symbols that should be materialized by
+	/// the caller. Only weak/common symbols should be looked up, as strong
+	/// definitions are implicitly always part of the caller's responsibility.
+	virtual Expected<LookupSet>
+	getResponsibilitySet(const LookupSet &Symbols) {
+		LookupSet Result;
+		return Result;
+	}
+
+	/// Specify if this resolver can return valid symbols with zero value.
+	//virtual bool allowsZeroSymbols() { return false; }
+
+};
+
 struct JIT {
 
 #if TEST
 	std::unique_ptr<LLVMContext> ctx;
 	std::unique_ptr<Module>      modl;
+	
+	std::unique_ptr<Resolver> resolver;
+	std::unique_ptr<RuntimeDyld::MemoryManager> MM;
+	std::unique_ptr<RuntimeDyld> RD;
 #else
 	ThreadSafeContext TSC;
 	ThreadSafeModule  TSM;
@@ -187,6 +222,11 @@ struct JIT {
 	#if TEST
 		ctx = std::make_unique<LLVMContext>();
 		modl = std::make_unique<Module>("llvm_test", *ctx);
+		
+		resolver = std::make_unique<Resolver>();
+
+		MM = std::make_unique<SectionMemoryManager>();
+		RD = std::make_unique<RuntimeDyld>(*MM, *resolver);
 	#else
 		TSC = ThreadSafeContext(std::make_unique<LLVMContext>());
 		TSM = ThreadSafeModule(std::make_unique<Module>("llvm_test", *TSC.getContext()), TSC);
@@ -220,8 +260,11 @@ struct JIT {
 	}
 
 	void destroy () {
-		//if (auto Err = ES->endSession())
-		//	ES->reportError(std::move(Err));
+	#if TEST
+	#else
+		if (auto Err = ES->endSession())
+			ES->reportError(std::move(Err));
+	#endif
 	}
 
 	typedef float (*func_t)(float arg0, float arg1);
@@ -269,7 +312,7 @@ struct JIT {
 
 		return F;
 	}
-
+	
 	void run_test () {
 
 	#if TEST
@@ -285,22 +328,32 @@ struct JIT {
 		auto TM = cantFail( JTMB.createTargetMachine() );
 		auto SC = SimpleCompiler(*TM);
 
-		auto cres = ExitOnErr( SC(*modl) );
+		auto O = ExitOnErr( SC(*modl) );
 
-		char* filedata = (char*)cres->getBufferStart();
-		auto filesz = cres->getBufferSize();
+		auto Obj = ExitOnErr( object::ObjectFile::createObjectFile(*O) );
 
-		binary_loader.load_coff(filedata, filesz);
-		
-		auto fptr = (func_t)binary_loader.find_func("test");
+		auto loadedO = RD->loadObject(*Obj);
+
+		//RD->resolveRelocations();
+		RD->finalizeWithMemoryManagerLocking(); // calls resolveRelocations
+
+		auto func = RD->getSymbol("test");
+		auto faddr = func.getAddress();
+
+		//auto faddr = RD->getSymbolLocalAddress("test");
+
+		auto fptr = (func_t)faddr;
 
 	#else
 		auto RT = MainJD->getDefaultResourceTracker();
 		CompileLayer->add(RT, std::move(TSM));
 		
+		auto func2 = ES->lookup({MainJD}, (*Mangle)("test"));
+		//auto faddr = func->getAddress();
+		
 		auto func = ES->lookup({MainJD}, (*Mangle)("test"));
 		auto faddr = func->getAddress();
-		
+
 		auto fptr = (func_t)faddr;
 	#endif
 		

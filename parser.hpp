@@ -4,7 +4,8 @@
 #include "errors.hpp"
 #include "basic_types.hpp"
 
-typedef void (*builtin_func_t)(Value* vals);
+//typedef void (*builtin_func_t)(Value* vals);
+typedef void* builtin_func_t;
 
 inline constexpr bool is_binary_or_ternary_op (TokenType tok) {
 	return (tok >= T_ADD && tok <= T_NOT_EQUALS) || tok == T_QUESTIONMARK;
@@ -263,6 +264,8 @@ struct AST_vardecl : public AST {
 
 	size_t       var_id;     // for IR gen
 	bool         var_is_arg; // for IR gen, is this variable a function argument?
+	
+	void*        llvm_value;
 };
 
 struct AST_var : public AST {

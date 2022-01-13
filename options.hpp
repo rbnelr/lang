@@ -1,7 +1,7 @@
 #pragma once
 
 struct Options {
-	std::string  filename  = "test5.la";
+	std::string  filename  = "test2.la";
 
 	bool         optimized = 1;
 
@@ -10,7 +10,7 @@ struct Options {
 	bool         print_ir   = false;
 	bool         print_code = false;
 #else
-	bool         print_ast  = true;
+	bool         print_ast  = 0;
 	bool         print_ir   = true;
 	bool         print_code = true;
 #endif

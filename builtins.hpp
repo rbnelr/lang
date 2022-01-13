@@ -3,6 +3,8 @@
 #include "basic_types.hpp"
 #include "parser.hpp"
 
+#include "stdarg.h"
+
 inline constexpr AST cAST (ASTType type, Type valtype=VOID, AST* next=nullptr) {
 	return { type, nullptr, next, valtype };
 }
@@ -20,6 +22,7 @@ inline void print (const char* str) {
 	printf("%s", str);
 }
 
+#if 0
 inline void my_printf (Value* vals) {
 #ifdef TRACY_ENABLE  // disable prints for profiling
 	return;
@@ -74,6 +77,59 @@ inline void my_printf (Value* vals) {
 	}
 	// ignore varargs that are not printed (no error)
 }
+#else
+inline void my_printf (const char* format, ...) {
+#ifdef TRACY_ENABLE  // disable prints for profiling
+	return;
+#endif
+
+	va_list varargs;
+	va_start(varargs, format);
+
+	const char* cur = format;
+
+	size_t i = 0;
+	while (*cur != '\0') {
+		if (*cur == '{') {
+			const char* start = ++cur;
+
+			while (*cur != '}')
+				cur++;
+			const char* end = cur++;
+
+			strview params = strview(start, end - start);
+
+			//if (i >= varargc) {
+			//	// print null for % that access outside of the varargs
+			//	printf("null"); // cast away const, since unified args/rets force me to not use const in print_val
+			//}
+			//else {
+				if (params.size() != 1)
+					throw RuntimeExcept{"runtime error: printf: expected type specifier"};
+				
+				switch (params[0]) {
+					case 'b': print( va_arg(varargs, bool       ) ); break;
+					case 'i': print( va_arg(varargs, int64_t    ) ); break;
+					case 'f': print( va_arg(varargs, double     ) ); break;
+					case 's': print( va_arg(varargs, char const*) ); break;
+					default:
+						throw RuntimeExcept{"runtime error: printf: unknown type specifier"};
+				}
+			//}
+			continue;
+		} else {
+			if (cur[0] == '^' && cur[1] == '{') {
+				cur++; // ^{ escape sequence
+			}
+			putc(*cur++, stdout);
+		}
+	}
+	// ignore varargs that are not printed (no error)
+
+	va_end(varargs);
+}
+#endif
+
 inline AST_vardecl BF_PRINTF_VARARGS = { cAST(A_VARARGS                               ), "args" };
 inline AST_vardecl BF_PRINTF_VAL     = { cAST(A_VARDECL, STR, (AST*)&BF_PRINTF_VARARGS), "format" };
 

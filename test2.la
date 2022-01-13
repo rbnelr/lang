@@ -1,20 +1,30 @@
-n : int;
-{
-	a := 5;
-	b := 10;
-	n = a * b - 5;
-}
+//n : int;
+//{
+//	a := 5;
+//	b := 10;
+//	n = a * b - 5;
+//}
+//
+//a := 0;
+//b := 1;
+//
+//printf("Fibbonaci: {i} {i}", a, b);
+//
+//for i := 0; i < n-2; i++ {
+//	c := a + b;
+//	printf(" {i}", c);
+//	a = b;
+//	b = c;
+//}
+//
+//printf("\n");
 
-a := 0;
-b := 1;
+a := 5;
+b := 3;
+c := 7;
 
-printf("Fibbonaci: {i} {i}", a, b);
+d := a + b * c;
+printf("Blah1: {i} {i}", d, b);
+printf("Blah1: {i} {i}", d, c);
 
-for i := 0; i < n-2; i++ {
-	c := a + b;
-	printf(" {i}", c);
-	a = b;
-	b = c;
-}
-
-printf("\n");
+printf("Blah2: {i} {i}", a, a, a, b, b, b);

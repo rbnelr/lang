@@ -432,7 +432,7 @@ struct IRGen {
 		return ir;
 	}
 
-	Var IRgen (IR& ir, AST* ast, AST_vardecl* dst=nullptr, size_t dst_stk_loc=0) {
+	Var IRgen (IR& ir, AST* ast) {
 		switch (ast->type) {
 
 			case A_LITERAL: {

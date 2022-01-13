@@ -13,8 +13,6 @@
 
 bool compile () {
 
-	llvm_test();
-
 	std::string tok;
 	{
 		ZoneScopedN("load_text_file");
@@ -38,67 +36,85 @@ bool compile () {
 		SourceLines lines; // need lines outside of try to allow me to print error messages with line numbers
 		try {
 
+			#define LLVM 1
+
+			ZoneScopedN("compile");
+			{
+				lines.parse_lines(tok.c_str());
+			}
+
+			std::vector<Token> tokens;
+			{
+				tokens = tokenize(tok.c_str());
+			}
+
+			AST* ast;
+			{
+				ZoneScopedN("parse");
+				Parser parser;
+				parser.tok = &tokens[0];
+				ast = parser.file();
+
+				if (options.print_ast) { // print AST
+					printf("AST:\n");
+					dbg_print(ast);
+				}
+			}
+
+			std::vector<AST_funcdef*> funcdefs;
+			{
+				ZoneScopedN("resolve");
+				IdentResolver resolve;
+				resolve.resolve_ast(ast);
+
+				funcdefs = std::move(resolve.funcs);
+			}
+
+		#if LLVM
+			{
+				llvm_init();
+
+				llvm::Module* llvm_modl = llvm_gen_module(funcdefs);
+				defer( llvm_free_module(llvm_modl); );
+			
+				#ifndef TRACY_ENABLE
+				{
+					ZoneScopedN("llvm exe");
+					llvm_jit_and_exec(llvm_modl);
+				}
+				#endif
+			}
+		#else
 			std::vector<Instruction> code;
 			{
-				ZoneScopedN("compile");
-				{
-					lines.parse_lines(tok.c_str());
-				}
-
-				std::vector<Token> tokens;
-				{
-					tokens = tokenize(tok.c_str());
-				}
-
-				AST* ast;
-				{
-					ZoneScopedN("parse");
-					Parser parser;
-					parser.tok = &tokens[0];
-					ast = parser.file();
-
-					if (options.print_ast) { // print AST
-						printf("AST:\n");
-						dbg_print(ast);
-					}
-				}
-
-				std::vector<AST_funcdef*> funcdefs;
-				{
-					ZoneScopedN("resolve");
-					IdentResolver resolve;
-					resolve.resolve_ast(ast);
-
-					funcdefs = std::move(resolve.funcs);
-				}
-
 				IR::IRGen irgen = { funcdefs };
 				{
 					irgen.generate();
 				}
-
+				
 				{
 					IR::ir_opt(irgen);
 				}
-
-				Codegen codegen;
+				
 				{
 					ZoneScopedN("codegen");
+					Codegen codegen;
 					codegen.generate(irgen);
-
+				
 					if (options.print_code)
 						codegen.dbg_print();
-
+				
 					code = std::move(codegen.code);
 				}
 			}
 
-			//#ifndef TRACY_ENABLE
+			#ifndef TRACY_ENABLE
 			{
 				ZoneScopedN("vm.execute");
 				vm.execute(code.data(), code.size(), 0);
 			}
-			//#endif
+			#endif
+		#endif
 		}
 		catch (CompilerExcept& ex) {
 			ex.print(options.filename.c_str(), lines);
@@ -166,8 +182,6 @@ _NOINLINE void pascal_tri (int rows) {
 int main (int argc, const char** argv) {
 	//fib(50);
 	//pascal_tri(13);
-
-	llvm_test();
 
 	enable_console_ansi_color_codes();
 

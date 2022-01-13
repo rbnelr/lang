@@ -1,6 +1,12 @@
 #pragma once
 #include "common.hpp"
 
+#undef VOID
+#undef BOOL
+#undef INT
+#undef FLT
+#undef STR
+
 enum Type : uint32_t {
 	VOID=0,
 	BOOL,

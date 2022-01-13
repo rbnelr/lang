@@ -34,127 +34,336 @@
 #include "llvm/ExecutionEngine/Orc/RTDyldObjectLinkingLayer.h"
 #include "llvm/ExecutionEngine/SectionMemoryManager.h" // warning C4244: 'initializing': conversion from '_Ty' to '_Ty2', possible loss of data
 
-#include "xcoff.h"
-
 #pragma warning(pop)
 
-#include "windows.h"
+#include "llvm_gen.hpp"
+#include "builtins.hpp"
 
-#undef IMAGE_FILE_MACHINE_AMD64
+//#include "windows.h"
 
-using namespace llvm;
-using namespace llvm::orc;
+llvm::ExitOnError ExitOnErr;
 
-ExitOnError ExitOnErr;
+struct LLVM_Backend {
+	llvm::LLVMContext ctx; // TODO: can this go away after IR was built but before it was compiled?
+	llvm::IRBuilder<> build;
 
-#define TEST 1
+	LLVM_Backend (): ctx{}, build{ctx} {}
+};
+std::unique_ptr<LLVM_Backend> llvm_backend;
 
-struct CoffLoader {
-	// from https://wiki.osdev.org/COFF
-	// matches what's found in llvm-project\llvm\include\llvm\Object\COFF.h
-	// does _not_ match        llvm-project\llvm\include\llvm\BinaryFormat\COFF.h
-	struct Header {
-		uint16_t  magic;          /* Magic number */	
-		uint16_t  num_sections;   /* Number of Sections */
-		uint32_t  timedat;        /* Time & date stamp */
-		uint32_t  symbol_table;   /* File pointer to Symbol Table */
-		uint32_t  num_symbols;    /* Number of Symbols */
-		uint16_t  opt_header_sz;  /* sizeof(Optional Header) */
-		uint16_t  flags;          /* Flags */
-	};
-
-	struct Section {
-		char      name[8];        /* Section Name */
-		uint32_t  phys_addr;      /* Physical Address */
-		uint32_t  virt_addr;      /* Virtual Address */
-		uint32_t  size;           /* Section Size in Bytes */
-		uint32_t  section_ptr;    /* File offset to the Section data */
-		uint32_t  reloc_table;    /* File offset to the Relocation table for this Section */
-		uint32_t  linenum_table;  /* File offset to the Line Number table for this Section */
-		uint16_t  num_relocs;     /* Number of Relocation table entries */
-		uint16_t  num_linenums;   /* Number of Line Number table entries */
-		uint32_t  flags;          /* Flags for this section */
-	};
-	struct Symbol {
-		char      name[8];        /* Symbol Name */
-		uint32_t  value;          /* Value of Symbol */
-		int16_t   section;        /* Section Number */
-		uint16_t  type;           /* Symbol Type */
-		uint8_t   sclass;         /* Storage Class */
-		uint8_t   numaux;         /* Auxiliary Count */
-	};
-	struct Relocation {
-		int32_t   virt_addr;      /* Reference Address */
-		int32_t   symbol;         /* Symbol index */
-		uint16_t  type;           /* Type of relocation */
-	};
-
-	Header*  header;
-	Section* sections;
-	Symbol*  symbols;
-
-	int text_scn = 0;
-
-	void* executable = nullptr;
-	size_t executable_sz = 0;
-
-	~CoffLoader () {
-		VirtualFree(executable, executable_sz, MEM_RELEASE | MEM_DECOMMIT);
+void llvm_init () {
+	if (llvm_backend) {
+		ZoneScopedN("LLVM deinit");
+		llvm_backend.reset(); // recreate to properly asses cost during profiling
 	}
 
-	void load_coff (char* file, size_t filesz) {
-		executable_sz = filesz;
+	ZoneScoped;
+	llvm_backend = std::make_unique<LLVM_Backend>();
+}
 
-		header = (Header*)file;
-		//assert(header->magic == COFF::IMAGE_FILE_MACHINE_AMD64); // 0x8664
-		assert(header->opt_header_sz == 0);
+//// LLVM IR gen
 
-		sections = (Section*)(header + 1);
+struct LLVM_gen {
+	llvm::LLVMContext& ctx;
+	llvm::IRBuilder<>& build;
+	
+	std::vector<AST_funcdef*>& funcdefs;
+	
+	llvm::Module* modl;
 
-		symbols = (Symbol*)(file + header->symbol_table);
+	std::vector<llvm::Function*> func_irs;
 
-		for (int32_t i=0; i < header->num_sections; ++i) {
-			auto& sec = sections[i];
+	struct LoopLabels {
+		size_t cont;
+		size_t end;
+	};
+	std::vector<LoopLabels> loop_lbls;
+	size_t                  return_lbl;
 
-			auto* relocs = (Relocation*)(file + sec.reloc_table);
+	void generate () {
+		ZoneScoped;
 
-			if (strcmp(sec.name, ".text") == 0) {
-				text_scn = i+1; // section numbers are 1-based
-			}
+		func_irs.resize(funcdefs.size());
+
+		modl = new llvm::Module("llvm_test", llvm_backend->ctx);
+
+		add_printf();
+
+		for (size_t funcid = 0; funcid < funcdefs.size(); ++funcid) {
+			auto& func = funcdefs[funcid];
+			func->codegen_funcid = funcid;
+
+			func_irs[funcid] = funcdef(func);
 		}
 
-		executable = VirtualAlloc(NULL, executable_sz, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-		assert(executable);
-
-		memcpy(executable, file, executable_sz);
-
-		DWORD oldProtect;
-		auto res = VirtualProtect(executable, executable_sz, PAGE_EXECUTE_READ, &oldProtect);
-		assert(res);
+		if (options.print_ir)
+			modl->print(llvm::errs(), nullptr);
+	}
+	
+	llvm::Function* _printf;
+	llvm::Function* add_printf () {
+		llvm::Type* ret_ty = llvm::Type::getVoidTy(ctx);
+		std::vector<llvm::Type*> args_ty = {
+			llvm::Type::getInt8PtrTy(ctx) // AddressSpace ?
+		};
+		auto* func_ty = llvm::FunctionType::get(ret_ty, args_ty, true);
+		
+		_printf = llvm::Function::Create(func_ty, llvm::Function::ExternalLinkage, "printf", *modl);
+		return _printf;
 	}
 
-	void* find_func (const char* funcname) {
-		if (text_scn == 0)
-			return nullptr;
+	llvm::Function* funcdef (AST_funcdef* func_def) {
+		ZoneScoped;
 
-		auto* text_ptr = (char*)executable + sections[text_scn-1].virt_addr;
+		// Func args and returns here
+		
+		llvm::Type* ret_ty = llvm::Type::getVoidTy(ctx);
+		std::vector<llvm::Type*> args_ty = {};
 
-		for (uint32_t i=0; i < header->num_symbols; ++i) {
-			auto& sym = symbols[i];
-			if (strcmp(sym.name, funcname) == 0) {
-				constexpr char C_EXT = 2;
+		auto* func_ty = llvm::FunctionType::get(ret_ty, args_ty, false);
+		
+		auto* func = llvm::Function::Create(func_ty, llvm::Function::InternalLinkage, "main", *modl);
+		
+		auto* bb_entry = llvm::BasicBlock::Create(ctx, "entry", func);
+		build.SetInsertPoint(bb_entry);
 
-				assert(sym.sclass == C_EXT && sym.section == text_scn);
-				return text_ptr + sym.value;
+		gen(func_def->body);
+		
+		build.CreateRetVoid();
+		
+		verifyFunction(*func);
+
+		return func;
+	}
+	
+	struct Var {
+
+	};
+
+	/*
+	IROpType unary2ir (AST* ast, OpType op, Type type) {
+		switch (op) {
+			case OP_POSITIVE: {
+				switch (type) {
+					case INT: return OP_NONE; // no-op
+					case FLT: return OP_NONE; // no-op
+					default: throw CompilerExcept{"error: positive operator is not valid for type", ast->src_tok->source};
+				}
 			}
+			case OP_NEGATE: {
+				switch (type) {
+					case INT: return OP_i_NEG;
+					case FLT: return OP_f_NEG;
+					default: throw CompilerExcept{"error: negate is not valid for type", ast->src_tok->source};
+				}
+			}
+			case OP_NOT: {
+				switch (type) {
+					case INT : return OP_i_NOT;
+					case BOOL: return OP_b_NOT;
+					default: throw CompilerExcept{"error: not is not valid for type", ast->src_tok->source};
+				}
+			}
+			case OP_INC: {
+				switch (type) {
+					case INT : return OP_i_INC;
+					default: throw CompilerExcept{"error: increment is not valid for type", ast->src_tok->source};
+				}
+			}
+			case OP_DEC: {
+				switch (type) {
+					case INT : return OP_i_DEC;
+					default: throw CompilerExcept{"error: decrement is not valid for type", ast->src_tok->source};
+				}
+			}
+			INVALID_DEFAULT;
 		}
+	}*/
 
-		return nullptr;
+	llvm::Value* gen (AST* ast) {
+		switch (ast->type) {
+			case A_LITERAL: {
+				auto* lit = (AST_literal*)ast;
+				
+				using namespace llvm;
+				using llvm::Type;
+
+				switch (lit->valtype) {
+					case BOOL: return lit->value.b ? build.getTrue() : build.getFalse();
+					case INT:  return ConstantInt::get(Type::getInt64Ty(ctx), lit->value.i, true);
+					case FLT:  return ConstantFP ::get(Type::getDoubleTy(ctx), APFloat(lit->value.f));
+					case STR:  return build.CreateGlobalStringPtr(lit->value.str, "strlit");
+					INVALID_DEFAULT;
+				}
+			}
+
+			case A_VARDECL: {
+				auto* var = (AST_vardecl*)ast;
+
+				if (var->init) {
+					var->llvm_value = gen(var->init);
+					return (llvm::Value*)var->llvm_value;
+				}
+				return {};
+			}
+
+			case A_VAR: {
+				auto* var = (AST_var*)ast;
+				auto* vardecl = (AST_vardecl*)var->decl;
+				return (llvm::Value*)vardecl->llvm_value;
+			}
+
+			case A_BINOP: {
+				auto* op = (AST_binop*)ast;
+
+				assert(op->lhs->valtype == op->rhs->valtype);
+				
+				llvm::Value* lhs = gen(op->lhs);
+				llvm::Value* rhs = gen(op->rhs);
+
+				switch (op->valtype) {
+				case INT: {
+					switch (op->op) {
+						case OP_ADD:        return build.CreateAdd(lhs, rhs, "addtmp");
+						case OP_SUB:        return build.CreateSub(lhs, rhs, "subtmp");
+						case OP_MUL:        return build.CreateMul(lhs, rhs, "multmp");
+						case OP_DIV:        return build.CreateSDiv(lhs, rhs, "divtmp");
+						//case OP_REMAINDER:  return OP_i_REMAIND;
+						//case OP_LESS:       return OP_i_LT;
+						//case OP_LESSEQ:     return OP_i_LE;
+						//case OP_GREATER:    return OP_i_GT;
+						//case OP_GREATEREQ:  return OP_i_GE;
+						//case OP_EQUALS:     return OP_i_EQ;
+						//case OP_NOT_EQUALS: return OP_i_NEQ;
+						INVALID_DEFAULT;
+					}
+				} break;
+				//case BOOL: {
+				//	switch (op) {
+				//		case OP_ADD:        return OP_i_ADD;
+				//		case OP_SUB:        return OP_i_SUB;
+				//		case OP_MUL:        return OP_i_MUL;
+				//		case OP_DIV:        return OP_i_DIV;
+				//		case OP_REMAINDER:  return OP_i_REMAIND;
+				//			throw CompilerExcept{ "error: math ops not valid for this type", ast->src_tok->source };
+				//
+				//		case OP_LESS:       return OP_i_LT;
+				//		case OP_LESSEQ:     return OP_i_LE;
+				//		case OP_GREATER:    return OP_i_GT;
+				//		case OP_GREATEREQ:  return OP_i_GE;
+				//			throw CompilerExcept{ "error: can't compare bools like that", ast->src_tok->source };
+				//
+				//		case OP_EQUALS:     return OP_b_EQ; 
+				//		case OP_NOT_EQUALS: return OP_b_NEQ;
+				//		INVALID_DEFAULT;
+				//	}
+				//} break;
+				//case FLT: {
+				//	switch (op) {
+				//		case OP_REMAINDER:
+				//			throw CompilerExcept{ "error: remainder operator not valid for floats", ast->src_tok->source };
+				//		case OP_ADD:        return OP_f_ADD;
+				//		case OP_SUB:        return OP_f_SUB;
+				//		case OP_MUL:        return OP_f_MUL;
+				//		case OP_DIV:        return OP_f_DIV;
+				//		case OP_LESS:       return OP_f_LT;
+				//		case OP_LESSEQ:     return OP_f_LE;
+				//		case OP_GREATER:    return OP_f_GT;
+				//		case OP_GREATEREQ:  return OP_f_GE;
+				//		case OP_EQUALS:     return OP_f_EQ;
+				//		case OP_NOT_EQUALS: return OP_f_NEQ;
+				//		INVALID_DEFAULT;
+				//	}
+				//} break;
+				default:
+					throw CompilerExcept{ "error: math ops not valid for this type", ast->src_tok->source };
+				}
+			}
+
+			case A_BLOCK: {
+				auto* block = (AST_block*)ast;
+
+				for (auto* n=block->statements; n != nullptr; n = n->next) {
+					gen(n);
+				}
+
+				return {};
+			}
+			
+			case A_CALL: {
+				auto* call = (AST_call*)ast;
+				auto* fdef = (AST_funcdef*)call->fdef;
+
+				// collect function args
+				struct Argdecl {
+					AST_vardecl* decl;
+					bool         set;
+					size_t       callarg;
+				};
+				std::vector<Argdecl> declargs;
+				declargs.reserve(32);
+
+				for (auto* arg = (AST_vardecl*)fdef->args; arg != nullptr; arg = (AST_vardecl*)arg->next) {
+					declargs.push_back({ arg, false, (size_t)-1 });
+				}
+
+				// generate IR for callargs first (move into temps)
+				std::vector<llvm::Value*> callargs;
+				callargs.reserve(32);
+
+				bool vararg     = false;
+				size_t vararg_i = 0;
+
+				size_t calli = 0;
+				for (auto* arg = (AST_callarg*)call->args; arg != nullptr; arg = (AST_callarg*)arg->next) {
+					callargs.push_back( gen(arg->expr) );
+
+					if (arg->decl->type == A_VARARGS) {
+						vararg = true;
+						vararg_i = calli;
+					}
+
+					declargs[arg->decli].set = true;
+					declargs[arg->decli].callarg = calli++;
+				}
+
+				if (fdef == (AST_funcdef*)&BF_PRINTF) {
+					return build.CreateCall(_printf, callargs); // TODO: non-void returns can get a "calltmp" name
+				}
+				else {
+					assert(false);
+					return {};
+				}
+			}
+
+			case A_FUNCDEF:
+			default:
+				return {};
+		}
 	}
 };
 
+llvm::Module* llvm_gen_module (std::vector<AST_funcdef*>& funcdefs) {
+	ZoneScoped;
 
-class Resolver : public JITSymbolResolver {
+	LLVM_gen llvm_gen = {
+		llvm_backend->ctx,
+		llvm_backend->build,
+		funcdefs
+	};
+	llvm_gen.generate();
+
+	return llvm_gen.modl; // pass ownership to caller
+}
+void llvm_free_module (llvm::Module* modl) {
+	delete modl;
+}
+
+//// LLVM jit & exec
+
+#define TEST 1
+
+class Resolver : public llvm::JITSymbolResolver {
 public:
 	Resolver () {}
 
@@ -168,14 +377,31 @@ public:
 	virtual void lookup(const LookupSet &Symbols,
 						OnResolvedFunction OnResolved) {
 
+		std::map<llvm::StringRef, llvm::JITEvaluatedSymbol> results;
+
+		for (auto& Sym : Symbols) {
+			if (Sym == "printf") {
+				results.emplace(Sym, llvm::JITEvaluatedSymbol{
+					(llvm::JITTargetAddress)&my_printf,
+					llvm::JITSymbolFlags::Absolute | // TODO: do I need this?
+					llvm::JITSymbolFlags::Callable
+				});
+			}
+			else {
+				assert(false);
+			}
+		}
+
+		OnResolved(results);
 	}
 
 	/// Returns the subset of the given symbols that should be materialized by
 	/// the caller. Only weak/common symbols should be looked up, as strong
 	/// definitions are implicitly always part of the caller's responsibility.
-	virtual Expected<LookupSet>
+	virtual llvm::Expected<LookupSet>
 	getResponsibilitySet(const LookupSet &Symbols) {
 		LookupSet Result;
+		assert(Symbols.size() == 0);
 		return Result;
 	}
 
@@ -187,12 +413,9 @@ public:
 struct JIT {
 
 #if TEST
-	std::unique_ptr<LLVMContext> ctx;
-	std::unique_ptr<Module>      modl;
-	
 	std::unique_ptr<Resolver> resolver;
-	std::unique_ptr<RuntimeDyld::MemoryManager> MM;
-	std::unique_ptr<RuntimeDyld> RD;
+	std::unique_ptr<llvm::RuntimeDyld::MemoryManager> MM;
+	std::unique_ptr<llvm::RuntimeDyld> RD;
 #else
 	ThreadSafeContext TSC;
 	ThreadSafeModule  TSM;
@@ -208,25 +431,23 @@ struct JIT {
 	JITDylib*                                 MainJD;
 #endif
 
-	void create () {
+	void init () {
+		ZoneScoped;
+
 		// TODO: I can't pass -debug to my own app and expect LLVM to set this flag can I?
 		// so just set it manually to print stuff?
 	#ifndef NDEBUG
 		//llvm::DebugFlag = true;
 	#endif
 
-		InitializeNativeTarget();
-		InitializeNativeTargetAsmPrinter();
-		InitializeNativeTargetAsmParser();
-
+		llvm::InitializeNativeTarget();
+		llvm::InitializeNativeTargetAsmPrinter();
+		llvm::InitializeNativeTargetAsmParser();
 	#if TEST
-		ctx = std::make_unique<LLVMContext>();
-		modl = std::make_unique<Module>("llvm_test", *ctx);
-		
 		resolver = std::make_unique<Resolver>();
 
-		MM = std::make_unique<SectionMemoryManager>();
-		RD = std::make_unique<RuntimeDyld>(*MM, *resolver);
+		MM = std::make_unique<llvm::SectionMemoryManager>();
+		RD = std::make_unique<llvm::RuntimeDyld>(*MM, *resolver);
 	#else
 		TSC = ThreadSafeContext(std::make_unique<LLVMContext>());
 		TSM = ThreadSafeModule(std::make_unique<Module>("llvm_test", *TSC.getContext()), TSC);
@@ -266,83 +487,33 @@ struct JIT {
 			ES->reportError(std::move(Err));
 	#endif
 	}
-
-	typedef float (*func_t)(float arg0, float arg1);
-
-	CoffLoader binary_loader;
-
-	static Function* compile_test (LLVMContext* ctx, Module* modl) {
-
-		auto Builder = IRBuilder<>(*ctx);
-
-		std::vector<Type*> args = {
-			Type::getFloatTy(*ctx),
-			Type::getFloatTy(*ctx),
-		};
-
-		auto* FT = FunctionType::get(Type::getFloatTy(*ctx), args, false);
-
-		auto* F = Function::Create(FT, Function::ExternalLinkage, "test", *modl);
-
-		auto arg = F->args().begin();
-		auto& arg0 = *arg++;
-		auto& arg1 = *arg++;
-
-		arg0.setName("arg0");
-		arg1.setName("arg1");
-
-		auto* BB = BasicBlock::Create(*ctx, "entry", F);
-		Builder.SetInsertPoint(BB);
-
-		//
-		auto* a = &arg0;
-		auto* b = ConstantFP::get(*ctx, APFloat(2.0f));
-
-		auto* c = Builder.CreateFAdd(a, b, "addtmp");
-
-		auto* d = &arg1;
-		auto* e = Builder.CreateFMul(c, d, "multmp");
-
-		// Finish off the function.
-		Builder.CreateRet(e);
-
-		verifyFunction(*F);
-
-		modl->print(errs(), nullptr);
-
-		return F;
-	}
 	
-	void run_test () {
+	void jit_and_execute (llvm::Module* modl) {
+		ZoneScoped;
 
 	#if TEST
-		auto EPC = ExitOnErr( SelfExecutorProcessControl::Create() );
-		auto ES = std::make_unique<ExecutionSession>(std::move(EPC));
+		auto EPC = ExitOnErr( llvm::orc::SelfExecutorProcessControl::Create() );
+		auto ES = std::make_unique<llvm::orc::ExecutionSession>(std::move(EPC)); // TOOD: can get rid of ES
 
-		JITTargetMachineBuilder JTMB(ES->getExecutorProcessControl().getTargetTriple());
+		llvm::orc::JITTargetMachineBuilder JTMB(ES->getExecutorProcessControl().getTargetTriple());
 
-		auto DL = std::make_unique<DataLayout>(ExitOnErr( JTMB.getDefaultDataLayoutForTarget() ));
+		auto DL = std::make_unique<llvm::DataLayout>(ExitOnErr( JTMB.getDefaultDataLayoutForTarget() ));
 
 		modl->setDataLayout(*DL);
 
-		auto TM = cantFail( JTMB.createTargetMachine() );
-		auto SC = SimpleCompiler(*TM);
+		auto TM = llvm::cantFail( JTMB.createTargetMachine() );
+		auto SC = llvm::orc::SimpleCompiler(*TM);
 
 		auto O = ExitOnErr( SC(*modl) );
 
-		auto Obj = ExitOnErr( object::ObjectFile::createObjectFile(*O) );
+		auto Obj = ExitOnErr( llvm::object::ObjectFile::createObjectFile(*O) );
 
 		auto loadedO = RD->loadObject(*Obj);
 
-		//RD->resolveRelocations();
 		RD->finalizeWithMemoryManagerLocking(); // calls resolveRelocations
-
-		auto func = RD->getSymbol("test");
-		auto faddr = func.getAddress();
-
-		//auto faddr = RD->getSymbolLocalAddress("test");
-
-		auto fptr = (func_t)faddr;
+		
+		typedef void (*main_fp)();
+		auto fptr = (main_fp)RD->getSymbol("main").getAddress();
 
 	#else
 		auto RT = MainJD->getDefaultResourceTracker();
@@ -357,30 +528,30 @@ struct JIT {
 		auto fptr = (func_t)faddr;
 	#endif
 		
-		float a0 = 5.0f, a1 = 0.5f;
-		float res = fptr(a0, a1);
-		
-		printf("test(%f, %f) = %f\n", a0, a1, res);
+		fptr();
 	}
 };
 
-void llvm_test () {
-	JIT jit;
-	jit.create();
-
-#if TEST
-	jit.compile_test(jit.ctx.get(), jit.modl.get());
-#else
-	jit.compile_test(jit.TSC.getContext(), jit.TSM.getModuleUnlocked());
-#endif
-
-	jit.run_test();
-	jit.destroy();
-
-	exit(0);
-}
-
-//int main () {
-//	llvm_test();
-//	return 0;
+//void llvm_test () {
+//	JIT jit;
+//	jit.create();
+//
+//#if TEST
+//	jit.compile_test(jit.ctx.get(), jit.modl.get());
+//#else
+//	jit.compile_test(jit.TSC.getContext(), jit.TSM.getModuleUnlocked());
+//#endif
+//
+//	jit.run_test();
+//	jit.destroy();
+//
+//	exit(0);
 //}
+
+void llvm_jit_and_exec (llvm::Module* modl) {
+	ZoneScoped;
+
+	JIT jit;
+	jit.init();
+	jit.jit_and_execute(modl);
+}

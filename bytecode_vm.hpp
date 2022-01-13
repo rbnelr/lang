@@ -100,7 +100,7 @@ _NOINLINE void _execute (Instruction* code, size_t code_sz, intptr_t* stack, siz
 				auto* builtin_func = (builtin_func_t)dst_val;
 				auto* argptr = (Value*)(stack_ptr-1);
 
-				builtin_func(argptr);
+				//builtin_func(argptr);
 			} continue;
 
 			case OPC_CALL: {

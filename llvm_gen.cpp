@@ -18,21 +18,24 @@
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/STLExtras.h"
 
-#include "llvm/Support/TargetSelect.h"
-#include "llvm/Target/TargetMachine.h"
 #include "llvm/Transforms/InstCombine/InstCombine.h"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Scalar/GVN.h"
 
 #include "llvm/ExecutionEngine/JITSymbol.h"
 #include "llvm/ExecutionEngine/Orc/CompileUtils.h"
-#include "llvm/ExecutionEngine/Orc/Core.h"
-#include "llvm/ExecutionEngine/Orc/ExecutionUtils.h"
-#include "llvm/ExecutionEngine/Orc/ExecutorProcessControl.h"
-#include "llvm/ExecutionEngine/Orc/IRCompileLayer.h"
+//#include "llvm/ExecutionEngine/Orc/Core.h"
+//#include "llvm/ExecutionEngine/Orc/ExecutionUtils.h"
+//#include "llvm/ExecutionEngine/Orc/ExecutorProcessControl.h"
+//#include "llvm/ExecutionEngine/Orc/IRCompileLayer.h"
 #include "llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h"
-#include "llvm/ExecutionEngine/Orc/RTDyldObjectLinkingLayer.h"
+//#include "llvm/ExecutionEngine/Orc/RTDyldObjectLinkingLayer.h"
 #include "llvm/ExecutionEngine/SectionMemoryManager.h" // warning C4244: 'initializing': conversion from '_Ty' to '_Ty2', possible loss of data
+
+#include "llvm/Support/TargetSelect.h"
+#include "llvm/Support/Host.h"
+
+#include "llvm/Target/TargetMachine.h"
 
 #pragma warning(pop)
 
@@ -136,10 +139,6 @@ struct LLVM_gen {
 		return func;
 	}
 	
-	struct Var {
-
-	};
-
 	/*
 	IROpType unary2ir (AST* ast, OpType op, Type type) {
 		switch (op) {
@@ -361,75 +360,59 @@ void llvm_free_module (llvm::Module* modl) {
 
 //// LLVM jit & exec
 
-#define TEST 1
+struct JIT {
+	class Resolver : public llvm::JITSymbolResolver {
+	public:
+		Resolver () {}
 
-class Resolver : public llvm::JITSymbolResolver {
-public:
-	Resolver () {}
-
-	virtual ~Resolver() = default;
+		virtual ~Resolver() = default;
 		
-	/// Returns the fully resolved address and flags for each of the given
-	///        symbols.
-	///
-	/// This method will return an error if any of the given symbols can not be
-	/// resolved, or if the resolution process itself triggers an error.
-	virtual void lookup(const LookupSet &Symbols,
-						OnResolvedFunction OnResolved) {
+		/// Returns the fully resolved address and flags for each of the given
+		///        symbols.
+		///
+		/// This method will return an error if any of the given symbols can not be
+		/// resolved, or if the resolution process itself triggers an error.
+		virtual void lookup(const LookupSet &Symbols,
+							OnResolvedFunction OnResolved) {
 
-		std::map<llvm::StringRef, llvm::JITEvaluatedSymbol> results;
+			std::map<llvm::StringRef, llvm::JITEvaluatedSymbol> results;
 
-		for (auto& Sym : Symbols) {
-			if (Sym == "printf") {
-				results.emplace(Sym, llvm::JITEvaluatedSymbol{
-					(llvm::JITTargetAddress)&my_printf,
-					llvm::JITSymbolFlags::Absolute | // TODO: do I need this?
-					llvm::JITSymbolFlags::Callable
-				});
+			for (auto& Sym : Symbols) {
+				if (Sym == "printf") {
+					results.emplace(Sym, llvm::JITEvaluatedSymbol{
+						(llvm::JITTargetAddress)&my_printf,
+						llvm::JITSymbolFlags::Absolute | // TODO: do I need this?
+						llvm::JITSymbolFlags::Callable
+					});
+				}
+				else {
+					assert(false);
+				}
 			}
-			else {
-				assert(false);
-			}
+
+			OnResolved(results);
 		}
 
-		OnResolved(results);
-	}
+		/// Returns the subset of the given symbols that should be materialized by
+		/// the caller. Only weak/common symbols should be looked up, as strong
+		/// definitions are implicitly always part of the caller's responsibility.
+		virtual llvm::Expected<LookupSet>
+		getResponsibilitySet(const LookupSet &Symbols) {
+			LookupSet Result;
+			assert(Symbols.size() == 0);
+			return Result;
+		}
 
-	/// Returns the subset of the given symbols that should be materialized by
-	/// the caller. Only weak/common symbols should be looked up, as strong
-	/// definitions are implicitly always part of the caller's responsibility.
-	virtual llvm::Expected<LookupSet>
-	getResponsibilitySet(const LookupSet &Symbols) {
-		LookupSet Result;
-		assert(Symbols.size() == 0);
-		return Result;
-	}
+		/// Specify if this resolver can return valid symbols with zero value.
+		//virtual bool allowsZeroSymbols() { return false; }
 
-	/// Specify if this resolver can return valid symbols with zero value.
-	//virtual bool allowsZeroSymbols() { return false; }
+	};
 
-};
+	Resolver resolver;
 
-struct JIT {
-
-#if TEST
-	std::unique_ptr<Resolver> resolver;
+	//std::unique_ptr<Resolver> resolver;
 	std::unique_ptr<llvm::RuntimeDyld::MemoryManager> MM;
 	std::unique_ptr<llvm::RuntimeDyld> RD;
-#else
-	ThreadSafeContext TSC;
-	ThreadSafeModule  TSM;
-	
-	std::unique_ptr<ExecutionSession>  ES;
-	
-	std::unique_ptr<DataLayout>               DL;
-	std::unique_ptr<MangleAndInterner>        Mangle;
-	
-	std::unique_ptr<RTDyldObjectLinkingLayer> ObjectLayer;
-	std::unique_ptr<IRCompileLayer>           CompileLayer;
-	
-	JITDylib*                                 MainJD;
-#endif
 
 	void init () {
 		ZoneScoped;
@@ -443,59 +426,20 @@ struct JIT {
 		llvm::InitializeNativeTarget();
 		llvm::InitializeNativeTargetAsmPrinter();
 		llvm::InitializeNativeTargetAsmParser();
-	#if TEST
-		resolver = std::make_unique<Resolver>();
+
+		//resolver = std::make_unique<Resolver>();
 
 		MM = std::make_unique<llvm::SectionMemoryManager>();
-		RD = std::make_unique<llvm::RuntimeDyld>(*MM, *resolver);
-	#else
-		TSC = ThreadSafeContext(std::make_unique<LLVMContext>());
-		TSM = ThreadSafeModule(std::make_unique<Module>("llvm_test", *TSC.getContext()), TSC);
-		
-		auto EPC = ExitOnErr( SelfExecutorProcessControl::Create() );
-		ES = std::make_unique<ExecutionSession>(std::move(EPC));
-		
-		JITTargetMachineBuilder JTMB(ES->getExecutorProcessControl().getTargetTriple());
-		
-		DL = std::make_unique<DataLayout>(ExitOnErr( JTMB.getDefaultDataLayoutForTarget() ));
-		
-		Mangle = std::make_unique<MangleAndInterner>(*ES, *DL);
-		
-		ObjectLayer = std::make_unique<RTDyldObjectLinkingLayer>(*this->ES, []() { return std::make_unique<SectionMemoryManager>(); });
-		
-		CompileLayer = std::make_unique<IRCompileLayer>(*this->ES, *ObjectLayer, std::make_unique<ConcurrentIRCompiler>(std::move(JTMB)));
-		
-		MainJD = &ES->createBareJITDylib("<main>");
-		
-		MainJD->addGenerator(cantFail(
-			DynamicLibrarySearchGenerator::GetForCurrentProcess(DL->getGlobalPrefix())
-		));
-		
-		TSM.getModuleUnlocked()->setDataLayout(*DL);
-		
-		if (JTMB.getTargetTriple().isOSBinFormatCOFF()) {
-			ObjectLayer->setOverrideObjectFlagsWithResponsibilityFlags(true);
-			ObjectLayer->setAutoClaimResponsibilityForObjectSymbols(true);
-		}
-	#endif
-	}
-
-	void destroy () {
-	#if TEST
-	#else
-		if (auto Err = ES->endSession())
-			ES->reportError(std::move(Err));
-	#endif
+		RD = std::make_unique<llvm::RuntimeDyld>(*MM, resolver);
 	}
 	
 	void jit_and_execute (llvm::Module* modl) {
 		ZoneScoped;
 
-	#if TEST
-		auto EPC = ExitOnErr( llvm::orc::SelfExecutorProcessControl::Create() );
-		auto ES = std::make_unique<llvm::orc::ExecutionSession>(std::move(EPC)); // TOOD: can get rid of ES
+		auto triple_str = llvm::sys::getProcessTriple();
+		auto triple = llvm::Triple(triple_str);
 
-		llvm::orc::JITTargetMachineBuilder JTMB(ES->getExecutorProcessControl().getTargetTriple());
+		llvm::orc::JITTargetMachineBuilder JTMB(triple);
 
 		auto DL = std::make_unique<llvm::DataLayout>(ExitOnErr( JTMB.getDefaultDataLayoutForTarget() ));
 
@@ -514,39 +458,10 @@ struct JIT {
 		
 		typedef void (*main_fp)();
 		auto fptr = (main_fp)RD->getSymbol("main").getAddress();
-
-	#else
-		auto RT = MainJD->getDefaultResourceTracker();
-		CompileLayer->add(RT, std::move(TSM));
-		
-		auto func2 = ES->lookup({MainJD}, (*Mangle)("test"));
-		//auto faddr = func->getAddress();
-		
-		auto func = ES->lookup({MainJD}, (*Mangle)("test"));
-		auto faddr = func->getAddress();
-
-		auto fptr = (func_t)faddr;
-	#endif
 		
 		fptr();
 	}
 };
-
-//void llvm_test () {
-//	JIT jit;
-//	jit.create();
-//
-//#if TEST
-//	jit.compile_test(jit.ctx.get(), jit.modl.get());
-//#else
-//	jit.compile_test(jit.TSC.getContext(), jit.TSM.getModuleUnlocked());
-//#endif
-//
-//	jit.run_test();
-//	jit.destroy();
-//
-//	exit(0);
-//}
 
 void llvm_jit_and_exec (llvm::Module* modl) {
 	ZoneScoped;

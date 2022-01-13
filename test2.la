@@ -24,7 +24,8 @@ b := 3;
 c := 7;
 
 d := a + b * c;
-printf("Blah1: {i} {i}", d, b);
-printf("Blah1: {i} {i}", d, c);
 
-printf("Blah2: {i} {i}", a, a, a, b, b, b);
+printf("Blah1: d: {i}  b: {i}\n", d, b);
+printf("Blah1: d: {i}  c: {i}\n", d, c);
+
+printf("Blah2: {i}-{i}-{i} {i}-{i}-{i}\n", a, a, a, b, b, b);

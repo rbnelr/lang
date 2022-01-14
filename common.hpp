@@ -181,15 +181,12 @@ inline char const* format (char const* format, ...) {
 	return str;
 }
 
-inline void print_seperator (strview str) {
+inline void print_seperator (strview str, char fill_char='=') {
 #ifdef TRACY_ENABLE // disable prints for profiling
 	return;
 #endif
 
 	constexpr int LEN = 80;
-	char const* PAD = "--------------------------------------------------------------------------------";
-	assert(strlen(PAD) == LEN);
-
 	constexpr int SPACE = 1;
 
 	int pad = LEN - SPACE*2 - (int)str.size();
@@ -198,7 +195,15 @@ inline void print_seperator (strview str) {
 	int padL = pad/2;
 	int padR = pad - padL;
 
-	printf("%.*s %.*s %.*s\n", padL,PAD, (int)str.size(), str.data(), padR,PAD);
+	for (int i=0; i<padL; ++i)  putchar(fill_char);
+	for (int i=0; i<SPACE; ++i) putchar(' ');
+
+	printf("%.*s", (int)str.size(), str.data());
+	
+	for (int i=0; i<SPACE; ++i) putchar(' ');
+	for (int i=0; i<padR; ++i)  putchar(fill_char);
+
+	putchar('\n');
 }
 
 // just for printing string to the console which might contain newlines or nulls

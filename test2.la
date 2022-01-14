@@ -23,6 +23,8 @@ func test (a : int, b : int) = (ret : int) {
 	//a := 5;
 	//b := 3;
 	c := 7;
+	
+	e := timer();
 
 	d := a + b * c;
 

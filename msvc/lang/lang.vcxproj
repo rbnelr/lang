@@ -143,7 +143,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="..\..\..\common\tracy\TracyClient.cpp" />
-    <ClCompile Include="..\..\llvm_gen.cpp">
+    <ClCompile Include="..\..\llvm_codegen.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Use</PrecompiledHeader>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">llvm_pch.hpp</PrecompiledHeaderFile>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Tracy|x64'">Use</PrecompiledHeader>
@@ -178,7 +178,15 @@
     <ClInclude Include="..\..\ir_opt.hpp" />
     <ClInclude Include="..\..\line_map.hpp" />
     <ClInclude Include="..\..\ir_gen.hpp" />
-    <ClInclude Include="..\..\llvm_gen.hpp" />
+    <ClInclude Include="..\..\llvm_backend.hpp" />
+    <ClCompile Include="..\..\llvm_jit.cpp">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Use</PrecompiledHeader>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">llvm_pch.hpp</PrecompiledHeaderFile>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Tracy|x64'">Use</PrecompiledHeader>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Tracy|x64'">llvm_pch.hpp</PrecompiledHeaderFile>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Use</PrecompiledHeader>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|x64'">llvm_pch.hpp</PrecompiledHeaderFile>
+    </ClCompile>
     <ClInclude Include="..\..\llvm_pch.hpp" />
     <ClInclude Include="..\..\options.hpp" />
     <ClInclude Include="..\..\parser.hpp" />

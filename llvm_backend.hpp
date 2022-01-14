@@ -7,10 +7,6 @@ namespace llvm {
 	class Function;
 }
 
-// init uses globals to store the llvm context instead of returning it
-// to hide the implementation to avoid headers being pulled into main
-void llvm_init ();
-
 llvm::Module* llvm_gen_module (strview const& filename, std::vector<AST_funcdef*>& funcdefs);
 void llvm_free_module (llvm::Module* modl); // do this to hide llvm headers from main
 

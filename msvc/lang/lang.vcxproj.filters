@@ -29,7 +29,10 @@
     <ClCompile Include="..\..\llvm_pch.cpp">
       <Filter>llvm</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\llvm_gen.cpp">
+    <ClCompile Include="..\..\llvm_codegen.cpp">
+      <Filter>llvm</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\llvm_jit.cpp">
       <Filter>llvm</Filter>
     </ClCompile>
   </ItemGroup>
@@ -74,7 +77,7 @@
     <ClInclude Include="..\..\llvm_pch.hpp">
       <Filter>llvm</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\llvm_gen.hpp">
+    <ClInclude Include="..\..\llvm_backend.hpp">
       <Filter>llvm</Filter>
     </ClInclude>
   </ItemGroup>

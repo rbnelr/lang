@@ -8,7 +8,7 @@
 #include "codegen.hpp"
 #include "bytecode_vm.hpp"
 
-#include "llvm_gen.hpp"
+#include "llvm_backend.hpp"
 
 
 bool compile () {
@@ -72,8 +72,6 @@ bool compile () {
 
 		#if LLVM
 			{
-				llvm_init();
-
 				llvm::Module* llvm_modl = llvm_gen_module(options.filename, funcdefs);
 				defer( llvm_free_module(llvm_modl); );
 			

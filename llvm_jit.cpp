@@ -1,0 +1,292 @@
+#include "llvm_pch.hpp"
+#include "llvm_backend.hpp"
+
+llvm::ExitOnError ExitOnErr;
+
+struct JIT {
+	class Resolver : public llvm::JITSymbolResolver {
+	public:
+
+		// TODO: is there a way to simply declare my builtins as symbols so this entire Resolver class would become unnesassary?
+		//       or is this generally needed to link multiple modules together?
+		std::map<llvm::StringRef, llvm::JITTargetAddress> external_funcs;
+
+		Resolver () {}
+		virtual ~Resolver() = default;
+		
+		// this seems to be called for function symbols that are not in the code
+		// which includes my builtin functions
+		// TODO: is there a way to simply declare my builtins as external (to be linked) functions?
+
+		/// Returns the fully resolved address and flags for each of the given
+		///        symbols.
+		///
+		/// This method will return an error if any of the given symbols can not be
+		/// resolved, or if the resolution process itself triggers an error.
+		virtual void lookup(const LookupSet &Symbols,
+							OnResolvedFunction OnResolved) {
+
+			std::map<llvm::StringRef, llvm::JITEvaluatedSymbol> results;
+
+			for (auto& Sym : Symbols) {
+				auto it = external_funcs.find(Sym);
+				if (it != external_funcs.end()) {
+					results.emplace(Sym, llvm::JITEvaluatedSymbol{
+						it->second,
+						llvm::JITSymbolFlags::Absolute | // TODO: do I need this?
+						llvm::JITSymbolFlags::Callable
+					});
+				}
+				else {
+					assert(false);
+				}
+			}
+
+			OnResolved(results);
+		}
+
+		// No idea what this is supposed to do, I always seem to be called with an empty LookupSet
+
+		/// Returns the subset of the given symbols that should be materialized by
+		/// the caller. Only weak/common symbols should be looked up, as strong
+		/// definitions are implicitly always part of the caller's responsibility.
+		virtual llvm::Expected<LookupSet>
+		getResponsibilitySet(const LookupSet &Symbols) {
+			LookupSet Result;
+			assert(Symbols.size() == 0);
+			return Result;
+		}
+
+		/// Specify if this resolver can return valid symbols with zero value.
+		//virtual bool allowsZeroSymbols() { return false; }
+
+	};
+	void register_builtins () {
+		for (auto& builtin : builtin_funcs) {
+			resolver.external_funcs.emplace(SR(builtin->ident), (llvm::JITTargetAddress)builtin->builti_func_ptr);
+		}
+	}
+
+	Resolver                             resolver;
+	llvm::SectionMemoryManager           MM;
+	
+	llvm::RuntimeDyld                    dyld;
+
+	llvm::Triple                         TT;
+
+	std::unique_ptr<llvm::TargetMachine> TM;
+
+	JIT (): resolver{}, MM{}, dyld{MM, resolver} {
+		ZoneScoped;
+
+		// TODO: I can't pass -debug to my own app and expect LLVM to set this flag can I?
+		// so just set it manually to print stuff?
+	#ifndef NDEBUG
+		//llvm::DebugFlag = true;
+	#endif
+
+		llvm::InitializeNativeTarget();
+		llvm::InitializeNativeTargetAsmPrinter();
+		llvm::InitializeNativeTargetAsmParser();
+		llvm::InitializeNativeTargetDisassembler();
+
+		register_builtins();
+
+		auto triple_str = llvm::sys::getProcessTriple();
+		TT = llvm::Triple(triple_str);
+
+		llvm::orc::JITTargetMachineBuilder JTMB(TT);
+
+		TM = llvm::cantFail( JTMB.createTargetMachine() );
+	}
+	
+	void setup_PM (llvm::legacy::PassManager& PM, llvm::raw_svector_ostream& ObjStream) {
+		
+		// mem2reg pass for alloca'd local vars
+		//PM.add(llvm::createPromoteMemoryToRegisterPass());
+
+		//
+		llvm::MCContext* Ctx;
+		if (TM->addPassesToEmitMC(PM, Ctx, ObjStream)) {
+			ExitOnErr( llvm::make_error<llvm::StringError>(
+				"Target does not support MC emission",
+				llvm::inconvertibleErrorCode())
+			);
+		}
+	}
+
+	void compile_and_load (llvm::Module* modl) {
+		
+		auto DL = TM->createDataLayout();
+
+		modl->setDataLayout(DL);
+		
+		llvm::SmallVector<char, 0> ObjBufferSV;
+		llvm::raw_svector_ostream ObjStream(ObjBufferSV);
+
+		{
+			llvm::legacy::PassManager PM;
+			setup_PM(PM, ObjStream);
+
+			PM.run(*modl);
+		}
+
+		llvm::SmallVectorMemoryBuffer ObjBuffer {
+			std::move(ObjBufferSV),
+			modl->getModuleIdentifier() + "-jitted-objectbuffer"
+		};
+			
+		auto Obj = ExitOnErr(
+			llvm::object::ObjectFile::createObjectFile(ObjBuffer.getMemBufferRef())
+		);
+			
+		auto loadedObj = dyld.loadObject(*Obj);
+
+		dyld.finalizeWithMemoryManagerLocking(); // calls resolveRelocations
+		
+		// TODO: actually print the relocated object, not the initially generated one
+		print_disasm(*Obj, *loadedObj);
+	}
+	
+	
+	void jit_and_execute (llvm::Module* modl) {
+		ZoneScoped;
+
+		compile_and_load(modl);
+
+		print_seperator("Execute JITed LLVM code:");
+
+		typedef void (*main_fp)();
+		auto fptr = (main_fp)dyld.getSymbol("main").getAddress();
+		fptr();
+	}
+
+	void print_disasm (llvm::object::ObjectFile& obj, llvm::RuntimeDyld::LoadedObjectInfo& info) {
+		print_seperator("Disassembly:");
+
+		for (auto& section : obj.sections()) {
+			auto name = ExitOnErr(section.getName());
+
+			print_seperator(strview{ name.data(), name.size() }, '-');
+
+			//auto data = ExitOnErr(section.getContents());
+			auto reloc_sec = ExitOnErr(section.getRelocatedSection());
+			auto data = ExitOnErr(reloc_sec->getContents());
+
+			if (section.isText()) {
+				print_disassembly((const uint8_t*)data.data(), data.size());
+			}
+			else {
+				print_data_section((const uint8_t*)data.data(), data.size());
+			}
+		}
+
+	}
+	
+	// TODO: disasm: print symbols/labels/debug info?
+
+	void print_data_section (const uint8_t* data, size_t size) {
+		if (size == 0) {
+			printf("<empty>\n");
+			return;
+		}
+
+		int width = 16;
+
+		size_t offs = 0;
+		for (size_t offs = 0; offs < size; offs += width) {
+			printf("%p %04" PRIx64 " | ", data + offs, offs);
+
+			for (size_t i=0; i<16; ++i) {
+				if (i % 4 == 0) putchar(' ');
+
+				if (offs+i < size)
+					printf("%02x", data[offs+i]);
+				else
+					printf("  "); // print spaces to fill non-aligned end
+			}
+
+			printf("  ");
+
+			for (size_t i=0; i<16 && offs+i < size; ++i) {
+				char c = (char)data[offs+i];
+				if (isascii(c) && iscntrl(c)) c = '.';
+				putchar(c);
+			}
+			
+			printf("\n");
+		}
+	}
+	void print_disassembly (const uint8_t* data, size_t size) {
+		if (size == 0) {
+			printf("<empty>\n");
+			return;
+		}
+
+		auto dcr = LLVMCreateDisasm(TT.str().c_str(), NULL, 0, NULL, NULL);
+
+		LLVMSetDisasmOptions(dcr,
+			LLVMDisassembler_Option_UseMarkup |
+			LLVMDisassembler_Option_AsmPrinterVariant
+		);
+
+		size_t offs = 0;
+		size_t remain = size;
+		
+		size_t cbytes_len = 10; // 0 to not print code bytes
+
+		char str[64];
+		llvm::SmallString<64> str_untab;
+
+		auto untabbify = [&] () {
+			size_t tab_width = 8;
+
+			str_untab.clear();
+			
+			size_t i = 0;
+
+			while (str[i] == '\t') i++; // skip inital tabs
+
+			while (str[i] != '\0') {
+				if (str[i] == '\t') {
+					size_t spaces = 8 - (i % 8);
+					for (size_t j=0; j<spaces; ++j) {
+						str_untab.push_back(' '); // align to next multiple of tab_width chars
+					}
+				}
+				else {
+					str_untab.push_back(str[i]);
+				}
+				i++;
+			}
+
+			str_untab.push_back('\0');
+		};
+
+		// prints string indented by a few spaces
+		while (size_t sz = LLVMDisasmInstruction(dcr, (uint8_t*)&data[offs], remain, offs, str, ARRLEN(str))) {
+			printf("%p %04" PRIx64 " |  ", data + offs, offs);
+
+			if (cbytes_len > 0) {
+				for (size_t i=0; i<sz; ++i)
+					printf("%02x ", data[offs+i]);
+				for (size_t i=sz; i<cbytes_len; ++i)
+					printf("   ");
+			}
+
+			untabbify();
+			
+			printf(" %-35s #\n", str_untab.data());
+
+			offs += sz;
+			remain -= sz;
+		}
+	}
+};
+
+void llvm_jit_and_exec (llvm::Module* modl) {
+	ZoneScoped;
+
+	JIT jit {};
+	jit.jit_and_execute(modl);
+}

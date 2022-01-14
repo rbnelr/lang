@@ -1,37 +1,12 @@
 #include "llvm_pch.hpp"
-#include "llvm_gen.hpp"
-#include "builtins.hpp"
+#include "llvm_backend.hpp"
 
-//#include "windows.h"
-
-llvm::ExitOnError ExitOnErr;
-
-struct LLVM_Backend {
-	llvm::LLVMContext ctx; // TODO: can this go away after IR was built but before it was compiled?
-	llvm::IRBuilder<> build;
-
-	LLVM_Backend (): ctx{}, build{ctx} {}
-};
-std::unique_ptr<LLVM_Backend> llvm_backend;
-
-void llvm_init () {
-	if (llvm_backend) {
-		ZoneScopedN("LLVM deinit");
-		llvm_backend.reset(); // recreate to properly asses cost during profiling
-	}
-
-	ZoneScoped;
-	llvm_backend = std::make_unique<LLVM_Backend>();
-}
-
-//// LLVM IR gen
+llvm::LLVMContext ctx;
+llvm::IRBuilder<> build{ctx};
 
 struct LLVM_gen {
-	llvm::LLVMContext& ctx;
-	llvm::IRBuilder<>& build;
-	
 	std::vector<AST_funcdef*>& funcdefs;
-	
+
 	llvm::Module* modl;
 
 	struct LoopLabels {
@@ -39,11 +14,6 @@ struct LLVM_gen {
 		size_t end;
 	};
 	std::vector<LoopLabels> loop_lbls;
-	
-	_FORCEINLINE llvm::StringRef SR (std::string_view sv) {
-		return { sv.data(), sv.size() };
-	}
-	
 	
 	void declare_builtins () {
 		// TODO: do this lazily once they are actually called?
@@ -55,7 +25,7 @@ struct LLVM_gen {
 	void generate (strview const& filename) {
 		ZoneScoped;
 
-		modl = new llvm::Module("<main>", llvm_backend->ctx);
+		modl = new llvm::Module("<main>", ctx);
 		modl->setSourceFileName(SR(filename));
 
 		// declare builtin functions
@@ -377,8 +347,6 @@ llvm::Module* llvm_gen_module (strview const& filename, std::vector<AST_funcdef*
 	ZoneScoped;
 
 	LLVM_gen llvm_gen = {
-		llvm_backend->ctx,
-		llvm_backend->build,
 		funcdefs
 	};
 	llvm_gen.generate(filename);
@@ -387,148 +355,4 @@ llvm::Module* llvm_gen_module (strview const& filename, std::vector<AST_funcdef*
 }
 void llvm_free_module (llvm::Module* modl) {
 	delete modl;
-}
-
-//// LLVM jit & exec
-
-struct JIT {
-	class Resolver : public llvm::JITSymbolResolver {
-	public:
-		Resolver () {}
-
-		virtual ~Resolver() = default;
-		
-		/// Returns the fully resolved address and flags for each of the given
-		///        symbols.
-		///
-		/// This method will return an error if any of the given symbols can not be
-		/// resolved, or if the resolution process itself triggers an error.
-		virtual void lookup(const LookupSet &Symbols,
-							OnResolvedFunction OnResolved) {
-
-			std::map<llvm::StringRef, llvm::JITEvaluatedSymbol> results;
-
-			for (auto& Sym : Symbols) {
-				if (Sym == "printf") {
-					results.emplace(Sym, llvm::JITEvaluatedSymbol{
-						(llvm::JITTargetAddress)&my_printf,
-						llvm::JITSymbolFlags::Absolute | // TODO: do I need this?
-						llvm::JITSymbolFlags::Callable
-					});
-				}
-				else {
-					assert(false);
-				}
-			}
-
-			OnResolved(results);
-		}
-
-		/// Returns the subset of the given symbols that should be materialized by
-		/// the caller. Only weak/common symbols should be looked up, as strong
-		/// definitions are implicitly always part of the caller's responsibility.
-		virtual llvm::Expected<LookupSet>
-		getResponsibilitySet(const LookupSet &Symbols) {
-			LookupSet Result;
-			assert(Symbols.size() == 0);
-			return Result;
-		}
-
-		/// Specify if this resolver can return valid symbols with zero value.
-		//virtual bool allowsZeroSymbols() { return false; }
-
-	};
-
-	Resolver                             resolver;
-	llvm::SectionMemoryManager           MM;
-	
-	llvm::RuntimeDyld                    dyld;
-
-	std::unique_ptr<llvm::TargetMachine> TM;
-
-	JIT (): resolver{}, MM{}, dyld{MM, resolver} {
-		ZoneScoped;
-
-		// TODO: I can't pass -debug to my own app and expect LLVM to set this flag can I?
-		// so just set it manually to print stuff?
-	#ifndef NDEBUG
-		//llvm::DebugFlag = true;
-	#endif
-
-		llvm::InitializeNativeTarget();
-		llvm::InitializeNativeTargetAsmPrinter();
-		llvm::InitializeNativeTargetAsmParser();
-
-		auto triple_str = llvm::sys::getProcessTriple();
-		auto triple = llvm::Triple(triple_str);
-
-		llvm::orc::JITTargetMachineBuilder JTMB(triple);
-
-		TM = llvm::cantFail( JTMB.createTargetMachine() );
-	}
-	
-	void setup_PM (llvm::legacy::PassManager& PM, llvm::raw_svector_ostream& ObjStream) {
-		
-		// mem2reg pass for alloca'd local vars
-		//PM.add(llvm::createPromoteMemoryToRegisterPass());
-
-		//
-		llvm::MCContext* Ctx;
-		if (TM->addPassesToEmitMC(PM, Ctx, ObjStream)) {
-			ExitOnErr( llvm::make_error<llvm::StringError>(
-				"Target does not support MC emission",
-				llvm::inconvertibleErrorCode())
-			);
-		}
-	}
-
-	void compile_and_load (llvm::Module* modl) {
-		
-		llvm::SmallVector<char, 0> ObjBufferSV;
-		llvm::raw_svector_ostream ObjStream(ObjBufferSV);
-
-		{
-			llvm::legacy::PassManager PM;
-			setup_PM(PM, ObjStream);
-
-			PM.run(*modl);
-		}
-
-		llvm::SmallVectorMemoryBuffer ObjBuffer {
-			std::move(ObjBufferSV),
-			modl->getModuleIdentifier() + "-jitted-objectbuffer"
-		};
-			
-		auto Obj = ExitOnErr(
-			llvm::object::ObjectFile::createObjectFile(ObjBuffer.getMemBufferRef())
-		);
-			
-		auto loadedObj = dyld.loadObject(*Obj);
-	}
-	
-	
-	void jit_and_execute (llvm::Module* modl) {
-		ZoneScoped;
-
-		auto DL = TM->createDataLayout();
-
-		modl->setDataLayout(DL);
-		
-		compile_and_load(modl);
-
-		dyld.finalizeWithMemoryManagerLocking(); // calls resolveRelocations
-		
-		print_seperator("Execute JITed LLVM code:");
-		typedef void (*main_fp)();
-		auto fptr = (main_fp)dyld.getSymbol("main").getAddress();
-		fptr();
-	}
-};
-
-void llvm_jit_and_exec (llvm::Module* modl) {
-	ZoneScoped;
-
-	JIT jit {};
-
-	jit.jit_and_execute(modl);
 }

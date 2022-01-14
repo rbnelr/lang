@@ -26,7 +26,12 @@
     <ClCompile Include="..\..\util\smhasher\MurmurHash3.cpp">
       <Filter>util\smhasher</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\llvm_gen.cpp" />
+    <ClCompile Include="..\..\llvm_pch.cpp">
+      <Filter>llvm</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\llvm_gen.cpp">
+      <Filter>llvm</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\util\string.hpp">
@@ -66,7 +71,12 @@
     <ClInclude Include="..\..\ir_opt.hpp" />
     <ClInclude Include="..\..\options.hpp" />
     <ClInclude Include="..\..\resolver.hpp" />
-    <ClInclude Include="..\..\llvm_gen.hpp" />
+    <ClInclude Include="..\..\llvm_pch.hpp">
+      <Filter>llvm</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\llvm_gen.hpp">
+      <Filter>llvm</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <Filter Include="util">
@@ -78,6 +88,9 @@
     <Filter Include="util\smhasher">
       <UniqueIdentifier>{4486f546-c03b-46ca-b21b-32e11ccab3c2}</UniqueIdentifier>
     </Filter>
+    <Filter Include="llvm">
+      <UniqueIdentifier>{f1141f09-8f65-4e7a-a490-0a75774b5be3}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <None Include="..\..\test.la" />
@@ -86,5 +99,8 @@
   </ItemGroup>
   <ItemGroup>
     <Natvis Include="compiler.natvis" />
+    <Natvis Include="..\..\..\libLLVM\llvm-project\llvm\utils\LLVMVisualizers\llvm.natvis">
+      <Filter>llvm</Filter>
+    </Natvis>
   </ItemGroup>
 </Project>

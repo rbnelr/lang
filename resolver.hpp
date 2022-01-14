@@ -111,7 +111,7 @@ struct IdentiferStack {
 	void resolve_func_call (AST_call* call) {
 		// min_scope = 0, functions can call all functions visible to them
 		AST* ast = resolve_ident((AST*)call, call->ident, 0);
-		if (!(ast->type == A_FUNCDEF || ast->type == A_FUNCDEF_BUILTIN))
+		if (ast->type != A_FUNCDEF)
 			throw CompilerExcept{"error: identifer was not declared as function", call->src_tok->source};
 
 		call->fdef = ast;
@@ -124,8 +124,8 @@ struct IdentResolver {
 	std::vector<AST_funcdef*> funcs;
 
 	void resolve_ast (AST* root) {
-		for (AST_funcdef_builtin const* f : BUILTIN_FUNCS)
-			stack.declare_func((AST_funcdef*)f); // cast is safe
+		for (auto* f : builtin_funcs)
+			stack.declare_func(f);
 
 		{ // add a declaration for a main function (global space of the file itself represents the main function)
 			AST_funcdef* module_main = ast_alloc<AST_funcdef>(A_FUNCDEF, root->src_tok);

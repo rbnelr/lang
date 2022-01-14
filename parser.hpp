@@ -112,7 +112,6 @@ enum ASTType {
 	A_VARARGS,
 
 	A_FUNCDEF,
-	A_FUNCDEF_BUILTIN,
 
 	A_CALLARG,
 	A_CALL,
@@ -146,7 +145,6 @@ inline const char* ASTType_str[] = {
 	"A_VARARGS",
 
 	"A_FUNCDEF",
-	"A_FUNCDEF_BUILTIN",
 
 	"A_CALLARG",
 	"A_CALL",
@@ -228,6 +226,11 @@ inline constexpr OpType tok2assignop (TokenType tok) {
 	return (OpType)( tok + (OP_ASSIGN - T_ASSIGN) );
 }
 
+namespace llvm { // forward decls to associate llvm IR with AST nodes
+	class Value;
+	class Function;
+}
+
 struct AST {
 	ASTType      type;
 
@@ -265,7 +268,7 @@ struct AST_vardecl : public AST {
 	size_t       var_id;     // for IR gen
 	bool         var_is_arg; // for IR gen, is this variable a function argument?
 	
-	void*        llvm_value;
+	llvm::Value* llvm_value;
 };
 
 struct AST_var : public AST {
@@ -273,7 +276,9 @@ struct AST_var : public AST {
 	AST_vardecl* decl;
 };
 
-struct AST_funcdecl: public AST  {
+struct AST_funcdef : public AST {
+	bool         is_builtin;
+
 	strview      ident;
 
 	size_t       argc;
@@ -281,13 +286,15 @@ struct AST_funcdecl: public AST  {
 
 	size_t       retc;
 	AST*         rets;
-};
-struct AST_funcdef : public AST_funcdecl {
+
 	AST*         body;
+
+
+	void*        builti_func_ptr;
+
 	size_t       codegen_funcid;
-};
-struct AST_funcdef_builtin : public AST_funcdecl {
-	builtin_func_t func_ptr;
+
+	llvm::Function* llvm_func;
 };
 
 struct AST_callarg : public AST {

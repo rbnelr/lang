@@ -56,7 +56,7 @@ bool compile () {
 				ast = parser.file();
 
 				if (options.print_ast) { // print AST
-					printf("AST:\n");
+					print_seperator("AST:");
 					dbg_print(ast);
 				}
 			}
@@ -74,7 +74,7 @@ bool compile () {
 			{
 				llvm_init();
 
-				llvm::Module* llvm_modl = llvm_gen_module(funcdefs);
+				llvm::Module* llvm_modl = llvm_gen_module(options.filename, funcdefs);
 				defer( llvm_free_module(llvm_modl); );
 			
 				#ifndef TRACY_ENABLE

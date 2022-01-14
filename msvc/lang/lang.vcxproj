@@ -143,7 +143,22 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="..\..\..\common\tracy\TracyClient.cpp" />
-    <ClCompile Include="..\..\llvm_gen.cpp" />
+    <ClCompile Include="..\..\llvm_gen.cpp">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Use</PrecompiledHeader>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">llvm_pch.hpp</PrecompiledHeaderFile>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Tracy|x64'">Use</PrecompiledHeader>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Tracy|x64'">llvm_pch.hpp</PrecompiledHeaderFile>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Use</PrecompiledHeader>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|x64'">llvm_pch.hpp</PrecompiledHeaderFile>
+    </ClCompile>
+    <ClCompile Include="..\..\llvm_pch.cpp">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">llvm_pch.hpp</PrecompiledHeaderFile>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Tracy|x64'">Create</PrecompiledHeader>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Tracy|x64'">llvm_pch.hpp</PrecompiledHeaderFile>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|x64'">llvm_pch.hpp</PrecompiledHeaderFile>
+    </ClCompile>
     <ClCompile Include="..\..\main.cpp" />
     <ClCompile Include="..\..\util\console_colors.cpp" />
     <ClCompile Include="..\..\util\file_io.cpp" />
@@ -164,6 +179,7 @@
     <ClInclude Include="..\..\line_map.hpp" />
     <ClInclude Include="..\..\ir_gen.hpp" />
     <ClInclude Include="..\..\llvm_gen.hpp" />
+    <ClInclude Include="..\..\llvm_pch.hpp" />
     <ClInclude Include="..\..\options.hpp" />
     <ClInclude Include="..\..\parser.hpp" />
     <ClInclude Include="..\..\resolver.hpp" />
@@ -183,6 +199,7 @@
     <None Include="..\..\test3.la" />
   </ItemGroup>
   <ItemGroup>
+    <Natvis Include="..\..\..\libLLVM\llvm-project\llvm\utils\LLVMVisualizers\llvm.natvis" />
     <Natvis Include="compiler.natvis" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

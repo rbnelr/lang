@@ -533,12 +533,10 @@ struct Codegen {
 
 					istrs.push_back({ code.size(), format_source(iri.ast) });
 
-					if (call->fdef->type == A_FUNCDEF_BUILTIN) {
-						auto* fdef = (AST_funcdef_builtin*)call->fdef;
-						code.emplace_back(OPC_CALLB, (size_t)(void*)fdef->func_ptr);
+					if (fdef->is_builtin) {
+						code.emplace_back(OPC_CALLB, (size_t)(void*)fdef->builti_func_ptr);
 					}
 					else {
-						auto* fdef = (AST_funcdef*)call->fdef;
 						code.emplace_back(OPC_CALL, fdef->codegen_funcid);
 					}
 

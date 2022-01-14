@@ -130,36 +130,35 @@ inline void my_printf (const char* format, ...) {
 }
 #endif
 
-inline AST_vardecl BF_PRINTF_VARARGS = { cAST(A_VARARGS                               ), "args" };
-inline AST_vardecl BF_PRINTF_VAL     = { cAST(A_VARDECL, STR, (AST*)&BF_PRINTF_VARARGS), "format" };
+inline AST_vardecl bf_printf_varargs = { cAST(A_VARARGS                               ), "args" };
+inline AST_vardecl bf_printf_val     = { cAST(A_VARDECL, STR, (AST*)&bf_printf_varargs), "format" };
 
-inline AST_funcdef_builtin BF_PRINTF = {
-	cAST(A_FUNCDEF_BUILTIN), "printf", 2, &BF_PRINTF_VAL, 0, nullptr, my_printf
+inline AST_funcdef bf_printf = {
+	cAST(A_FUNCDEF), true, "printf", 2, &bf_printf_val, 0, nullptr, nullptr, &my_printf
 };
 
-inline void timer (Value* vals) {
-	vals[0].i = (int64_t)get_timestamp();
+inline int64_t timer () {
+	return get_timestamp();
 }
-inline AST_vardecl BF_TIMER_RET = { cAST(A_VARDECL, INT), "timestamp" };
+inline AST_vardecl bf_timer_ret = { cAST(A_VARDECL, INT), "timestamp" };
 
-inline AST_funcdef_builtin BF_TIMER = {
-	cAST(A_FUNCDEF_BUILTIN), "timer", 0, nullptr, 1, &BF_TIMER_RET, timer
+inline AST_funcdef bf_timer = {
+	cAST(A_FUNCDEF), true, "timer", 0, nullptr, 1, &bf_timer_ret, nullptr, &timer
 };
 
-inline void timer_end (Value* vals) {
-	auto start = vals[-1];
+inline double timer_end (int64_t start) {
 	auto end = (int64_t)get_timestamp();
-	vals[0].f = (double)(end - start.i) / (double)timestamp_freq;
+	return (double)(end - start) / (double)timestamp_freq;
 }
-inline AST_vardecl BF_TIMER_END_START = { cAST(A_VARDECL, INT), "start_timestamp" };
-inline AST_vardecl BF_TIMER_END_RET   = { cAST(A_VARDECL, FLT), "timestamp" };
+inline AST_vardecl bf_timer_end_start = { cAST(A_VARDECL, INT), "start_timestamp" };
+inline AST_vardecl bf_timer_end_ret   = { cAST(A_VARDECL, FLT), "timestamp" };
 
-inline AST_funcdef_builtin BF_TIMER_END = {
-	cAST(A_FUNCDEF_BUILTIN), "timer_end", 1, &BF_TIMER_END_START, 1, &BF_TIMER_END_RET, timer_end
+inline AST_funcdef bf_timer_end = {
+	cAST(A_FUNCDEF), true, "timer_end", 1, &bf_timer_end_start, 1, &bf_timer_end_ret, nullptr, &timer_end
 };
 
-inline const AST_funcdef_builtin* BUILTIN_FUNCS[] = {
-	&BF_PRINTF,
-	&BF_TIMER,
-	&BF_TIMER_END,
+inline AST_funcdef* builtin_funcs[] = {
+	&bf_printf,
+	&bf_timer,
+	&bf_timer_end,
 };

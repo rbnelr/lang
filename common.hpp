@@ -28,8 +28,6 @@
 
 using namespace kiss;
 
-typedef std::string_view strview;
-
 //// Preprocessor stuff
 #ifdef __GNUC__ // GCC 4.8+, Clang, Intel and other compilers compatible with GCC (-std=c++0x or above)
 	#define _ASSUME(cond) if (!(cond)) __builtin_unreachable()
@@ -160,6 +158,9 @@ struct BumpAllocator {
 
 inline BumpAllocator g_allocator;
 
+////
+typedef std::string_view strview;
+
 // g_allocator-backed buffer printf
 inline char const* format (char const* format, ...) {
 	va_list vl;
@@ -180,8 +181,28 @@ inline char const* format (char const* format, ...) {
 	return str;
 }
 
+inline void print_seperator (strview str) {
+#ifdef TRACY_ENABLE // disable prints for profiling
+	return;
+#endif
+
+	constexpr int LEN = 80;
+	char const* PAD = "--------------------------------------------------------------------------------";
+	assert(strlen(PAD) == LEN);
+
+	constexpr int SPACE = 1;
+
+	int pad = LEN - SPACE*2 - (int)str.size();
+	pad = std::max(pad, 0);
+
+	int padL = pad/2;
+	int padR = pad - padL;
+
+	printf("%.*s %.*s %.*s\n", padL,PAD, (int)str.size(), str.data(), padR,PAD);
+}
+
 // just for printing string to the console which might contain newlines or nulls
-inline std::string escape_string_capped (std::string_view const& str, size_t max_len=(size_t)-1) {
+inline std::string escape_string_capped (strview str, size_t max_len=(size_t)-1) {
 	std::string out;
 	out.reserve(str.size() + 8); // should prevent reallocs most of the time
 

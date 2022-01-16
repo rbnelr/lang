@@ -1,6 +1,9 @@
 #include "llvm_pch.hpp"
 #include "llvm_backend.hpp"
 
+#include "common.hpp"
+#include "builtins.hpp"
+
 llvm::LLVMContext ctx;
 llvm::IRBuilder<> build{ctx};
 

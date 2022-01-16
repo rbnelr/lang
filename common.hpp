@@ -75,13 +75,6 @@ _Defer<Func> _defer (Func func) {
 
 #define INVALID_DEFAULT default: { assert(false); _UNREACHABLE; } break
 
-////
-#if 1
-	#define TRACY_REPEAT 100000
-#else
-	#define TRACY_REPEAT 100
-#endif
-
 #define _DBG_MAGIC_NONALLOC 0xcc
 #define _DBG_MAGIC_UNINIT   0xcd
 #define _DBG_MAGIC_FREED    0xdd
@@ -239,3 +232,5 @@ inline void grow (std::vector<T>& vec, size_t min_sz) {
 		vec.resize(min_sz);
 	}
 }
+
+#define TRACY_REPEAT 100000 // 100

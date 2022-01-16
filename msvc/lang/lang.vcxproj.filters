@@ -35,6 +35,9 @@
     <ClCompile Include="..\..\llvm_jit.cpp">
       <Filter>llvm</Filter>
     </ClCompile>
+    <ClCompile Include="win32_mmap.cpp">
+      <Filter>llvm</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\util\string.hpp">
@@ -81,6 +84,9 @@
       <Filter>llvm</Filter>
     </ClInclude>
     <ClInclude Include="..\..\llvm_disasm.hpp">
+      <Filter>llvm</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\llvm_sec_mem_manager.hpp">
       <Filter>llvm</Filter>
     </ClInclude>
   </ItemGroup>

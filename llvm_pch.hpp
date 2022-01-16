@@ -53,7 +53,6 @@
 #pragma warning(pop)
 
 #include "common.hpp"
-#include "builtins.hpp"
 
 _FORCEINLINE llvm::StringRef SR (std::string_view sv) {
 	return { sv.data(), sv.size() };

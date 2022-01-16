@@ -1,6 +1,7 @@
 #pragma once
 #include "llvm_pch.hpp"
 #include "llvm_backend.hpp"
+#include "llvm_sec_mem_manager.hpp"
 
 struct DisasmPrinter {
 	LLVMDisasmContextRef DCR;
@@ -42,54 +43,67 @@ struct DisasmPrinter {
 		});
 	}
 
-	void print_disasm (llvm::RuntimeDyld& dyld, llvm::object::ObjectFile& obj, llvm::RuntimeDyld::LoadedObjectInfo& loadedObj) {
+	void print_disasm (
+			llvm::RuntimeDyld& dyld,
+			llvm::object::ObjectFile& obj,
+			llvm::RuntimeDyld::LoadedObjectInfo& loadedObj,
+			SectionMemoryManager& sec_mem) {
+
 		print_seperator("Disassembly:");
 
 		print_symbols(dyld, obj);
+		
+		for (auto& alloc : sec_mem.allocators)
+		for (auto& sec : alloc.sections) {
 
-		// TODO: It might be more interesting to print (disassembled) all allocated memory instead of the section seperated
-		// and then use labels where the sections begin?
+			// Search section list for the one with the name (with a proper LLVM API our SectionMemoryManager would know about this already)
+			// TODO: copy and modify LLVM backend?
+			auto find_section = [&] () {
+				// HACK: Any way to query which Sections exist in the RuntimeDyld is not made public for some reason
+				// This is despite the fact that I can ask for Section addresses and (bogus) sizes by section ID
+				// so exposing things by section ID yet not exposing the SectionRef -> sectionID mapping is just nonsensical imho
+				// Since I can't find a way to easily access info about the section and I think I should be able to (deriving etc. all are not possible)
+				// I'm just going to hack it with a pointer cast, sue me.
+				using Map = llvm::RuntimeDyld::LoadedObjectInfo::ObjSectionToIDMap;
+				auto& ObjSectionToID = *(Map*)((char*)&loadedObj + sizeof(loadedObj) - sizeof(Map));
 
-		// TODO: why do sections overlap in this? .pdata is allocated after .rdata, yet shares 12 bytes with it
+				for (auto& sec2ID : ObjSectionToID) {
+					auto sec_name = ExitOnErr(sec2ID.first.getName());
+					auto sec_id = sec2ID.second;
 
-		// HACK: ObjSectionToID is protected for some reason, and I have not yet found a way to properly access this mapping
-		// but I need it for this function
-		// one way I've yet to try is to iterate all symbols and collect their section IDs, which just seems completely unnecessary to me
-		using Map = llvm::RuntimeDyld::LoadedObjectInfo::ObjSectionToIDMap;
-		auto& ObjSectionToID = *(Map*)((char*)&loadedObj + sizeof(loadedObj) - sizeof(Map));
+					auto loadAddr = dyld.getSectionLoadAddress(sec_id);
 
-		for (auto& section : obj.sections()) {
-			auto name = ExitOnErr(section.getName());
+					if (sec.ptr == (void*)loadAddr)
+						return sec2ID.first;
+				}
+
+				assert(false);
+				return llvm::object::SectionRef{};
+			};
+
+			llvm::object::SectionRef secref = find_section();
+
+			auto name = ExitOnErr(secref.getName());
 
 			print_seperator(strview{ name.data(), name.size() }, '-');
+			printf(";; Allocated size: %8" PRIu64 "\n", sec.alloc_size);
 
-			auto it = ObjSectionToID.find(section);
-			if (it == ObjSectionToID.end()) {
-				printf("<section not loaded>\n");
+			auto data = (const uint8_t*)sec.ptr;
+			auto size = sec.sec_size;
+		
+			if (size == 0) {
+				printf("<empty>\n");
+				return;
 			}
 			else {
-				auto ID = it->second;
-
-				auto content = dyld.getSectionContent(ID);
-
-				auto data = (const uint8_t*)content.data();
-				auto size = content.size();
-
-				if (size == 0) {
-					printf("<empty>\n");
-					return;
+				if (secref.isText()) {
+					print_code_section(data, size);
 				}
 				else {
-					if (section.isText()) {
-						print_code_section(data, size);
-					}
-					else {
-						print_data_section(data, size);
-					}
+					print_data_section(data, size);
 				}
 			}
 		}
-
 	}
 
 	void print_data_section (const uint8_t* data, size_t size) {
@@ -165,7 +179,7 @@ struct DisasmPrinter {
 				cur_sym++;
 			}
 			if (cur_sym != symbols.end() && cur_sym->addr == data + offs) {
-				printf("                 -->   %.*s:\n",
+				printf("\n                       @%.*s:\n",
 					(int)cur_sym->name.size(), cur_sym->name.data());
 			}
 			

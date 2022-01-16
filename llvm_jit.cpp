@@ -1,9 +1,10 @@
 #include "llvm_pch.hpp"
 #include "llvm_backend.hpp"
-
-llvm::ExitOnError ExitOnErr;
+#include "llvm_disasm.hpp"
 
 struct JIT {
+
+//// Resolver (why do I need this? possibly once I combine multiple modules?)
 	class Resolver : public llvm::JITSymbolResolver {
 	public:
 
@@ -67,8 +68,178 @@ struct JIT {
 		}
 	}
 
+//// Memory manager that handles code and code-data memory pages (memory for sections bascially)
+
+	// Use my own class here instead of llvm::SectionMemoryManager to allow me to know about all memory used and disassemble it properly
+	class SectionMemoryManager : public llvm::RTDyldMemoryManager {
+	public:
+
+		struct Allocator {
+			// Just doing the simplest way of allocation section I can think of
+			// which is to allocate one series of pages per section
+			// this is also the most flexible approach, since there will never be any fragmentation if pages are freed in random order
+			// though the wasted memory at the end of pages could be considered fragmentation
+			// 
+			// TODO: In practice we want to avoid wasting memory if a large number of sections are allocated
+			// The proper way to do this while still allowing for unloading of modules would be to merge section allocations where appropriate
+			// but then this using this interface is likely the wrong approach
+			// I'd keep allocations for seperate modules seperated to allow for unloading of modules without memory fragmentation,
+			// group the sections of each modules into the 3 Purposes and then allocate 1 fixed-sized region for each
+			// Thus every is simple and we have a worst case of ~3x the OS page size per module, which seems totally fine unless you have tons of modules for some reason
+			// But for this approach this interface sucks since we would really want those sections to already be sorted by the user of this class
+
+			struct Section {
+				size_t                 sec_size;
+				llvm::sys::MemoryBlock mem;
+
+				// TODO: consider alignment here, for now I'm going to assume sections are never aligned to more than the alignment returned by this
+				std::error_code alloc (size_t size, llvm::sys::Memory::ProtectionFlags flags) {
+					sec_size = size;
+
+					using namespace llvm::sys;
+					std::error_code ec;
+					mem = Memory::allocateMappedMemory(size, nullptr, flags, ec);
+
+					assert(mem.allocatedSize() > size);
+				#ifndef NDEBUG
+					// mark actually allocated section memory as UNINIT
+					memset(mem.base(),               _DBG_MAGIC_UNINIT, size);
+					// mark not actually requested but allocated section memory as NONALLOC
+					// NOTE: This region should never be accessed, since it's only allocated by chance, yet getSectionContent return part of this!!
+					memset((char*)mem.base() + size, _DBG_MAGIC_NONALLOC, mem.allocatedSize() - size);
+				#endif
+
+					return ec;
+				}
+
+				std::error_code protect (llvm::sys::Memory::ProtectionFlags flags) {
+					return llvm::sys::Memory::protectMappedMemory(mem, flags);
+				}
+
+				~Section () {
+					using namespace llvm::sys;
+					std::error_code ec = Memory::releaseMappedMemory(mem);
+					// ??? when exactly is freeing valid memory supposed to fail?
+				}
+			};
+			
+			llvm::SmallVector<Section, 8> allocations;
+		};
+
+		
+		enum Purpose {
+			Code = 0,
+			ROData,
+			RWData,
+		};
+		Allocator allocators[3];
+		
+		SectionMemoryManager () {};
+
+		SectionMemoryManager(const SectionMemoryManager&) = delete;
+		void operator=(const SectionMemoryManager&) = delete;
+
+		~SectionMemoryManager() override {}
+
+		/// Allocates a memory block of (at least) the given size suitable for
+		/// executable code.
+		///
+		/// The value of \p Alignment must be a power of two.  If \p Alignment is zero
+		/// a default alignment of 16 will be used.
+		uint8_t* allocateCodeSection (uintptr_t Size, unsigned Alignment,
+				unsigned SectionID, llvm::StringRef SectionName) override {
+			return allocateSection(Purpose::Code, Size, Alignment);
+		}
+
+		/// Allocates a memory block of (at least) the given size suitable for
+		/// executable code.
+		///
+		/// The value of \p Alignment must be a power of two.  If \p Alignment is zero
+		/// a default alignment of 16 will be used.
+		uint8_t* allocateDataSection (uintptr_t Size, unsigned Alignment,
+				unsigned SectionID, llvm::StringRef SectionName, bool isReadOnly) override {
+			
+			auto purpose = isReadOnly ? Purpose::ROData : Purpose::RWData;
+			return allocateSection(purpose, Size, Alignment);
+		}
+
+		uint8_t* allocateSection (Purpose Purpose, uintptr_t Size, unsigned Alignment) {
+			if (!Alignment)
+				Alignment = 16;
+			assert(!(Alignment & (Alignment - 1)) && "Alignment must be a power of two.");
+
+			auto& allocator = allocators[Purpose];
+			
+			auto& sec = allocator.allocations.emplace_back();
+
+			using namespace llvm::sys;
+			
+			std::error_code ec = sec.alloc(Size, (Memory::ProtectionFlags)(Memory::MF_READ | Memory::MF_WRITE));
+			if (ec) {
+				// FIXME: Add error propagation to the interface.
+				return nullptr;
+			}
+
+			void* ptr = sec.mem.base();
+
+			if ((uintptr_t)ptr != (((uintptr_t)ptr + Alignment - 1) & ~(uintptr_t)(Alignment - 1))) {
+				// FIXME: Alignment failure, should only happen if Alignment > OS page size, which could be disallowed in practice
+				return nullptr;
+			}
+
+			// Return aligned address
+			return (uint8_t*)ptr;
+		}
+
+		std::error_code applyMemoryGroupPermissions (Allocator& allocator, llvm::sys::Memory::ProtectionFlags Permissions) {
+			std::error_code ec;
+			for (auto& sec : allocator.allocations) {
+				if ((ec = sec.protect(Permissions)))
+					break;
+			}
+			return ec;
+		}
+
+		bool finalizeMemory (std::string* ErrMsg = nullptr) override {
+			// TODO: Assume that finalizeMemory is only called once and that no allocations happen after it
+			// if I ever want to load and unload modules dynamically I'm going to change this
+			std::error_code ec;
+			using namespace llvm::sys;
+
+			// Make code memory executable.
+			ec = applyMemoryGroupPermissions(allocators[Code], (Memory::ProtectionFlags)(Memory::MF_READ | Memory::MF_EXEC));
+			if (ec) {
+				if (ErrMsg) *ErrMsg = ec.message();
+				return true;
+			}
+
+			// Make read-only data memory read-only.
+			ec = applyMemoryGroupPermissions(allocators[ROData], Memory::MF_READ);
+			if (ec) {
+				if (ErrMsg) *ErrMsg = ec.message();
+				return true;
+			}
+
+			// Read-write data memory already has the correct permissions
+
+			// Some platforms with separate data cache and instruction cache require
+			// explicit cache flush, otherwise JIT code manipulations (like resolved
+			// relocations) will get to the data cache but not to the instruction cache.
+			invalidateInstructionCache();
+
+			return false;
+		}
+
+		void invalidateInstructionCache() {
+			for (auto& sec : allocators[Code].allocations)
+				llvm::sys::Memory::InvalidateInstructionCache(sec.mem.base(), sec.mem.allocatedSize());
+		}
+
+	};
+
+
 	Resolver                             resolver;
-	llvm::SectionMemoryManager           MM;
+	SectionMemoryManager                 MM;
 	
 	llvm::RuntimeDyld                    dyld;
 
@@ -105,7 +276,6 @@ struct JIT {
 		// mem2reg pass for alloca'd local vars
 		//PM.add(llvm::createPromoteMemoryToRegisterPass());
 
-		//
 		llvm::MCContext* Ctx;
 		if (TM->addPassesToEmitMC(PM, Ctx, ObjStream)) {
 			ExitOnErr( llvm::make_error<llvm::StringError>(
@@ -126,6 +296,23 @@ struct JIT {
 
 		{
 			llvm::legacy::PassManager PM;
+			
+			/* // Emit assembly file instead
+			llvm::SmallVector<char, 0> DwoBufferSV;
+			llvm::raw_svector_ostream DwoStream(DwoBufferSV);
+		
+			if (TM->addPassesToEmitFile(PM, ObjStream, &DwoStream, llvm::CGFT_AssemblyFile)) {
+				ExitOnErr( llvm::make_error<llvm::StringError>(
+					"Target does not support MC emission",
+					llvm::inconvertibleErrorCode())
+				);
+			}
+
+			PM.run(*modl);
+
+			save_text_file("test.asm", ObjBufferSV.data());
+			*/
+
 			setup_PM(PM, ObjStream);
 
 			PM.run(*modl);
@@ -144,10 +331,9 @@ struct JIT {
 
 		dyld.finalizeWithMemoryManagerLocking(); // calls resolveRelocations
 		
-		// TODO: actually print the relocated object, not the initially generated one
-		print_disasm(*Obj, *loadedObj);
+		DisasmPrinter disasm(TT);
+		disasm.print_disasm(dyld, *Obj, *loadedObj);
 	}
-	
 	
 	void jit_and_execute (llvm::Module* modl) {
 		ZoneScoped;
@@ -159,128 +345,6 @@ struct JIT {
 		typedef void (*main_fp)();
 		auto fptr = (main_fp)dyld.getSymbol("main").getAddress();
 		fptr();
-	}
-
-	void print_disasm (llvm::object::ObjectFile& obj, llvm::RuntimeDyld::LoadedObjectInfo& info) {
-		print_seperator("Disassembly:");
-
-		for (auto& section : obj.sections()) {
-			auto name = ExitOnErr(section.getName());
-
-			print_seperator(strview{ name.data(), name.size() }, '-');
-
-			//auto data = ExitOnErr(section.getContents());
-			auto reloc_sec = ExitOnErr(section.getRelocatedSection());
-			auto data = ExitOnErr(reloc_sec->getContents());
-
-			if (section.isText()) {
-				print_disassembly((const uint8_t*)data.data(), data.size());
-			}
-			else {
-				print_data_section((const uint8_t*)data.data(), data.size());
-			}
-		}
-
-	}
-	
-	// TODO: disasm: print symbols/labels/debug info?
-
-	void print_data_section (const uint8_t* data, size_t size) {
-		if (size == 0) {
-			printf("<empty>\n");
-			return;
-		}
-
-		int width = 16;
-
-		size_t offs = 0;
-		for (size_t offs = 0; offs < size; offs += width) {
-			printf("%p %04" PRIx64 " | ", data + offs, offs);
-
-			for (size_t i=0; i<16; ++i) {
-				if (i % 4 == 0) putchar(' ');
-
-				if (offs+i < size)
-					printf("%02x", data[offs+i]);
-				else
-					printf("  "); // print spaces to fill non-aligned end
-			}
-
-			printf("  ");
-
-			for (size_t i=0; i<16 && offs+i < size; ++i) {
-				char c = (char)data[offs+i];
-				if (isascii(c) && iscntrl(c)) c = '.';
-				putchar(c);
-			}
-			
-			printf("\n");
-		}
-	}
-	void print_disassembly (const uint8_t* data, size_t size) {
-		if (size == 0) {
-			printf("<empty>\n");
-			return;
-		}
-
-		auto dcr = LLVMCreateDisasm(TT.str().c_str(), NULL, 0, NULL, NULL);
-
-		LLVMSetDisasmOptions(dcr,
-			LLVMDisassembler_Option_UseMarkup |
-			LLVMDisassembler_Option_AsmPrinterVariant
-		);
-
-		size_t offs = 0;
-		size_t remain = size;
-		
-		size_t cbytes_len = 10; // 0 to not print code bytes
-
-		char str[64];
-		llvm::SmallString<64> str_untab;
-
-		auto untabbify = [&] () {
-			size_t tab_width = 8;
-
-			str_untab.clear();
-			
-			size_t i = 0;
-
-			while (str[i] == '\t') i++; // skip inital tabs
-
-			while (str[i] != '\0') {
-				if (str[i] == '\t') {
-					size_t spaces = 8 - (i % 8);
-					for (size_t j=0; j<spaces; ++j) {
-						str_untab.push_back(' '); // align to next multiple of tab_width chars
-					}
-				}
-				else {
-					str_untab.push_back(str[i]);
-				}
-				i++;
-			}
-
-			str_untab.push_back('\0');
-		};
-
-		// prints string indented by a few spaces
-		while (size_t sz = LLVMDisasmInstruction(dcr, (uint8_t*)&data[offs], remain, offs, str, ARRLEN(str))) {
-			printf("%p %04" PRIx64 " |  ", data + offs, offs);
-
-			if (cbytes_len > 0) {
-				for (size_t i=0; i<sz; ++i)
-					printf("%02x ", data[offs+i]);
-				for (size_t i=sz; i<cbytes_len; ++i)
-					printf("   ");
-			}
-
-			untabbify();
-			
-			printf(" %-35s #\n", str_untab.data());
-
-			offs += sz;
-			remain -= sz;
-		}
 	}
 };
 

@@ -58,3 +58,5 @@
 _FORCEINLINE llvm::StringRef SR (std::string_view sv) {
 	return { sv.data(), sv.size() };
 }
+
+inline llvm::ExitOnError ExitOnErr;

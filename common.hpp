@@ -82,6 +82,10 @@ _Defer<Func> _defer (Func func) {
 	#define TRACY_REPEAT 100
 #endif
 
+#define _DBG_MAGIC_NONALLOC 0xcc
+#define _DBG_MAGIC_UNINIT   0xcd
+#define _DBG_MAGIC_FREED    0xdd
+
 struct BumpAllocator {
 	static inline constexpr size_t BLOCK_SZ = 1024 * 1024 * 1;
 

@@ -80,6 +80,9 @@
     <ClInclude Include="..\..\llvm_backend.hpp">
       <Filter>llvm</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\llvm_disasm.hpp">
+      <Filter>llvm</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <Filter Include="util">

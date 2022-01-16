@@ -14,6 +14,8 @@ struct Options {
 	bool         print_ir   = true;
 	bool         print_code = true;
 #endif
+	
+	bool         disasm_print_symbols = true;
 };
 
 inline Options options;

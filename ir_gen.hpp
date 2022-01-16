@@ -398,7 +398,7 @@ struct IRGen {
 		for (auto* ret=(AST_vardecl*)func->rets; ret != nullptr; ret = (AST_vardecl*)ret->next) {
 			Var v = { VT_ARGID, retid++ };
 			ret->var_id     = v.id;
-			ret->var_is_arg = true;
+			ret->is_arg = true;
 
 			if (ret->init) {
 				assert(ret->type != A_VARARGS);
@@ -414,7 +414,7 @@ struct IRGen {
 		for (auto* arg=(AST_vardecl*)func->args; arg != nullptr; arg = (AST_vardecl*)arg->next) {
 			Var v = { VT_ARGID, argid++ };
 			arg->var_id     = v.id;
-			arg->var_is_arg = true;
+			arg->is_arg = true;
 		}
 
 		return_lbl = ir.create_label((AST*)func, "return");
@@ -446,7 +446,7 @@ struct IRGen {
 
 				Var decl = { VT_VARID, ir.var_count++ };
 				var->var_id = decl.id;
-				var->var_is_arg = false;
+				var->is_arg = false;
 
 				if (var->init) {
 					Var val = IRgen(ir, var->init);
@@ -459,7 +459,7 @@ struct IRGen {
 			case A_VAR: {
 				auto* var = (AST_var*)ast;
 				auto* vardecl = (AST_vardecl*)var->decl;
-				return { vardecl->var_is_arg ? VT_ARGID : VT_VARID, vardecl->var_id };
+				return { vardecl->is_arg ? VT_ARGID : VT_VARID, vardecl->var_id };
 			}
 			
 			case A_UNOP: {

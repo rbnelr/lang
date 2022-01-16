@@ -22,14 +22,17 @@
 func test (a : int, b : int) = (ret : int) {
 	//a := 5;
 	//b := 3;
-	c := 7;
+	c : int;
 	
-	e := timer();
+	t := timer() % 16;
+	
+	c = 7;
+	c = c + 1;
 
 	d := a + b * c;
 
 	printf("Blah1: d: {i}  b: {i}\n", d, b);
-	printf("Blah1: d: {i}  c: {i}\n", d, c);
+	printf("Blah1: d: {i}  c: {i}\n", d, t);
 
 	printf("Blah2: {i}-{i}-{i} {i}-{i}-{i}\n", a, a, a, b, b, b);
 	

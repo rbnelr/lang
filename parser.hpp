@@ -266,7 +266,7 @@ struct AST_vardecl : public AST {
 	AST*         init;       // initialization during declaration
 
 	size_t       var_id;     // for IR gen
-	bool         var_is_arg; // for IR gen, is this variable a function argument?
+	bool         is_arg; // for IR gen, is this variable a function argument?
 	
 	llvm::Value* llvm_value;
 };

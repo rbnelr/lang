@@ -24,7 +24,7 @@ struct DisasmPrinter {
 	};
 	llvm::SmallVector<Symbol, 64> symbols;
 
-	void print_symbols (llvm::RuntimeDyld& dyld, llvm::object::ObjectFile& obj) {
+	void handle_symbols (llvm::RuntimeDyld& dyld, llvm::object::ObjectFile& obj) {
 		print_seperator("Symbols", '-');
 
 		for (auto& sym : obj.symbols()) {
@@ -32,7 +32,8 @@ struct DisasmPrinter {
 			auto eval_sym = dyld.getSymbol(name);
 			auto addr = (const uint8_t*)eval_sym.getAddress();
 
-			printf("%-16.*s : %p\n", (int)name.size(), name.data(), addr);
+			if (options.disasm_print_symbols)
+				printf("%-16.*s : %p\n", (int)name.size(), name.data(), addr);
 
 			if (addr != nullptr)
 				symbols.push_back({ name, addr });
@@ -51,10 +52,12 @@ struct DisasmPrinter {
 
 		print_seperator("Disassembly:");
 
-		print_symbols(dyld, obj);
+		handle_symbols(dyld, obj);
 		
 		for (auto& alloc : sec_mem.allocators)
 		for (auto& sec : alloc.sections) {
+
+			size_t reported_size;
 
 			// Search section list for the one with the name (with a proper LLVM API our SectionMemoryManager would know about this already)
 			// TODO: copy and modify LLVM backend?
@@ -72,9 +75,11 @@ struct DisasmPrinter {
 					auto sec_id = sec2ID.second;
 
 					auto loadAddr = dyld.getSectionLoadAddress(sec_id);
+					reported_size = dyld.getSectionContent(sec_id).size();
 
-					if (sec.ptr == (void*)loadAddr)
+					if (sec.ptr == (void*)loadAddr) {
 						return sec2ID.first;
+					}
 				}
 
 				assert(false);
@@ -86,11 +91,13 @@ struct DisasmPrinter {
 			auto name = ExitOnErr(secref.getName());
 
 			print_seperator(strview{ name.data(), name.size() }, '-');
-			printf(";; Allocated size: %8" PRIu64 "\n", sec.alloc_size);
-
+			printf(";; OS alloc size       : %8llu\n"
+			       ";; LLVM alloc size     : %8llu\n"
+			       ";; LLVM reported size  : %8llu\n", sec.alloc_size, sec.sec_size, reported_size);
+			
 			auto data = (const uint8_t*)sec.ptr;
 			auto size = sec.sec_size;
-		
+			
 			if (size == 0) {
 				printf("<empty>\n");
 				return;

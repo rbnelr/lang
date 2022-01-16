@@ -85,6 +85,7 @@ struct LLVM_gen {
 				args_ty.push_back(map_type(arg->valtype));
 			}
 
+			arg->is_arg = true;
 			if (arg->init) {
 				// TODO
 				assert(false);
@@ -104,11 +105,17 @@ struct LLVM_gen {
 		fdef->llvm_func = func;
 		return func;
 	}
+	
+	AST_funcdef* cur_func;
+	llvm::BasicBlock* entry_block;
+
 	void codegen_function (AST_funcdef* fdef) {
 		ZoneScoped;
+		cur_func = fdef;
+
 		//// entry block + start recursively codegening of the function body
-		auto* bb_entry = llvm::BasicBlock::Create(ctx, "entry", fdef->llvm_func);
-		build.SetInsertPoint(bb_entry);
+		entry_block = llvm::BasicBlock::Create(ctx, "entry", fdef->llvm_func);
+		build.SetInsertPoint(entry_block);
 
 		codegen(fdef->body);
 		
@@ -117,6 +124,9 @@ struct LLVM_gen {
 		
 		//// finish function
 		verifyFunction(*fdef->llvm_func);
+
+		cur_func = nullptr;
+		entry_block = nullptr;
 	}
 	
 	/*
@@ -159,6 +169,78 @@ struct LLVM_gen {
 		}
 	}*/
 
+	llvm::Value* codegen_binop (AST_binop* op, llvm::Value* lhs, llvm::Value* rhs) {
+		assert(op->lhs->valtype == op->rhs->valtype);
+
+		switch (op->valtype) {
+		case INT: {
+			switch (op->op) {
+				case OP_ADD:        return build.CreateAdd (lhs, rhs, "_add");
+				case OP_SUB:        return build.CreateSub (lhs, rhs, "_sub");
+				case OP_MUL:        return build.CreateMul (lhs, rhs, "_mul");
+				case OP_DIV:        return build.CreateSDiv(lhs, rhs, "_div");
+				case OP_REMAINDER:  return build.CreateSRem(lhs, rhs, "_rem");
+				//case OP_LESS:       return OP_i_LT;
+				//case OP_LESSEQ:     return OP_i_LE;
+				//case OP_GREATER:    return OP_i_GT;
+				//case OP_GREATEREQ:  return OP_i_GE;
+				//case OP_EQUALS:     return OP_i_EQ;
+				//case OP_NOT_EQUALS: return OP_i_NEQ;
+				INVALID_DEFAULT;
+			}
+		} break;
+		//case BOOL: {
+		//	switch (op) {
+		//		case OP_ADD:        return OP_i_ADD;
+		//		case OP_SUB:        return OP_i_SUB;
+		//		case OP_MUL:        return OP_i_MUL;
+		//		case OP_DIV:        return OP_i_DIV;
+		//		case OP_REMAINDER:  return OP_i_REMAIND;
+		//			throw CompilerExcept{ "error: math ops not valid for this type", ast->src_tok->source };
+		//
+		//		case OP_LESS:       return OP_i_LT;
+		//		case OP_LESSEQ:     return OP_i_LE;
+		//		case OP_GREATER:    return OP_i_GT;
+		//		case OP_GREATEREQ:  return OP_i_GE;
+		//			throw CompilerExcept{ "error: can't compare bools like that", ast->src_tok->source };
+		//
+		//		case OP_EQUALS:     return OP_b_EQ; 
+		//		case OP_NOT_EQUALS: return OP_b_NEQ;
+		//		INVALID_DEFAULT;
+		//	}
+		//} break;
+		//case FLT: {
+		//	switch (op) {
+		//		case OP_REMAINDER:
+		//			throw CompilerExcept{ "error: remainder operator not valid for floats", ast->src_tok->source };
+		//		case OP_ADD:        return OP_f_ADD;
+		//		case OP_SUB:        return OP_f_SUB;
+		//		case OP_MUL:        return OP_f_MUL;
+		//		case OP_DIV:        return OP_f_DIV;
+		//		case OP_LESS:       return OP_f_LT;
+		//		case OP_LESSEQ:     return OP_f_LE;
+		//		case OP_GREATER:    return OP_f_GT;
+		//		case OP_GREATEREQ:  return OP_f_GE;
+		//		case OP_EQUALS:     return OP_f_EQ;
+		//		case OP_NOT_EQUALS: return OP_f_NEQ;
+		//		INVALID_DEFAULT;
+		//	}
+		//} break;
+		default:
+			throw CompilerExcept{ "error: math ops not valid for this type", op->src_tok->source };
+		}
+	}
+
+	// get alloca-ptr from local variable (not function arguments, since they are not allocas)
+	llvm::Value* local_var_ptr (AST* ast) {
+		assert(ast->type == A_VAR);
+		auto* var     = (AST_var*)ast;
+		auto* vardecl = (AST_vardecl*)var->decl;
+		assert(!vardecl->is_arg);
+
+		return vardecl->llvm_value; // should be a llvm::AllocaInst
+	}
+
 	llvm::Value* codegen (AST* ast) {
 		switch (ast->type) {
 			case A_LITERAL: {
@@ -189,9 +271,14 @@ struct LLVM_gen {
 			case A_VARDECL: {
 				auto* vardecl = (AST_vardecl*)ast;
 
+				llvm::IRBuilder<> tmp_build(entry_block, entry_block->begin());
+				vardecl->llvm_value = tmp_build.CreateAlloca(map_type(vardecl->valtype), nullptr, SR(vardecl->ident));
+
 				if (vardecl->init) {
-					vardecl->llvm_value = codegen(vardecl->init);
-					return vardecl->llvm_value;
+					// eval rhs
+					auto* val = codegen(vardecl->init);
+					// assign to new var
+					build.CreateStore(val, vardecl->llvm_value);
 				}
 				return {};
 			}
@@ -199,7 +286,36 @@ struct LLVM_gen {
 			case A_VAR: {
 				auto* var = (AST_var*)ast;
 				auto* vardecl = (AST_vardecl*)var->decl;
-				return vardecl->llvm_value;
+				
+				if (vardecl->is_arg) {
+					return vardecl->llvm_value;
+				}
+				else {
+					return build.CreateLoad(map_type(var->valtype), vardecl->llvm_value, vardecl->llvm_value->getName());
+				}
+			}
+
+			case A_ASSIGNOP: {
+				auto* op = (AST_binop*)ast;
+				// get variable alloca ptr
+				llvm::Value* var = local_var_ptr(op->lhs);
+
+				llvm::Value* value;
+				if (op->op == OP_ASSIGN) {
+					// simple assignment of rhs to lhs
+					value = codegen(op->rhs);
+				}
+				else {
+					// load lhs first
+					value = build.CreateLoad(map_type(op->valtype), var, var->getName());
+					// eval rhs
+					llvm::Value* rhs = codegen(op->rhs);
+					// eval binary operator and assign to lhs
+					value = codegen_binop(op, value, rhs);
+				}
+
+				build.CreateStore(value, var);
+				return {};
 			}
 
 			case A_BINOP: {
@@ -207,66 +323,12 @@ struct LLVM_gen {
 
 				assert(op->lhs->valtype == op->rhs->valtype);
 				
+				// eval lhs
 				llvm::Value* lhs = codegen(op->lhs);
+				// eval rhs
 				llvm::Value* rhs = codegen(op->rhs);
-
-				switch (op->valtype) {
-				case INT: {
-					switch (op->op) {
-						case OP_ADD:        return build.CreateAdd(lhs, rhs, "addtmp");
-						case OP_SUB:        return build.CreateSub(lhs, rhs, "subtmp");
-						case OP_MUL:        return build.CreateMul(lhs, rhs, "multmp");
-						case OP_DIV:        return build.CreateSDiv(lhs, rhs, "divtmp");
-						//case OP_REMAINDER:  return OP_i_REMAIND;
-						//case OP_LESS:       return OP_i_LT;
-						//case OP_LESSEQ:     return OP_i_LE;
-						//case OP_GREATER:    return OP_i_GT;
-						//case OP_GREATEREQ:  return OP_i_GE;
-						//case OP_EQUALS:     return OP_i_EQ;
-						//case OP_NOT_EQUALS: return OP_i_NEQ;
-						INVALID_DEFAULT;
-					}
-				} break;
-				//case BOOL: {
-				//	switch (op) {
-				//		case OP_ADD:        return OP_i_ADD;
-				//		case OP_SUB:        return OP_i_SUB;
-				//		case OP_MUL:        return OP_i_MUL;
-				//		case OP_DIV:        return OP_i_DIV;
-				//		case OP_REMAINDER:  return OP_i_REMAIND;
-				//			throw CompilerExcept{ "error: math ops not valid for this type", ast->src_tok->source };
-				//
-				//		case OP_LESS:       return OP_i_LT;
-				//		case OP_LESSEQ:     return OP_i_LE;
-				//		case OP_GREATER:    return OP_i_GT;
-				//		case OP_GREATEREQ:  return OP_i_GE;
-				//			throw CompilerExcept{ "error: can't compare bools like that", ast->src_tok->source };
-				//
-				//		case OP_EQUALS:     return OP_b_EQ; 
-				//		case OP_NOT_EQUALS: return OP_b_NEQ;
-				//		INVALID_DEFAULT;
-				//	}
-				//} break;
-				//case FLT: {
-				//	switch (op) {
-				//		case OP_REMAINDER:
-				//			throw CompilerExcept{ "error: remainder operator not valid for floats", ast->src_tok->source };
-				//		case OP_ADD:        return OP_f_ADD;
-				//		case OP_SUB:        return OP_f_SUB;
-				//		case OP_MUL:        return OP_f_MUL;
-				//		case OP_DIV:        return OP_f_DIV;
-				//		case OP_LESS:       return OP_f_LT;
-				//		case OP_LESSEQ:     return OP_f_LE;
-				//		case OP_GREATER:    return OP_f_GT;
-				//		case OP_GREATEREQ:  return OP_f_GE;
-				//		case OP_EQUALS:     return OP_f_EQ;
-				//		case OP_NOT_EQUALS: return OP_f_NEQ;
-				//		INVALID_DEFAULT;
-				//	}
-				//} break;
-				default:
-					throw CompilerExcept{ "error: math ops not valid for this type", ast->src_tok->source };
-				}
+				// eval binary operator
+				return codegen_binop(op, lhs, rhs);
 			}
 
 			case A_BLOCK: {
@@ -316,7 +378,7 @@ struct LLVM_gen {
 					declargs[arg->decli].callarg = calli++;
 				}
 
-				return build.CreateCall(fdef->llvm_func, callargs, fdef->rets ? "calltmp" : "");
+				return build.CreateCall(fdef->llvm_func, callargs, fdef->rets ? "_call" : "");
 			}
 			
 			case A_RETURN: {

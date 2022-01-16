@@ -88,7 +88,12 @@ struct JIT {
 		// TODO: I can't pass -debug to my own app and expect LLVM to set this flag can I?
 		// so just set it manually to print stuff?
 	#ifndef NDEBUG
-		//llvm::DebugFlag = true;
+		llvm::DebugFlag = 0;
+
+		//const char* dbg_types[] = {
+		//};
+		//if (llvm::DebugFlag)
+		//	llvm::setCurrentDebugTypes(dbg_types, ARRLEN(dbg_types));
 	#endif
 
 		llvm::InitializeNativeTarget();
@@ -109,7 +114,7 @@ struct JIT {
 	void setup_PM (llvm::legacy::PassManager& PM, llvm::raw_svector_ostream& ObjStream) {
 		
 		// mem2reg pass for alloca'd local vars
-		//PM.add(llvm::createPromoteMemoryToRegisterPass());
+		PM.add(llvm::createPromoteMemoryToRegisterPass());
 
 		llvm::MCContext* Ctx;
 		if (TM->addPassesToEmitMC(PM, Ctx, ObjStream)) {
@@ -166,8 +171,15 @@ struct JIT {
 
 		dyld.finalizeWithMemoryManagerLocking(); // calls resolveRelocations
 		
-		DisasmPrinter disasm(TT);
-		disasm.print_disasm(dyld, *Obj, *loadedObj, MM);
+		if (options.print_ir) {
+			print_seperator("LLVM IR - After Opt");
+			modl->print(llvm::errs(), nullptr);
+		}
+
+		if (options.print_code) {
+			DisasmPrinter disasm(TT);
+			disasm.print_disasm(dyld, *Obj, *loadedObj, MM);
+		}
 	}
 	
 	void jit_and_execute (llvm::Module* modl) {

@@ -112,6 +112,7 @@ struct JIT {
 	}
 	
 	void setup_PM (llvm::legacy::PassManager& PM, llvm::raw_svector_ostream& ObjStream) {
+		ZoneScoped;
 		
 		// mem2reg pass for alloca'd local vars
 		PM.add(llvm::createPromoteMemoryToRegisterPass());
@@ -126,6 +127,7 @@ struct JIT {
 	}
 
 	void compile_and_load (llvm::Module* modl) {
+		ZoneScoped;
 		
 		auto DL = TM->createDataLayout();
 
@@ -135,6 +137,8 @@ struct JIT {
 		llvm::raw_svector_ostream ObjStream(ObjBufferSV);
 
 		{
+			ZoneScopedN("run passes");
+			
 			llvm::legacy::PassManager PM;
 			
 			/* // Emit assembly file instead
@@ -154,8 +158,11 @@ struct JIT {
 			*/
 
 			setup_PM(PM, ObjStream);
-
-			PM.run(*modl);
+			
+			{
+				ZoneScopedN("PM.run()");
+				PM.run(*modl);
+			}
 		}
 
 		llvm::SmallVectorMemoryBuffer ObjBuffer {
@@ -166,11 +173,18 @@ struct JIT {
 		auto Obj = ExitOnErr(
 			llvm::object::ObjectFile::createObjectFile(ObjBuffer.getMemBufferRef())
 		);
-			
-		auto loadedObj = dyld.loadObject(*Obj);
-
-		dyld.finalizeWithMemoryManagerLocking(); // calls resolveRelocations
 		
+		std::unique_ptr<llvm::RuntimeDyld::LoadedObjectInfo> loadedObj;
+		{
+			ZoneScopedN("dyld.loadObject()");
+			loadedObj = dyld.loadObject(*Obj);
+		}
+		
+		{
+			ZoneScopedN("dyld.finalizeWithMemoryManagerLocking()");
+			dyld.finalizeWithMemoryManagerLocking(); // calls resolveRelocations
+		}
+
 		if (options.print_ir) {
 			print_seperator("LLVM IR - After Opt");
 			modl->print(llvm::errs(), nullptr);
@@ -181,17 +195,21 @@ struct JIT {
 			disasm.print_disasm(dyld, *Obj, *loadedObj, MM);
 		}
 	}
-	
-	void jit_and_execute (llvm::Module* modl) {
+	void execute () {
 		ZoneScoped;
-
-		compile_and_load(modl);
 
 		print_seperator("Execute JITed LLVM code:");
 
 		typedef void (*main_fp)();
 		auto fptr = (main_fp)dyld.getSymbol("main").getAddress();
 		fptr();
+	}
+	
+	void jit_and_execute (llvm::Module* modl) {
+		ZoneScoped;
+
+		compile_and_load(modl);
+		execute();
 	}
 };
 

@@ -87,10 +87,10 @@ for i:=0; i<10; i++ {
 		msg = "---";
 	} 
 	mymsg := get_msg();
-
+	
 	{
 		myprint(mymsg);
 	}
-
+	
 	printf("\n");
 }

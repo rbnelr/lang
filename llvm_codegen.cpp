@@ -89,7 +89,8 @@ struct LLVM_gen {
 		return func;
 	}
 	
-	llvm::Function* cur_func;
+	AST_funcdef*      cur_fdef;
+	llvm::Function*   cur_func;
 	llvm::BasicBlock* entry_block;
 
 	llvm::BasicBlock* ib_block = nullptr; // ib = insert before   -> to preserve block order (keep it in source code order)
@@ -134,16 +135,24 @@ struct LLVM_gen {
 
 	void codegen_function (AST_funcdef* fdef) {
 		ZoneScoped;
+
+		cur_fdef = fdef;
 		cur_func = fdef->llvm_func;
 
 		//// entry block + start recursively codegening of the function body
 		entry_block = llvm::BasicBlock::Create(ctx, "entry", cur_func);
 		build.SetInsertPoint(entry_block);
 
+		for (auto* ret = (AST_vardecl*)fdef->rets; ret != nullptr; ret = (AST_vardecl*)ret->next) {
+			assert(ret->type != A_VARARGS);
+			
+			declare_local_var(ret);
+		}
+
 		codegen(fdef->body);
 		
 		//// implicit return instruction at end of function body
-		build.CreateRetVoid();
+		return_ret_vars();
 		
 		//// finish function
 		verifyFunction(*fdef->llvm_func);
@@ -254,374 +263,407 @@ struct LLVM_gen {
 		}
 	}
 
-	// get alloca-ptr from local variable (not function arguments, since they are not allocas)
-	llvm::Value* local_var_ptr (AST* ast) {
-		if (ast->type != A_VAR)
-			throw CompilerExcept{"error: expected variable to operate on", ast->src_tok->source};
+	void declare_local_var (AST_vardecl* vardecl) {
+		llvm::IRBuilder<llvm::NoFolder> tmp_build(entry_block, entry_block->begin());
+		vardecl->llvm_value = tmp_build.CreateAlloca(map_type(vardecl->valtype), nullptr, SR(vardecl->ident));
+	}
 
-		auto* var     = (AST_var*)ast;
-		auto* vardecl = (AST_vardecl*)var->decl;
+	// get alloca-ptr from local variable (not function arguments, since they are not allocas)
+	llvm::Value* local_var_ptr (AST* op, AST_vardecl* vardecl) {
+		assert(vardecl->type == A_VARDECL);
 
 		if (vardecl->is_arg)
-			throw CompilerExcept{"error: cannot operate on function arugment since arguments are immutable", ast->src_tok->source};
+			throw CompilerExcept{"error: cannot operate on function arugment since arguments are immutable", op->src_tok->source};
 
+		assert(vardecl->llvm_value);
 		return vardecl->llvm_value; // should be a llvm::AllocaInst
+	}
+
+	void return_ret_vars () {
+		// TODO: implement multiple returns
+		assert(cur_fdef->retc <= 1);
+
+		if (cur_fdef->retc == 1) {
+			auto* vardecl = (AST_vardecl*)cur_fdef->rets;
+			
+			llvm::Value* ret = build.CreateLoad(map_type(vardecl->valtype), vardecl->llvm_value, vardecl->llvm_value->getName());
+
+			build.CreateRet(ret);
+		}
+		else {
+			build.CreateRetVoid();
+		}
+	}
+
+	void unreachable () {
+		// TODO: code beyond here (in the same block) is unreachable, what do?
+		
+		// This other code to fail
+		//build.ClearInsertionPoint();
+		
+		// Could also manually keep track of when code is unreachable and skip generating instruction
+		// but that is somewhat complicated, but might be faster than creating unreachable blocks
+
+		// Create block that is unreachable
+		auto* bb = llvm::BasicBlock::Create(ctx, "unreach", cur_func, ib_block);
+		build.SetInsertPoint(bb);
 	}
 
 	llvm::Value* codegen (AST* ast) {
 		switch (ast->type) {
-			case A_LITERAL: {
-				auto* lit = (AST_literal*)ast;
+		case A_LITERAL: {
+			auto* lit = (AST_literal*)ast;
 				
-				llvm::Value* val;
-				switch (lit->valtype) {
-					case BOOL:
-						val = llvm::ConstantInt::getBool(ctx, lit->value.b);
-						break;
-					case INT:
-						val = llvm::ConstantInt::get(llvm::Type::getInt64Ty(ctx),
-							llvm::APInt(64, (uint64_t)lit->value.i, true));
-						break;
-					case FLT:
-						val = llvm::ConstantFP::get(llvm::Type::getDoubleTy(ctx),
-							llvm::APFloat(lit->value.f));
-						break;
-					case STR:
-						val = build.CreateGlobalStringPtr(lit->value.str, llvm::Twine("strlit.") + format_id(strlit_count++).str);
-						break;
-					INVALID_DEFAULT;
-				}
-				assert(val->getType() == map_type(lit->valtype));
-				return val;
+			llvm::Value* val;
+			switch (lit->valtype) {
+				case BOOL:
+					val = llvm::ConstantInt::getBool(ctx, lit->value.b);
+					break;
+				case INT:
+					val = llvm::ConstantInt::get(llvm::Type::getInt64Ty(ctx),
+						llvm::APInt(64, (uint64_t)lit->value.i, true));
+					break;
+				case FLT:
+					val = llvm::ConstantFP::get(llvm::Type::getDoubleTy(ctx),
+						llvm::APFloat(lit->value.f));
+					break;
+				case STR:
+					val = build.CreateGlobalStringPtr(lit->value.str, llvm::Twine("strlit.") + format_id(strlit_count++).str);
+					break;
+				INVALID_DEFAULT;
 			}
+			assert(val->getType() == map_type(lit->valtype));
+			return val;
+		}
 
-			case A_VARDECL: {
-				auto* vardecl = (AST_vardecl*)ast;
+		case A_VARDECL: {
+			auto* vardecl = (AST_vardecl*)ast;
 
-				llvm::IRBuilder<llvm::NoFolder> tmp_build(entry_block, entry_block->begin());
-				vardecl->llvm_value = tmp_build.CreateAlloca(map_type(vardecl->valtype), nullptr, SR(vardecl->ident));
+			declare_local_var(vardecl);
 
-				if (vardecl->init) {
-					// eval rhs
-					auto* val = codegen(vardecl->init);
-					// assign to new var
-					build.CreateStore(val, vardecl->llvm_value);
-				}
-				return {};
+			if (vardecl->init) {
+				// eval rhs
+				auto* val = codegen(vardecl->init);
+				// assign to new var
+				build.CreateStore(val, vardecl->llvm_value);
 			}
+			return {};
+		}
 
-			case A_VAR: {
-				auto* var = (AST_var*)ast;
-				auto* vardecl = (AST_vardecl*)var->decl;
+		case A_VAR: {
+			auto* var = (AST_var*)ast;
+			auto* vardecl = (AST_vardecl*)var->decl;
 				
-				if (vardecl->is_arg) {
-					return vardecl->llvm_value;
-				}
-				else {
-					return build.CreateLoad(map_type(var->valtype), vardecl->llvm_value, vardecl->llvm_value->getName());
-				}
+			if (vardecl->is_arg) {
+				return vardecl->llvm_value;
 			}
-
-			case A_ASSIGNOP: {
-				auto* op = (AST_binop*)ast;
-				// get variable alloca ptr
-				llvm::Value* var = local_var_ptr(op->lhs);
-
-				llvm::Value* result;
-
-				if (op->op == OP_ASSIGN) {
-					// simple assignment of rhs to lhs
-					result = codegen(op->rhs);
-				}
-				else {
-					// load lhs first
-					llvm::Value* lhs = build.CreateLoad(map_type(op->valtype), var, var->getName());
-					// eval rhs
-					llvm::Value* rhs = codegen(op->rhs);
-					// eval binary operator and assign to lhs
-					result = codegen_binop(op, lhs, rhs);
-				}
-
-				build.CreateStore(result, var);
-				return {};
+			else {
+				return build.CreateLoad(map_type(var->valtype), vardecl->llvm_value, vardecl->llvm_value->getName());
 			}
+		}
 
-			case A_BINOP: {
-				auto* op = (AST_binop*)ast;
-				
-				assert(op->valtype      == op->lhs->valtype);
-				assert(op->lhs->valtype == op->rhs->valtype);
-				
-				// eval lhs
-				llvm::Value* lhs = codegen(op->lhs);
+		case A_ASSIGNOP: {
+			auto* op = (AST_binop*)ast;
+
+			if (op->lhs->type != A_VAR)
+				throw CompilerExcept{"error: expected variable for assignop lhs", ast->src_tok->source};
+
+			auto* var = (AST_var*)op->lhs;
+			llvm::Value* var_ptr = local_var_ptr(op, var->decl);
+
+			llvm::Value* result;
+
+			if (op->op == OP_ASSIGN) {
+				// simple assignment of rhs to lhs
+				result = codegen(op->rhs);
+			}
+			else {
+				// load lhs first
+				llvm::Value* lhs = build.CreateLoad(map_type(op->valtype), var_ptr, var_ptr->getName());
 				// eval rhs
 				llvm::Value* rhs = codegen(op->rhs);
-				// eval binary operator
-				return codegen_binop(op, lhs, rhs);
+				// eval binary operator and assign to lhs
+				result = codegen_binop(op, lhs, rhs);
 			}
 
-			case A_UNOP: {
-				auto* op = (AST_unop*)ast;
-				assert(op->valtype == op->operand->valtype);
+			build.CreateStore(result, var_ptr);
+			return {};
+		}
+
+		case A_BINOP: {
+			auto* op = (AST_binop*)ast;
 				
-				llvm::Value* old_val = codegen(op->operand);
-				llvm::Value* result  = codegen_unary(op, old_val);
+			assert(op->valtype      == op->lhs->valtype);
+			assert(op->lhs->valtype == op->rhs->valtype);
 				
-				switch (op->op) {
-					case OP_POSITIVE:
-					case OP_NEGATE: case OP_NOT: {
-						return result;
-					}
+			// eval lhs
+			llvm::Value* lhs = codegen(op->lhs);
+			// eval rhs
+			llvm::Value* rhs = codegen(op->rhs);
+			// eval binary operator
+			return codegen_binop(op, lhs, rhs);
+		}
 
-					case OP_INC: case OP_DEC: {
-						llvm::Value* var = local_var_ptr(op->operand);
-
-						// assign inc/decremented to var
-						build.CreateStore(result, var);
-						// return old value
-						return old_val;
-					}
-				}
-			}
-
-			case A_BLOCK: {
-				auto* block = (AST_block*)ast;
-
-				for (auto* n=block->statements; n != nullptr; n = n->next) {
-					codegen(n);
-				}
-				return {};
-			}
-			
-			case A_IF:
-			case A_SELECT: {
-				auto* aif = (AST_if*)ast;
-
-				auto id = format_id(if_count++);
-				auto cid = format_id(cont_count++);
-
-				auto* then_block =                  llvm::BasicBlock::Create(ctx, llvm::Twine("if.") + id.str + ".then", cur_func, ib_block);
-				auto* else_block = aif->else_body ? llvm::BasicBlock::Create(ctx, llvm::Twine("if.") + id.str + ".else", cur_func, ib_block) : nullptr;
-				auto* cont_block =                  llvm::BasicBlock::Create(ctx, llvm::Twine("cont.") + cid.str       , cur_func, ib_block);
+		case A_UNOP: {
+			auto* op = (AST_unop*)ast;
+			assert(op->valtype == op->operand->valtype);
 				
-				llvm::Value      *true_result,    *false_result;
-				llvm::BasicBlock *phi_then_block, *phi_else_block;
-
-				{ // condition at end of current block
-					ib_block = then_block;
-
-					llvm::Value* cond = codegen(aif->cond);
-					build.CreateCondBr(cond, then_block, aif->else_body ? else_block : cont_block);
-				}
-
-				{ // generate then block
-					ib_block = else_block ? else_block : cont_block;
-
-					build.SetInsertPoint(then_block);
-
-					true_result = codegen(aif->if_body);
-					phi_then_block = build.GetInsertBlock(); // nested ifs or loops (in codegen) change the current block
-					
-					build.CreateBr(cont_block);
-				}
-
-				if (else_block) { // generate else block
-					ib_block = cont_block;
+			llvm::Value* old_val = codegen(op->operand);
+			llvm::Value* result  = codegen_unary(op, old_val);
 				
-					build.SetInsertPoint(else_block);
-					
-					false_result = codegen(aif->else_body);
-					phi_else_block = build.GetInsertBlock();
-					
-					build.CreateBr(cont_block);
-				}
-				
-				// following code will be in cont block
-				ib_block = nullptr;
-
-				build.SetInsertPoint(cont_block);
-				
-				if (aif->type == A_SELECT) {
-					assert(else_block);
-					assert(true_result && false_result);
-					assert(true_result->getType() == false_result->getType());
-				
-					llvm::PHINode* result = build.CreatePHI(true_result->getType(), 2, "_sel");
-					result->addIncoming(true_result, phi_then_block);
-					result->addIncoming(false_result, phi_else_block);
+			switch (op->op) {
+				case OP_POSITIVE:
+				case OP_NEGATE: case OP_NOT: {
 					return result;
 				}
-				return {};
+
+				case OP_INC: case OP_DEC: {
+					if (op->operand->type != A_VAR)
+						throw CompilerExcept{"error: expected variable for unary post operator", ast->src_tok->source};
+					auto* var = (AST_var*)op->operand;
+
+					llvm::Value* var_ptr = local_var_ptr(op, var->decl);
+
+					// assign inc/decremented to var
+					build.CreateStore(result, var_ptr);
+					// return old value
+					return old_val;
+				}
 			}
+		}
+
+		case A_BLOCK: {
+			auto* block = (AST_block*)ast;
+
+			for (auto* n=block->statements; n != nullptr; n = n->next) {
+				codegen(n);
+			}
+			return {};
+		}
 			
-			case A_WHILE:
-			case A_DO_WHILE:
-			case A_FOR: {
-				auto* loop = (AST_loop*)ast;
+		case A_IF:
+		case A_SELECT: {
+			auto* aif = (AST_if*)ast;
+
+			auto id = format_id(if_count++);
+			auto cid = format_id(cont_count++);
+
+			auto* then_block =                  llvm::BasicBlock::Create(ctx, llvm::Twine("if.") + id.str + ".then", cur_func, ib_block);
+			auto* else_block = aif->else_body ? llvm::BasicBlock::Create(ctx, llvm::Twine("if.") + id.str + ".else", cur_func, ib_block) : nullptr;
+			auto* cont_block =                  llvm::BasicBlock::Create(ctx, llvm::Twine("cont.") + cid.str       , cur_func, ib_block);
 				
-				auto id = format_id(loop_count++);
-				auto cid = format_id(cont_count++);
+			llvm::Value      *true_result,    *false_result;
+			llvm::BasicBlock *phi_then_block, *phi_else_block;
 
-				auto* loop_cond_block = llvm::BasicBlock::Create(ctx, llvm::Twine("loop.") + id.str + ".cond", cur_func, ib_block); // loop->cond
-				auto* loop_body_block = llvm::BasicBlock::Create(ctx, llvm::Twine("loop.") + id.str + ".body", cur_func, ib_block); // loop->body
-				auto* loop_end_block  = llvm::BasicBlock::Create(ctx, llvm::Twine("loop.") + id.str + ".end" , cur_func, ib_block); // loop->end   need this block seperate from loop to allow for continue;
-				auto* cont_block      = llvm::BasicBlock::Create(ctx, llvm::Twine("cont.") + cid.str         , cur_func, ib_block); // code after loop
-				
-				// do-while is:               for & while is:
-				//   prev ---> loop --|         prev --|  loop --|
-				//               ^    v                |    ^    v
-				//               |   end               |    |   end
-				//               |    |                ---v |    |
-				//   cont <--  cond <--         cont <--  cond <--
+			{ // condition at end of current block
+				ib_block = then_block;
 
-				// break;    will jump to cont
-				// continue; will jump to end
-
-				loop_blocks.push_back(LoopBlocks{ cont_block, loop_end_block });
-
-				{ // prev block
-					ib_block = ast->type == A_DO_WHILE ? loop_body_block : loop_cond_block;
-
-					if (loop->start)
-						codegen(loop->start);
-						
-					// do-while:     prev block branches to loop body
-					// for & while:  prev block branches to loop cond
-					build.CreateBr(ast->type == A_DO_WHILE ? loop_body_block : loop_cond_block);
-				}
-
-				{ // loop body
-					ib_block = loop_end_block;
-
-					build.SetInsertPoint(loop_body_block);
-						
-					codegen(loop->body);
-						
-					build.CreateBr(loop_end_block);
-				}
-
-				{ // loop end
-					ib_block = loop_cond_block;
-
-					build.SetInsertPoint(loop_end_block);
-						
-					if (loop->end)
-						codegen(loop->end);
-						
-					build.CreateBr(loop_cond_block);
-				}
-				
-				// codegen cond last, since it does not matter for for & while loops
-				//  but for do-while loop the cond is allowed to access the loop body scope, and thus we need to codegen the body before the cond
-				//  or will crash since the local vars are not defined (alloca'd) in the IR yet
-				{ // loop cond
-					ib_block = ast->type == A_DO_WHILE ? cont_block : loop_body_block;
-
-					build.SetInsertPoint(loop_cond_block);
-						
-					llvm::Value* cond = codegen(loop->cond);
-					build.CreateCondBr(cond, loop_body_block, cont_block);
-				}
-				
-				// following code will be in cont block
-				ib_block = nullptr;
-
-				build.SetInsertPoint(cont_block);
-
-				loop_blocks.pop_back();
-
-				return {};
+				llvm::Value* cond = codegen(aif->cond);
+				build.CreateCondBr(cond, then_block, aif->else_body ? else_block : cont_block);
 			}
 
-			case A_BREAK: {
-				if (loop_blocks.empty())
-					throw CompilerExcept{"error: break not inside of any loop", ast->src_tok->source};
+			{ // generate then block
+				ib_block = else_block ? else_block : cont_block;
+
+				build.SetInsertPoint(then_block);
+
+				true_result = codegen(aif->if_body);
+				phi_then_block = build.GetInsertBlock(); // nested ifs or loops (in codegen) change the current block
 				
-				build.CreateBr( loop_blocks.back().break_block );
-
-				// TODO: code beyond here (in the same block) is unreachable, do something with this info?
-				//build.ClearInsertionPoint();
-
-				return {};
+				build.CreateBr(cont_block);
 			}
-			case A_CONTINUE: {
-				if (loop_blocks.empty())
-					throw CompilerExcept{"error: continue not inside of any loop", ast->src_tok->source};
+
+			if (else_block) { // generate else block
+				ib_block = cont_block;
 				
-				build.CreateBr( loop_blocks.back().continue_block );
-
-				// TODO: code beyond here (in the same block) is unreachable, do something with this info?
-				//build.ClearInsertionPoint();
-
-				return {};
+				build.SetInsertPoint(else_block);
+					
+				false_result = codegen(aif->else_body);
+				phi_else_block = build.GetInsertBlock();
+					
+				build.CreateBr(cont_block);
 			}
+				
+			// following code will be in cont block
+			ib_block = nullptr;
+
+			build.SetInsertPoint(cont_block);
+				
+			if (aif->type == A_SELECT) {
+				assert(else_block);
+				assert(true_result && false_result);
+				assert(true_result->getType() == false_result->getType());
+				
+				llvm::PHINode* result = build.CreatePHI(true_result->getType(), 2, "_sel");
+				result->addIncoming(true_result, phi_then_block);
+				result->addIncoming(false_result, phi_else_block);
+				return result;
+			}
+			return {};
+		}
 			
-			case A_CALL: {
-				auto* call = (AST_call*)ast;
-				auto* fdef = (AST_funcdef*)call->fdef;
-
-				// collect function args
-				struct Argdecl {
-					AST_vardecl* decl;
-					bool         set;
-					size_t       callarg;
-				};
-				std::vector<Argdecl> declargs;
-				declargs.reserve(32);
-
-				for (auto* arg = (AST_vardecl*)fdef->args; arg != nullptr; arg = (AST_vardecl*)arg->next) {
-					declargs.push_back({ arg, false, (size_t)-1 });
-				}
-
-				// generate IR for callargs first (move into temps)
-				std::vector<llvm::Value*> callargs;
-				callargs.reserve(32);
-
-				bool vararg = false;
-				size_t vararg_i = 0;
-
-				size_t calli = 0;
-				for (auto* arg = (AST_callarg*)call->args; arg != nullptr; arg = (AST_callarg*)arg->next) {
-					callargs.push_back( codegen(arg->expr) );
-
-					if (arg->decl->type == A_VARARGS) {
-						vararg = true;
-						vararg_i = calli;
-					}
-
-					declargs[arg->decli].set = true;
-					declargs[arg->decli].callarg = calli++;
-				}
-
-				return build.CreateCall(fdef->llvm_func, callargs, fdef->rets ? "_call" : "");
-			}
-			
-			case A_RETURN: {
-				auto* ret = (AST_return*)ast;
-
-				// TODO: implement multiple returns
-				assert(ret->argc <= 1);
-
-				llvm::Value* retval = nullptr;
-				for (auto* arg = (AST_callarg*)ret->args; arg != nullptr; arg = (AST_callarg*)arg->next) {
-					llvm::Value* val = codegen(arg->expr);
-					retval = val;
-				}
+		case A_WHILE:
+		case A_DO_WHILE:
+		case A_FOR: {
+			auto* loop = (AST_loop*)ast;
 				
-				if (retval)
-					build.CreateRet(retval);
-				else
-					build.CreateRetVoid();
+			auto id = format_id(loop_count++);
+			auto cid = format_id(cont_count++);
 
-				// TODO: code beyond here (in the same block) is unreachable, do something with this info?
-				//build.ClearInsertionPoint();
+			auto* loop_cond_block = llvm::BasicBlock::Create(ctx, llvm::Twine("loop.") + id.str + ".cond", cur_func, ib_block); // loop->cond
+			auto* loop_body_block = llvm::BasicBlock::Create(ctx, llvm::Twine("loop.") + id.str + ".body", cur_func, ib_block); // loop->body
+			auto* loop_end_block  = llvm::BasicBlock::Create(ctx, llvm::Twine("loop.") + id.str + ".end" , cur_func, ib_block); // loop->end   need this block seperate from loop to allow for continue;
+			auto* cont_block      = llvm::BasicBlock::Create(ctx, llvm::Twine("cont.") + cid.str         , cur_func, ib_block); // code after loop
+				
+			// do-while is:               for & while is:
+			//   prev ---> loop --|         prev --|  loop --|
+			//               ^    v                |    ^    v
+			//               |   end               |    |   end
+			//               |    |                ---v |    |
+			//   cont <--  cond <--         cont <--  cond <--
 
-				return {};
+			// break;    will jump to cont
+			// continue; will jump to end
+
+			loop_blocks.push_back(LoopBlocks{ cont_block, loop_end_block });
+
+			{ // prev block
+				ib_block = ast->type == A_DO_WHILE ? loop_body_block : loop_cond_block;
+
+				if (loop->start)
+					codegen(loop->start);
+						
+				// do-while:     prev block branches to loop body
+				// for & while:  prev block branches to loop cond
+				build.CreateBr(ast->type == A_DO_WHILE ? loop_body_block : loop_cond_block);
 			}
 
-			case A_FUNCDEF:
-			default:
-				return {};
+			{ // loop body
+				ib_block = loop_end_block;
+
+				build.SetInsertPoint(loop_body_block);
+						
+				codegen(loop->body);
+						
+				build.CreateBr(loop_end_block);
+			}
+
+			{ // loop end
+				ib_block = loop_cond_block;
+
+				build.SetInsertPoint(loop_end_block);
+						
+				if (loop->end)
+					codegen(loop->end);
+						
+				build.CreateBr(loop_cond_block);
+			}
+				
+			// codegen cond last, since it does not matter for for & while loops
+			//  but for do-while loop the cond is allowed to access the loop body scope, and thus we need to codegen the body before the cond
+			//  or will crash since the local vars are not defined (alloca'd) in the IR yet
+			{ // loop cond
+				ib_block = ast->type == A_DO_WHILE ? cont_block : loop_body_block;
+
+				build.SetInsertPoint(loop_cond_block);
+						
+				llvm::Value* cond = codegen(loop->cond);
+				build.CreateCondBr(cond, loop_body_block, cont_block);
+			}
+				
+			// following code will be in cont block
+			ib_block = nullptr;
+
+			build.SetInsertPoint(cont_block);
+
+			loop_blocks.pop_back();
+
+			return {};
+		}
+
+		case A_BREAK: {
+			if (loop_blocks.empty())
+				throw CompilerExcept{"error: break not inside of any loop", ast->src_tok->source};
+				
+			build.CreateBr( loop_blocks.back().break_block );
+			
+			unreachable();
+			return {};
+		}
+		case A_CONTINUE: {
+			if (loop_blocks.empty())
+				throw CompilerExcept{"error: continue not inside of any loop", ast->src_tok->source};
+				
+			build.CreateBr( loop_blocks.back().continue_block );
+			
+			unreachable();
+			return {};
+		}
+			
+		case A_CALL: {
+			auto* call = (AST_call*)ast;
+			auto* fdef = (AST_funcdef*)call->fdef;
+
+			// collect function args
+			struct Argdecl {
+				AST_vardecl* decl;
+				bool         set;
+				size_t       callarg;
+			};
+			std::vector<Argdecl> declargs;
+			declargs.reserve(32);
+
+			for (auto* arg = (AST_vardecl*)fdef->args; arg != nullptr; arg = (AST_vardecl*)arg->next) {
+				declargs.push_back({ arg, false, (size_t)-1 });
+			}
+
+			// generate IR for callargs first (move into temps)
+			std::vector<llvm::Value*> callargs;
+			callargs.reserve(32);
+
+			bool vararg = false;
+			size_t vararg_i = 0;
+
+			size_t calli = 0;
+			for (auto* arg = (AST_callarg*)call->args; arg != nullptr; arg = (AST_callarg*)arg->next) {
+				callargs.push_back( codegen(arg->expr) );
+
+				if (arg->decl->type == A_VARARGS) {
+					vararg = true;
+					vararg_i = calli;
+				}
+
+				declargs[arg->decli].set = true;
+				declargs[arg->decli].callarg = calli++;
+			}
+
+			return build.CreateCall(fdef->llvm_func, callargs, fdef->rets ? "_call" : "");
+		}
+			
+		case A_RETURN: {
+			auto* ret = (AST_return*)ast;
+
+			// TODO: implement multiple returns
+			assert(ret->argc <= 1);
+
+			llvm::Value* retval = nullptr;
+			for (auto* arg = (AST_callarg*)ret->args; arg != nullptr; arg = (AST_callarg*)arg->next) {
+				llvm::Value* var_ptr = local_var_ptr(ret, arg->decl);
+
+				llvm::Value* result = codegen(arg->expr);
+
+				build.CreateStore(result, var_ptr);
+			}
+				
+			return_ret_vars();
+
+			unreachable();
+			return {};
+		}
+
+		case A_FUNCDEF:
+		default:
+			return {};
 		}
 	}
 };

@@ -75,12 +75,12 @@ bool compile () {
 				llvm::Module* llvm_modl = llvm_gen_module(options.filename, funcdefs);
 				defer( llvm_free_module(llvm_modl); );
 			
-				#ifndef TRACY_ENABLE
+				//#ifndef TRACY_ENABLE
 				{
 					ZoneScopedN("llvm exe");
 					llvm_jit_and_exec(llvm_modl);
 				}
-				#endif
+				//#endif
 			}
 		#else
 			std::vector<Instruction> code;

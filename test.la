@@ -26,7 +26,6 @@ s = "foo";
 printf("{s}\n", s);
 
 //// Math
-
 c := -0; // 0
 c += 2;  // 2
 c *= 0 + 1; // 2
@@ -170,10 +169,11 @@ printf("---------------\n");
 
 printf("---------------\n");
 
+
 { //// ternary
 	a := true;
 	printf("a : {s}\n", a?"True!":"False...");
-
+    
 	a = !a;
 	printf("a : {s}\n", a?"True!":"False...");
 	
@@ -186,17 +186,17 @@ printf("---------------\n");
 	printf("f? f?0:1 : f?2:3 = {i}\n", f? f?0:1 : f?2:3);
 }
 
-
 //// Loops
 //for 10  error: '{' expected
 
-//for "hello World" {}  error: int expected
+//for "hello World" {}  error: ; expected
 
 printf("---------------\n");
 
 //for i:=0; i<10; break {}  // syntax error: number or variable expected.
 
 //for i:=0; break; i++ {} // syntax error: number or variable expected.
+
 
 printf("for loop:     ");
 for i:=0; i<4; i++ {
@@ -207,7 +207,7 @@ printf("\n");
 {
 	printf("while loop:   ");
 	i := 0;
-	while i<4 {
+	while i<5 {
 		printf(" {i}", i);
 		i++;
 	}

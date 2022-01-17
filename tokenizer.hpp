@@ -61,7 +61,7 @@ enum TokenType {
 	T_SUB,           // -   binary operator   OR   unary (prefix operator)
 	T_MUL,           // *
 	T_DIV,           // /
-	T_REMAINDER,     // /
+	T_MOD,           // %
 
 	T_LESS,          // <
 	T_LESSEQ,        // <=
@@ -81,7 +81,7 @@ enum TokenType {
 	T_SUBEQ,         // -=
 	T_MULEQ,         // *=
 	T_DIVEQ,         // /=
-	T_REMAINDEREQ,   // /=
+	T_MODEQ,         // %=
 
 	T_COLON,         // :
 	T_SEMICOLON,     // ;
@@ -123,7 +123,7 @@ inline constexpr const char* TokenType_str[] = {
 	"T_SUB",
 	"T_MUL",
 	"T_DIV",
-	"T_REMAINDER",
+	"T_MOD",
 
 	"T_LESS",
 	"T_LESSEQ",
@@ -143,7 +143,7 @@ inline constexpr const char* TokenType_str[] = {
 	"T_SUBEQ",
 	"T_MULEQ",
 	"T_DIVEQ",
-	"T_REMAINDEREQ",
+	"T_MODEQ",
 
 	"T_COLON",
 	"T_SEMICOLON",
@@ -370,8 +370,8 @@ inline std::vector<Token> tokenize (const char* src) {
 				break;
 
 			case '%':
-				if (cur[1] != '=') tok.type = T_REMAINDER;
-				else {             tok.type = T_REMAINDEREQ; cur++; }
+				if (cur[1] != '=') tok.type = T_MOD;
+				else {             tok.type = T_MODEQ;       cur++; }
 				break;
 
 			case '<':

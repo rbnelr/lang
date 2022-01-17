@@ -16,6 +16,8 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Verifier.h"
 
+#include "llvm/IR/NoFolder.h"
+
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/STLExtras.h"

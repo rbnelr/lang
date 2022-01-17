@@ -5,7 +5,7 @@
 #include "builtins.hpp"
 
 llvm::LLVMContext ctx;
-llvm::IRBuilder<> build{ctx};
+llvm::IRBuilder<llvm::NoFolder> build{ctx};
 
 struct LLVM_gen {
 	std::vector<AST_funcdef*>& funcdefs;
@@ -42,17 +42,6 @@ struct LLVM_gen {
 		if (options.print_ir) {
 			print_seperator("LLVM IR");
 			modl->print(llvm::errs(), nullptr);
-		}
-	}
-
-	llvm::Type* map_type (Type type) {
-		switch (type) {
-			case VOID: return llvm::Type::getVoidTy(ctx);
-			case BOOL: return llvm::Type::getInt1Ty(ctx);
-			case INT:  return llvm::Type::getInt64Ty(ctx);
-			case FLT:  return llvm::Type::getDoubleTy(ctx);
-			case STR:  return llvm::Type::getInt8PtrTy(ctx);
-			INVALID_DEFAULT;
 		}
 	}
 
@@ -100,8 +89,10 @@ struct LLVM_gen {
 		return func;
 	}
 	
-	AST_funcdef* cur_func;
+	llvm::Function* cur_func;
 	llvm::BasicBlock* entry_block;
+
+	llvm::BasicBlock* ib_block = nullptr; // ib = insert before   -> to preserve block order (keep it in source code order)
 	
 	// stack of loop blocks to allow for break and continue anywhere (except outside of loop, where loop_blocks will be empty)
 	struct LoopBlocks {
@@ -130,12 +121,23 @@ struct LLVM_gen {
 		return buf;
 	}
 
+	llvm::Type* map_type (Type type) {
+		switch (type) {
+			case VOID: return llvm::Type::getVoidTy(ctx);
+			case BOOL: return llvm::Type::getInt1Ty(ctx);
+			case INT:  return llvm::Type::getInt64Ty(ctx);
+			case FLT:  return llvm::Type::getDoubleTy(ctx);
+			case STR:  return llvm::Type::getInt8PtrTy(ctx);
+			INVALID_DEFAULT;
+		}
+	}
+
 	void codegen_function (AST_funcdef* fdef) {
 		ZoneScoped;
-		cur_func = fdef;
+		cur_func = fdef->llvm_func;
 
 		//// entry block + start recursively codegening of the function body
-		entry_block = llvm::BasicBlock::Create(ctx, "entry", fdef->llvm_func);
+		entry_block = llvm::BasicBlock::Create(ctx, "entry", cur_func);
 		build.SetInsertPoint(entry_block);
 
 		codegen(fdef->body);
@@ -254,10 +256,14 @@ struct LLVM_gen {
 
 	// get alloca-ptr from local variable (not function arguments, since they are not allocas)
 	llvm::Value* local_var_ptr (AST* ast) {
-		assert(ast->type == A_VAR);
+		if (ast->type != A_VAR)
+			throw CompilerExcept{"error: expected variable to operate on", ast->src_tok->source};
+
 		auto* var     = (AST_var*)ast;
 		auto* vardecl = (AST_vardecl*)var->decl;
-		assert(!vardecl->is_arg);
+
+		if (vardecl->is_arg)
+			throw CompilerExcept{"error: cannot operate on function arugment since arguments are immutable", ast->src_tok->source};
 
 		return vardecl->llvm_value; // should be a llvm::AllocaInst
 	}
@@ -292,7 +298,7 @@ struct LLVM_gen {
 			case A_VARDECL: {
 				auto* vardecl = (AST_vardecl*)ast;
 
-				llvm::IRBuilder<> tmp_build(entry_block, entry_block->begin());
+				llvm::IRBuilder<llvm::NoFolder> tmp_build(entry_block, entry_block->begin());
 				vardecl->llvm_value = tmp_build.CreateAlloca(map_type(vardecl->valtype), nullptr, SR(vardecl->ident));
 
 				if (vardecl->init) {
@@ -394,38 +400,55 @@ struct LLVM_gen {
 				auto id = format_id(if_count++);
 				auto cid = format_id(cont_count++);
 
-				auto* then_block =                  llvm::BasicBlock::Create(ctx, llvm::Twine("if.") + id.str + ".then", cur_func->llvm_func);
-				auto* else_block = aif->else_body ? llvm::BasicBlock::Create(ctx, llvm::Twine("if.") + id.str + ".else", cur_func->llvm_func) : nullptr;
-				auto* cont_block =                  llvm::BasicBlock::Create(ctx, llvm::Twine("cont.") + cid.str       , cur_func->llvm_func);
-
-				// condition at end of current block
-				llvm::Value* cond = codegen(aif->cond);
-				build.CreateCondBr(cond, then_block, aif->else_body ? else_block : cont_block);
-
-				// generate then block
-				build.SetInsertPoint(then_block);
-				llvm::Value* true_result = codegen(aif->if_body);
-				build.CreateBr(cont_block);
+				auto* then_block =                  llvm::BasicBlock::Create(ctx, llvm::Twine("if.") + id.str + ".then", cur_func, ib_block);
+				auto* else_block = aif->else_body ? llvm::BasicBlock::Create(ctx, llvm::Twine("if.") + id.str + ".else", cur_func, ib_block) : nullptr;
+				auto* cont_block =                  llvm::BasicBlock::Create(ctx, llvm::Twine("cont.") + cid.str       , cur_func, ib_block);
 				
-				llvm::Value* false_result = nullptr;
-				// generate else block
-				if (aif->else_body) {
+				llvm::Value      *true_result,    *false_result;
+				llvm::BasicBlock *phi_then_block, *phi_else_block;
+
+				{ // condition at end of current block
+					ib_block = then_block;
+
+					llvm::Value* cond = codegen(aif->cond);
+					build.CreateCondBr(cond, then_block, aif->else_body ? else_block : cont_block);
+				}
+
+				{ // generate then block
+					ib_block = else_block ? else_block : cont_block;
+
+					build.SetInsertPoint(then_block);
+
+					true_result = codegen(aif->if_body);
+					phi_then_block = build.GetInsertBlock(); // nested ifs or loops (in codegen) change the current block
+					
+					build.CreateBr(cont_block);
+				}
+
+				if (else_block) { // generate else block
+					ib_block = cont_block;
+				
 					build.SetInsertPoint(else_block);
+					
 					false_result = codegen(aif->else_body);
+					phi_else_block = build.GetInsertBlock();
+					
 					build.CreateBr(cont_block);
 				}
 				
 				// following code will be in cont block
-				build.SetInsertPoint(cont_block);
+				ib_block = nullptr;
 
+				build.SetInsertPoint(cont_block);
+				
 				if (aif->type == A_SELECT) {
-					assert(aif->else_body);
+					assert(else_block);
 					assert(true_result && false_result);
 					assert(true_result->getType() == false_result->getType());
-
+				
 					llvm::PHINode* result = build.CreatePHI(true_result->getType(), 2, "_sel");
-					result->addIncoming(true_result, then_block);
-					result->addIncoming(false_result, else_block);
+					result->addIncoming(true_result, phi_then_block);
+					result->addIncoming(false_result, phi_else_block);
 					return result;
 				}
 				return {};
@@ -439,10 +462,10 @@ struct LLVM_gen {
 				auto id = format_id(loop_count++);
 				auto cid = format_id(cont_count++);
 
-				auto* loop_cond_block = llvm::BasicBlock::Create(ctx, llvm::Twine("loop.") + id.str + ".cond", cur_func->llvm_func); // loop->cond
-				auto* loop_block      = llvm::BasicBlock::Create(ctx, llvm::Twine("loop.") + id.str + ".body", cur_func->llvm_func); // loop->body
-				auto* loop_end_block  = llvm::BasicBlock::Create(ctx, llvm::Twine("loop.") + id.str + ".end" , cur_func->llvm_func); // loop->end   need this block seperate from loop to allow for continue;
-				auto* cont_block      = llvm::BasicBlock::Create(ctx, llvm::Twine("cont.") + cid.str         , cur_func->llvm_func); // code after loop
+				auto* loop_cond_block = llvm::BasicBlock::Create(ctx, llvm::Twine("loop.") + id.str + ".cond", cur_func, ib_block); // loop->cond
+				auto* loop_body_block = llvm::BasicBlock::Create(ctx, llvm::Twine("loop.") + id.str + ".body", cur_func, ib_block); // loop->body
+				auto* loop_end_block  = llvm::BasicBlock::Create(ctx, llvm::Twine("loop.") + id.str + ".end" , cur_func, ib_block); // loop->end   need this block seperate from loop to allow for continue;
+				auto* cont_block      = llvm::BasicBlock::Create(ctx, llvm::Twine("cont.") + cid.str         , cur_func, ib_block); // code after loop
 				
 				// do-while is:               for & while is:
 				//   prev ---> loop --|         prev --|  loop --|
@@ -457,16 +480,20 @@ struct LLVM_gen {
 				loop_blocks.push_back(LoopBlocks{ cont_block, loop_end_block });
 
 				{ // prev block
+					ib_block = ast->type == A_DO_WHILE ? loop_body_block : loop_cond_block;
+
 					if (loop->start)
 						codegen(loop->start);
 						
 					// do-while:     prev block branches to loop body
 					// for & while:  prev block branches to loop cond
-					build.CreateBr(ast->type == A_DO_WHILE ? loop_block : loop_cond_block);
+					build.CreateBr(ast->type == A_DO_WHILE ? loop_body_block : loop_cond_block);
 				}
 
 				{ // loop body
-					build.SetInsertPoint(loop_block);
+					ib_block = loop_end_block;
+
+					build.SetInsertPoint(loop_body_block);
 						
 					codegen(loop->body);
 						
@@ -474,6 +501,8 @@ struct LLVM_gen {
 				}
 
 				{ // loop end
+					ib_block = loop_cond_block;
+
 					build.SetInsertPoint(loop_end_block);
 						
 					if (loop->end)
@@ -486,13 +515,17 @@ struct LLVM_gen {
 				//  but for do-while loop the cond is allowed to access the loop body scope, and thus we need to codegen the body before the cond
 				//  or will crash since the local vars are not defined (alloca'd) in the IR yet
 				{ // loop cond
+					ib_block = ast->type == A_DO_WHILE ? cont_block : loop_body_block;
+
 					build.SetInsertPoint(loop_cond_block);
 						
 					llvm::Value* cond = codegen(loop->cond);
-					build.CreateCondBr(cond, loop_block, cont_block);
+					build.CreateCondBr(cond, loop_body_block, cont_block);
 				}
 				
 				// following code will be in cont block
+				ib_block = nullptr;
+
 				build.SetInsertPoint(cont_block);
 
 				loop_blocks.pop_back();
@@ -505,6 +538,10 @@ struct LLVM_gen {
 					throw CompilerExcept{"error: break not inside of any loop", ast->src_tok->source};
 				
 				build.CreateBr( loop_blocks.back().break_block );
+
+				// TODO: code beyond here (in the same block) is unreachable, do something with this info?
+				//build.ClearInsertionPoint();
+
 				return {};
 			}
 			case A_CONTINUE: {
@@ -512,6 +549,10 @@ struct LLVM_gen {
 					throw CompilerExcept{"error: continue not inside of any loop", ast->src_tok->source};
 				
 				build.CreateBr( loop_blocks.back().continue_block );
+
+				// TODO: code beyond here (in the same block) is unreachable, do something with this info?
+				//build.ClearInsertionPoint();
+
 				return {};
 			}
 			
@@ -571,6 +612,9 @@ struct LLVM_gen {
 					build.CreateRet(retval);
 				else
 					build.CreateRetVoid();
+
+				// TODO: code beyond here (in the same block) is unreachable, do something with this info?
+				//build.ClearInsertionPoint();
 
 				return {};
 			}

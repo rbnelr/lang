@@ -11,7 +11,7 @@ inline constexpr bool is_binary_or_ternary_op (TokenType tok) {
 	return (tok >= T_ADD && tok <= T_NOT_EQUALS) || tok == T_QUESTIONMARK;
 }
 inline constexpr bool is_binary_assignemnt_op (TokenType tok) {
-	return tok >= T_ASSIGN && tok <= T_REMAINDEREQ;
+	return tok >= T_ASSIGN && tok <= T_MODEQ;
 }
 
 inline constexpr bool is_unary_op         (TokenType tok) {
@@ -29,7 +29,7 @@ inline constexpr uint8_t BINARY_OP_PRECEDENCE[] = {
 	3, // T_SUB
 	5, // T_MUL
 	5, // T_DIV
-	5, // T_REMAINDER
+	5, // T_MOD
 
 	2, // T_LESS
 	2, // T_LESSEQ
@@ -49,7 +49,7 @@ inline constexpr uint8_t UNARY_OP_PRECEDENCE[] = {
 	4,   // T_SUB
 	255, // T_MUL
 	255, // T_DIV
-	255, // T_REMAINDER
+	255, // T_MOD
 
 	255, // T_LESS
 	255, // T_LESSEQ
@@ -353,7 +353,6 @@ inline void dbg_print (AST* node, int depth=0) {
 	indent(depth);
 	printf("%s", ASTType_str[node->type]);
 
-	bool children = false;
 	switch (node->type) {
 		case A_LITERAL: { auto* lit = (AST_literal*)node;
 			std::string str(lit->src_tok->source.text());
@@ -362,7 +361,7 @@ inline void dbg_print (AST* node, int depth=0) {
 
 		case A_VARDECL: { auto* var = (AST_vardecl*)node;
 			std::string str(var->ident);
-			printf(" %s (%s)\n", str.c_str(), Type_str[var->valtype]);
+			printf(" %s\n", str.c_str()); // , Type_str[var->valtype]
 		} break;
 
 		case A_VAR: { auto* var = (AST_var*)node;
@@ -373,73 +372,56 @@ inline void dbg_print (AST* node, int depth=0) {
 		case A_UNOP: { auto* op = (AST_unop*)node;
 			printf("(%s)", OpType_str[op->op]);
 
-			indent(depth); printf("(\n");
-			dbg_print(op->operand);
+			printf(" (\n");
+			dbg_print(op->operand, depth+1);
 			indent(depth); printf(")\n");
-
-			children = true;
 		} break;
 
 		case A_BINOP: 
 		case A_ASSIGNOP: { auto* op = (AST_binop*)node;
-			printf("(%s)", OpType_str[op->op]);
+			printf("(%s) (\n", OpType_str[op->op]);
 
-			indent(depth); printf("(\n");
-			dbg_print(op->lhs);
+			dbg_print(op->lhs, depth+1);
+			dbg_print(op->rhs, depth+1);
+
 			indent(depth); printf(")\n");
-
-			indent(depth); printf("(\n");
-			dbg_print(op->rhs);
-			indent(depth); printf(")\n");
-
-			children = true;
 		} break;
 			
 		case A_BLOCK: { auto* block = (AST_block*)node;
-			indent(depth); printf("(\n");
+			printf(" (\n");
 			for (auto* n=block->statements; n != nullptr; n = n->next)
-				dbg_print(n);
+				dbg_print(n, depth+1);
 			indent(depth); printf(")\n");
 		} break;
 			
 		case A_IF:
 		case A_SELECT: { auto* aif = (AST_if*)node;
-			indent(depth); printf("(\n");
-			dbg_print(aif->cond      );
-			indent(depth); printf(")\n");
+			printf(" (\n");
 
-			indent(depth); printf("(\n");
-			dbg_print(aif->if_body );
-			indent(depth); printf(")\n");
+			dbg_print(aif->cond     , depth+1);
+			dbg_print(aif->if_body , depth+1);
+			if (aif->else_body)
+				dbg_print(aif->else_body, depth+1);
 
-			if (aif->else_body) {
-				indent(depth); printf("(\n");
-				dbg_print(aif->else_body);
-				indent(depth); printf(")\n");
-			}
+			indent(depth); printf(")\n");
 		} break;
 
 		case A_WHILE:
 		case A_DO_WHILE:
 		case A_FOR: { auto* loop = (AST_loop*)node;
+			printf(" (\n");
 			if (loop->start) {
-				indent(depth); printf("(\n");
-				dbg_print(loop->start);
-				indent(depth); printf(")\n");
+				dbg_print(loop->start, depth+1);
 			}
 
-			indent(depth); printf("(\n");
-			dbg_print(loop->cond );
-			indent(depth); printf(")\n");
+			dbg_print(loop->cond, depth+1);
 
 			if (loop->end) {
-				indent(depth); printf("(\n");
-				dbg_print(loop->end);
-				indent(depth); printf(")\n");
+				dbg_print(loop->end, depth+1);
 			}
 			
-			indent(depth); printf("(\n");
-			dbg_print(loop->body);
+			dbg_print(loop->body, depth+1);
+
 			indent(depth); printf(")\n");
 		} break;
 
@@ -479,21 +461,21 @@ inline void dbg_print (AST* node, int depth=0) {
 			}
 			
 			printf(" (\n");
-			dbg_print(arg->expr);
+			dbg_print(arg->expr, depth+1);
 			indent(depth); printf(")\n");
 		} break;
 		case A_CALL: { auto* call = (AST_call*)node;
 			std::string str(call->ident);
 			printf(" %s (\n", str.c_str());
 			for (auto* arg=call->args; arg != nullptr; arg = arg->next)
-				dbg_print(arg);
+				dbg_print(arg, depth+1);
 			indent(depth); printf(")\n");
 		} break;
 		
 		case A_RETURN: { auto* ret = (AST_return*)node;
 			printf(" (\n");
 			for (auto* arg=ret->args; arg != nullptr; arg = arg->next)
-				dbg_print(arg);
+				dbg_print(arg, depth+1);
 			indent(depth); printf(")\n");
 		} break;
 		case A_BREAK:

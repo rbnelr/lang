@@ -173,7 +173,7 @@ enum OpType {
 	OP_SUB,
 	OP_MUL,
 	OP_DIV,
-	OP_REMAINDER,
+	OP_MOD,
 
 	OP_LESS,
 	OP_LESSEQ,
@@ -341,75 +341,7 @@ struct AST_return : public AST {
 	AST*         args;
 };
 
-// helper function to iterate all child AST nodes and call a func on them
-template <typename FUNC>
-inline void visit (AST* node, FUNC func) {
-	assert(node);
-
-	switch (node->type) {
-		case A_BLOCK: { auto* block = (AST_block*)node;
-			for (auto* n=block->statements; n != nullptr; n = n->next)
-				func(n);
-		} break;
-
-		case A_FUNCDEF: { auto* f = (AST_funcdef*)node;
-			for (auto* n=f->args; n != nullptr; n = n->next)
-				func(n);
-			for (auto* n=f->rets; n != nullptr; n = n->next)
-				func(n);
-			func(f->body);
-		} break;
-
-		case A_CALLARG: { auto* arg = (AST_callarg*)node;
-			func(arg->expr);
-		} break;
-
-		case A_CALL: { auto* call = (AST_call*)node;
-			for (auto* arg=call->args; arg != nullptr; arg = arg->next)
-				func(arg);
-		} break;
-		case A_RETURN: { auto* ret = (AST_return*)node;
-			for (auto* arg=ret->args; arg != nullptr; arg = arg->next)
-				func(arg);
-		} break;
-
-		case A_IF:
-		case A_SELECT: { auto* aif = (AST_if*)node;
-			func(aif->cond      );
-			func(aif->if_body );
-			if (aif->else_body)
-				func(aif->else_body);
-		} break;
-
-		case A_WHILE:
-		case A_DO_WHILE:
-		case A_FOR: { auto* loop = (AST_loop*)node;
-			if (loop->start)
-				func(loop->start);
-
-			func(loop->cond );
-
-			if (loop->end)
-				func(loop->end);
-
-			func(loop->body);
-		} break;
-
-		case A_UNOP: { auto* op = (AST_unop*)node;
-			func(op->operand);
-		} break;
-
-		case A_BINOP:
-		case A_ASSIGNOP: { auto* op = (AST_binop*)node;
-			func(op->lhs);
-			func(op->rhs);
-		} break;
-
-		default:
-			return;
-			//func(node);
-	}
-}
+// TODO: fix this
 inline void dbg_print (AST* node, int depth=0) {
 	if (!node) return;
 	
@@ -438,6 +370,79 @@ inline void dbg_print (AST* node, int depth=0) {
 			printf(" %s\n", str.c_str());
 		} break;
 
+		case A_UNOP: { auto* op = (AST_unop*)node;
+			printf("(%s)", OpType_str[op->op]);
+
+			indent(depth); printf("(\n");
+			dbg_print(op->operand);
+			indent(depth); printf(")\n");
+
+			children = true;
+		} break;
+
+		case A_BINOP: 
+		case A_ASSIGNOP: { auto* op = (AST_binop*)node;
+			printf("(%s)", OpType_str[op->op]);
+
+			indent(depth); printf("(\n");
+			dbg_print(op->lhs);
+			indent(depth); printf(")\n");
+
+			indent(depth); printf("(\n");
+			dbg_print(op->rhs);
+			indent(depth); printf(")\n");
+
+			children = true;
+		} break;
+			
+		case A_BLOCK: { auto* block = (AST_block*)node;
+			indent(depth); printf("(\n");
+			for (auto* n=block->statements; n != nullptr; n = n->next)
+				dbg_print(n);
+			indent(depth); printf(")\n");
+		} break;
+			
+		case A_IF:
+		case A_SELECT: { auto* aif = (AST_if*)node;
+			indent(depth); printf("(\n");
+			dbg_print(aif->cond      );
+			indent(depth); printf(")\n");
+
+			indent(depth); printf("(\n");
+			dbg_print(aif->if_body );
+			indent(depth); printf(")\n");
+
+			if (aif->else_body) {
+				indent(depth); printf("(\n");
+				dbg_print(aif->else_body);
+				indent(depth); printf(")\n");
+			}
+		} break;
+
+		case A_WHILE:
+		case A_DO_WHILE:
+		case A_FOR: { auto* loop = (AST_loop*)node;
+			if (loop->start) {
+				indent(depth); printf("(\n");
+				dbg_print(loop->start);
+				indent(depth); printf(")\n");
+			}
+
+			indent(depth); printf("(\n");
+			dbg_print(loop->cond );
+			indent(depth); printf(")\n");
+
+			if (loop->end) {
+				indent(depth); printf("(\n");
+				dbg_print(loop->end);
+				indent(depth); printf(")\n");
+			}
+			
+			indent(depth); printf("(\n");
+			dbg_print(loop->body);
+			indent(depth); printf(")\n");
+		} break;
+
 		case A_FUNCDEF: { auto* f = (AST_funcdef*)node;
 			std::string str(f->ident);
 			printf(" %s\n", str.c_str());
@@ -446,7 +451,8 @@ inline void dbg_print (AST* node, int depth=0) {
 
 			if (f->args) {
 				indent(depth); printf("args: (\n");
-				visit((AST*)f->args, [=] (AST* node) { dbg_print(node, depth+1); });
+				for (auto* n=f->args; n != nullptr; n = n->next)
+					dbg_print(node, depth+1);
 				indent(depth); printf(")\n");
 			} else {
 				indent(depth); printf("args: ()\n");
@@ -454,14 +460,15 @@ inline void dbg_print (AST* node, int depth=0) {
 
 			if (f->rets) {
 				indent(depth); printf("rets: (\n");
-				visit((AST*)f->rets, [=] (AST* node) { dbg_print(node, depth+1); });
+				for (auto* n=f->rets; n != nullptr; n = n->next)
+					dbg_print(node, depth+1);
 				indent(depth); printf(")\n");
 			} else {
 				indent(depth); printf("rets: ()\n");
 			}
 
 			indent(depth); printf("(\n");
-			visit(f->body, [=] (AST* node) { dbg_print(node, depth+1); });
+			dbg_print(f->body, depth+1);
 			indent(depth); printf(")\n");
 		} break;
 
@@ -470,41 +477,31 @@ inline void dbg_print (AST* node, int depth=0) {
 				std::string str(arg->ident);
 				printf(" %s=", str.c_str());
 			}
-			children = true;
+			
+			printf(" (\n");
+			dbg_print(arg->expr);
+			indent(depth); printf(")\n");
 		} break;
-		case A_CALL: { auto* call = (AST_var*)node;
+		case A_CALL: { auto* call = (AST_call*)node;
 			std::string str(call->ident);
-			printf(" %s", str.c_str());
-			children = true;
+			printf(" %s (\n", str.c_str());
+			for (auto* arg=call->args; arg != nullptr; arg = arg->next)
+				dbg_print(arg);
+			indent(depth); printf(")\n");
 		} break;
 		
-		case A_RETURN: {
-			children = true;
+		case A_RETURN: { auto* ret = (AST_return*)node;
+			printf(" (\n");
+			for (auto* arg=ret->args; arg != nullptr; arg = arg->next)
+				dbg_print(arg);
+			indent(depth); printf(")\n");
 		} break;
 		case A_BREAK:
 		case A_CONTINUE: {
 			printf("\n");
 		} break;
 
-		case A_UNOP: { auto* op = (AST_unop*)node;
-			printf("(%s)", OpType_str[op->op]);
-			children = true;
-		} break;
-
-		case A_BINOP: 
-		case A_ASSIGNOP: { auto* op = (AST_binop*)node;
-			printf("(%s)", OpType_str[op->op]);
-			children = true;
-		} break;
-
-		default:
-			children = true;
-	}
-
-	if (children) {
-		printf(" (\n");
-		visit(node, [=] (AST* node) { dbg_print(node, depth+1); });
-		indent(depth); printf(")\n");
+		INVALID_DEFAULT;
 	}
 }
 

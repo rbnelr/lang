@@ -24,19 +24,29 @@ func test (a : int, b : int) = (ret : int) {
 	//b := 3;
 	c : int;
 	
-	t := timer() % 16;
+	t := timer();
 	
 	c = 7;
-	c = c + 1;
-
+	k := 0;
+	if ((t % 2) != 0) {
+		k = c++;
+	}
+	else {
+		printf("foobar {i}!\n", t);
+		return 0;
+	}
+	
 	d := a + b * c;
-
-	printf("Blah1: d: {i}  b: {i}\n", d, b);
-	printf("Blah1: d: {i}  c: {i}\n", d, t);
-
+	
+	printf("Blah1: d: {i}  k: {i}\n", d, k);
+	printf("Blah1: d: {i}  t: {i}\n", d, t);
+	
 	printf("Blah2: {i}-{i}-{i} {i}-{i}-{i}\n", a, a, a, b, b, b);
 	
 	return d;
 }
 
-test(5, 3);
+for i := 0; i<10; i++ {
+	printf("\n>> i: {i}\n", i);
+	test(i, 3);
+}

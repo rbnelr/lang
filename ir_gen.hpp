@@ -147,7 +147,7 @@ IROpType binary2ir (AST* ast, OpType op, Type type) {
 				case OP_SUB:        return OP_i_SUB;
 				case OP_MUL:        return OP_i_MUL;
 				case OP_DIV:        return OP_i_DIV;
-				case OP_REMAINDER:  return OP_i_REMAIND;
+				case OP_MOD:        return OP_i_REMAIND;
 				case OP_LESS:       return OP_i_LT;
 				case OP_LESSEQ:     return OP_i_LE;
 				case OP_GREATER:    return OP_i_GT;
@@ -163,7 +163,7 @@ IROpType binary2ir (AST* ast, OpType op, Type type) {
 				case OP_SUB:        return OP_i_SUB;
 				case OP_MUL:        return OP_i_MUL;
 				case OP_DIV:        return OP_i_DIV;
-				case OP_REMAINDER:  return OP_i_REMAIND;
+				case OP_MOD:  return OP_i_REMAIND;
 					throw CompilerExcept{ "error: math ops not valid for this type", ast->src_tok->source };
 
 				case OP_LESS:       return OP_i_LT;
@@ -179,7 +179,7 @@ IROpType binary2ir (AST* ast, OpType op, Type type) {
 		} break;
 		case FLT: {
 			switch (op) {
-				case OP_REMAINDER:
+				case OP_MOD:
 					throw CompilerExcept{ "error: remainder operator not valid for floats", ast->src_tok->source };
 				case OP_ADD:        return OP_f_ADD;
 				case OP_SUB:        return OP_f_SUB;

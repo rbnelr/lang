@@ -11,12 +11,6 @@ struct LLVM_gen {
 	std::vector<AST_funcdef*>& funcdefs;
 
 	llvm::Module* modl;
-
-	struct LoopLabels {
-		size_t cont;
-		size_t end;
-	};
-	std::vector<LoopLabels> loop_lbls;
 	
 	void declare_builtins () {
 		// TODO: do this lazily once they are actually called?
@@ -108,6 +102,13 @@ struct LLVM_gen {
 	
 	AST_funcdef* cur_func;
 	llvm::BasicBlock* entry_block;
+	
+	// stack of loop blocks to allow for break and continue anywhere (except outside of loop, where loop_blocks will be empty)
+	struct LoopBlocks {
+		llvm::BasicBlock* break_block;    // loop cont  ie. block after loop
+		llvm::BasicBlock* continue_block; // loop end   ie. block after loop body, but befor cond
+	};
+	llvm::SmallVector<LoopBlocks, 16> loop_blocks;
 
 	void codegen_function (AST_funcdef* fdef) {
 		ZoneScoped;
@@ -129,46 +130,44 @@ struct LLVM_gen {
 		entry_block = nullptr;
 	}
 	
-	/*
-	IROpType unary2ir (AST* ast, OpType op, Type type) {
-		switch (op) {
+	llvm::Value* codegen_unary (AST_unop* op, llvm::Value* operand) {
+		switch (op->op) {
 			case OP_POSITIVE: {
-				switch (type) {
-					case INT: return OP_NONE; // no-op
-					case FLT: return OP_NONE; // no-op
-					default: throw CompilerExcept{"error: positive operator is not valid for type", ast->src_tok->source};
+				switch (op->valtype) {
+					case INT:
+					case FLT: return operand; // no-op
+					default: throw CompilerExcept{"error: positive operator is not valid for type", op->src_tok->source};
 				}
 			}
 			case OP_NEGATE: {
-				switch (type) {
-					case INT: return OP_i_NEG;
-					case FLT: return OP_f_NEG;
-					default: throw CompilerExcept{"error: negate is not valid for type", ast->src_tok->source};
+				switch (op->valtype) {
+					case INT: return build.CreateNeg (operand, "_neg");
+					case FLT: return build.CreateFNeg(operand, "_neg");
+					default: throw CompilerExcept{"error: negate is not valid for type", op->src_tok->source};
 				}
 			}
 			case OP_NOT: {
-				switch (type) {
-					case INT : return OP_i_NOT;
-					case BOOL: return OP_b_NOT;
-					default: throw CompilerExcept{"error: not is not valid for type", ast->src_tok->source};
+				switch (op->valtype) {
+					case INT :
+					case BOOL: return build.CreateNot(operand, "_not");
+					default: throw CompilerExcept{"error: not is not valid for type", op->src_tok->source};
 				}
 			}
 			case OP_INC: {
-				switch (type) {
-					case INT : return OP_i_INC;
-					default: throw CompilerExcept{"error: increment is not valid for type", ast->src_tok->source};
+				switch (op->valtype) {
+					case INT : return build.CreateAdd(operand, llvm::ConstantInt::get(operand->getType(), 1), "_inc");
+					default: throw CompilerExcept{"error: increment is not valid for type", op->src_tok->source};
 				}
 			}
 			case OP_DEC: {
-				switch (type) {
-					case INT : return OP_i_DEC;
-					default: throw CompilerExcept{"error: decrement is not valid for type", ast->src_tok->source};
+				switch (op->valtype) {
+					case INT : return build.CreateSub(operand, llvm::ConstantInt::get(operand->getType(), 1), "_dec");
+					default: throw CompilerExcept{"error: decrement is not valid for type", op->src_tok->source};
 				}
 			}
 			INVALID_DEFAULT;
 		}
-	}*/
-
+	}
 	llvm::Value* codegen_binop (AST_binop* op, llvm::Value* lhs, llvm::Value* rhs) {
 		assert(op->lhs->valtype == op->rhs->valtype);
 
@@ -179,53 +178,55 @@ struct LLVM_gen {
 				case OP_SUB:        return build.CreateSub (lhs, rhs, "_sub");
 				case OP_MUL:        return build.CreateMul (lhs, rhs, "_mul");
 				case OP_DIV:        return build.CreateSDiv(lhs, rhs, "_div");
-				case OP_REMAINDER:  return build.CreateSRem(lhs, rhs, "_rem");
-				//case OP_LESS:       return OP_i_LT;
-				//case OP_LESSEQ:     return OP_i_LE;
-				//case OP_GREATER:    return OP_i_GT;
-				//case OP_GREATEREQ:  return OP_i_GE;
-				//case OP_EQUALS:     return OP_i_EQ;
-				//case OP_NOT_EQUALS: return OP_i_NEQ;
+				case OP_MOD:        return build.CreateURem(lhs, rhs, "_mod"); // TODO: is URem the correct thing for  sint % sint  ?
+				case OP_LESS:       return build.CreateCmp(llvm::CmpInst::Predicate::ICMP_SLT, lhs, rhs, "_cmp");
+				case OP_LESSEQ:     return build.CreateCmp(llvm::CmpInst::Predicate::ICMP_SLE, lhs, rhs, "_cmp");
+				case OP_GREATER:    return build.CreateCmp(llvm::CmpInst::Predicate::ICMP_SGT, lhs, rhs, "_cmp");
+				case OP_GREATEREQ:  return build.CreateCmp(llvm::CmpInst::Predicate::ICMP_SGE, lhs, rhs, "_cmp");
+				case OP_EQUALS:     return build.CreateCmp(llvm::CmpInst::Predicate::ICMP_EQ , lhs, rhs, "_cmp");
+				case OP_NOT_EQUALS: return build.CreateCmp(llvm::CmpInst::Predicate::ICMP_NE , lhs, rhs, "_cmp");
 				INVALID_DEFAULT;
 			}
 		} break;
-		//case BOOL: {
-		//	switch (op) {
-		//		case OP_ADD:        return OP_i_ADD;
-		//		case OP_SUB:        return OP_i_SUB;
-		//		case OP_MUL:        return OP_i_MUL;
-		//		case OP_DIV:        return OP_i_DIV;
-		//		case OP_REMAINDER:  return OP_i_REMAIND;
-		//			throw CompilerExcept{ "error: math ops not valid for this type", ast->src_tok->source };
-		//
-		//		case OP_LESS:       return OP_i_LT;
-		//		case OP_LESSEQ:     return OP_i_LE;
-		//		case OP_GREATER:    return OP_i_GT;
-		//		case OP_GREATEREQ:  return OP_i_GE;
-		//			throw CompilerExcept{ "error: can't compare bools like that", ast->src_tok->source };
-		//
-		//		case OP_EQUALS:     return OP_b_EQ; 
-		//		case OP_NOT_EQUALS: return OP_b_NEQ;
-		//		INVALID_DEFAULT;
-		//	}
-		//} break;
-		//case FLT: {
-		//	switch (op) {
-		//		case OP_REMAINDER:
-		//			throw CompilerExcept{ "error: remainder operator not valid for floats", ast->src_tok->source };
-		//		case OP_ADD:        return OP_f_ADD;
-		//		case OP_SUB:        return OP_f_SUB;
-		//		case OP_MUL:        return OP_f_MUL;
-		//		case OP_DIV:        return OP_f_DIV;
-		//		case OP_LESS:       return OP_f_LT;
-		//		case OP_LESSEQ:     return OP_f_LE;
-		//		case OP_GREATER:    return OP_f_GT;
-		//		case OP_GREATEREQ:  return OP_f_GE;
-		//		case OP_EQUALS:     return OP_f_EQ;
-		//		case OP_NOT_EQUALS: return OP_f_NEQ;
-		//		INVALID_DEFAULT;
-		//	}
-		//} break;
+		case BOOL: {
+			switch (op->op) {
+				case OP_ADD:        
+				case OP_SUB:        
+				case OP_MUL:        
+				case OP_DIV:        
+				case OP_MOD:        
+					throw CompilerExcept{ "error: math ops not valid for this type", op->src_tok->source };
+		
+				case OP_LESS:       
+				case OP_LESSEQ:     
+				case OP_GREATER:    
+				case OP_GREATEREQ:  
+					throw CompilerExcept{ "error: can't compare bools like that", op->src_tok->source };
+		
+				case OP_EQUALS:     return build.CreateCmp(llvm::CmpInst::Predicate::ICMP_EQ, lhs, rhs, "_cmp");
+				case OP_NOT_EQUALS: return build.CreateCmp(llvm::CmpInst::Predicate::ICMP_NE, lhs, rhs, "_cmp");
+				INVALID_DEFAULT;
+			}
+		} break;
+		case FLT: {
+			switch (op->op) {
+				case OP_MOD:
+					throw CompilerExcept{ "error: remainder operator not valid for floats", op->src_tok->source };
+				case OP_ADD:        return build.CreateFAdd(lhs, rhs, "_add");
+				case OP_SUB:        return build.CreateFSub(lhs, rhs, "_sub");
+				case OP_MUL:        return build.CreateFMul(lhs, rhs, "_mul");
+				case OP_DIV:        return build.CreateFDiv(lhs, rhs, "_div");
+				
+				// always ordered comparisons (NaN behavior)
+				case OP_LESS:       return build.CreateFCmp(llvm::CmpInst::Predicate::FCMP_OLT, lhs, rhs, "_cmp");
+				case OP_LESSEQ:     return build.CreateFCmp(llvm::CmpInst::Predicate::FCMP_OLE, lhs, rhs, "_cmp");
+				case OP_GREATER:    return build.CreateFCmp(llvm::CmpInst::Predicate::FCMP_OGT, lhs, rhs, "_cmp");
+				case OP_GREATEREQ:  return build.CreateFCmp(llvm::CmpInst::Predicate::FCMP_OGE, lhs, rhs, "_cmp");
+				case OP_EQUALS:     return build.CreateFCmp(llvm::CmpInst::Predicate::FCMP_OEQ , lhs, rhs, "_cmp");
+				case OP_NOT_EQUALS: return build.CreateFCmp(llvm::CmpInst::Predicate::FCMP_ONE , lhs, rhs, "_cmp");
+				INVALID_DEFAULT;
+			}
+		} break;
 		default:
 			throw CompilerExcept{ "error: math ops not valid for this type", op->src_tok->source };
 		}
@@ -300,27 +301,29 @@ struct LLVM_gen {
 				// get variable alloca ptr
 				llvm::Value* var = local_var_ptr(op->lhs);
 
-				llvm::Value* value;
+				llvm::Value* result;
+
 				if (op->op == OP_ASSIGN) {
 					// simple assignment of rhs to lhs
-					value = codegen(op->rhs);
+					result = codegen(op->rhs);
 				}
 				else {
 					// load lhs first
-					value = build.CreateLoad(map_type(op->valtype), var, var->getName());
+					llvm::Value* lhs = build.CreateLoad(map_type(op->valtype), var, var->getName());
 					// eval rhs
 					llvm::Value* rhs = codegen(op->rhs);
 					// eval binary operator and assign to lhs
-					value = codegen_binop(op, value, rhs);
+					result = codegen_binop(op, lhs, rhs);
 				}
 
-				build.CreateStore(value, var);
+				build.CreateStore(result, var);
 				return {};
 			}
 
 			case A_BINOP: {
 				auto* op = (AST_binop*)ast;
-
+				
+				assert(op->valtype      == op->lhs->valtype);
 				assert(op->lhs->valtype == op->rhs->valtype);
 				
 				// eval lhs
@@ -331,13 +334,158 @@ struct LLVM_gen {
 				return codegen_binop(op, lhs, rhs);
 			}
 
+			case A_UNOP: {
+				auto* op = (AST_unop*)ast;
+				assert(op->valtype == op->operand->valtype);
+				
+				llvm::Value* old_val = codegen(op->operand);
+				llvm::Value* result  = codegen_unary(op, old_val);
+				
+				switch (op->op) {
+					case OP_POSITIVE:
+					case OP_NEGATE: case OP_NOT: {
+						return result;
+					}
+
+					case OP_INC: case OP_DEC: {
+						llvm::Value* var = local_var_ptr(op->operand);
+
+						// assign inc/decremented to var
+						build.CreateStore(result, var);
+						// return old value
+						return old_val;
+					}
+				}
+			}
+
 			case A_BLOCK: {
 				auto* block = (AST_block*)ast;
 
 				for (auto* n=block->statements; n != nullptr; n = n->next) {
 					codegen(n);
 				}
+				return {};
+			}
+			
+			case A_IF:
+			case A_SELECT: {
+				auto* aif = (AST_if*)ast;
 
+				auto* then_block =                  llvm::BasicBlock::Create(ctx, "then", cur_func->llvm_func);
+				auto* else_block = aif->else_body ? llvm::BasicBlock::Create(ctx, "else", cur_func->llvm_func) : nullptr;
+				auto* cont_block =                  llvm::BasicBlock::Create(ctx, "cont", cur_func->llvm_func);
+
+				// condition at end of current block
+				llvm::Value* cond = codegen(aif->cond);
+				build.CreateCondBr(cond, then_block, aif->else_body ? else_block : cont_block);
+
+				// generate then block
+				build.SetInsertPoint(then_block);
+				llvm::Value* true_result = codegen(aif->if_body);
+				build.CreateBr(cont_block);
+				
+				llvm::Value* false_result = nullptr;
+				// generate else block
+				if (aif->else_body) {
+					build.SetInsertPoint(else_block);
+					false_result = codegen(aif->else_body);
+					build.CreateBr(cont_block);
+				}
+				
+				// following code will be in cont block
+				build.SetInsertPoint(cont_block);
+
+				if (aif->type == A_SELECT) {
+					assert(aif->else_body);
+					assert(true_result && false_result);
+					assert(true_result->getType() == false_result->getType());
+
+					llvm::PHINode* result = build.CreatePHI(true_result->getType(), 2, "_sel");
+					result->addIncoming(true_result, then_block);
+					result->addIncoming(false_result, else_block);
+					return result;
+				}
+				return {};
+			}
+			
+			case A_WHILE:
+			case A_DO_WHILE:
+			case A_FOR: {
+				auto* loop = (AST_loop*)ast;
+
+				auto* loop_cond_block = llvm::BasicBlock::Create(ctx, "loopcond", cur_func->llvm_func); // loop->cond
+				auto* loop_block      = llvm::BasicBlock::Create(ctx, "loop",     cur_func->llvm_func); // loop->body
+				auto* loop_end_block  = llvm::BasicBlock::Create(ctx, "loopend",  cur_func->llvm_func); // loop->end   need this block seperate from loop to allow for continue;
+				auto* cont_block      = llvm::BasicBlock::Create(ctx, "cont",     cur_func->llvm_func); // code after loop
+				
+				// do-while is:               for & while is:
+				//   prev ---> loop --|         prev --|  loop --|
+				//               ^    v                |    ^    v
+				//               |   end               |    |   end
+				//               |    |                ---v |    |
+				//   cont <--  cond <--         cont <--  cond <--
+
+				// break;    will jump to cont
+				// continue; will jump to end
+
+				loop_blocks.push_back(LoopBlocks{ cont_block, loop_end_block });
+
+				{ // prev block
+					if (loop->start)
+						codegen(loop->start);
+						
+					// do-while:     prev block branches to loop body
+					// for & while:  prev block branches to loop cond
+					build.CreateBr(ast->type == A_DO_WHILE ? loop_block : loop_cond_block);
+				}
+
+				{ // loop body
+					build.SetInsertPoint(loop_block);
+						
+					codegen(loop->body);
+						
+					build.CreateBr(loop_end_block);
+				}
+
+				{ // loop end
+					build.SetInsertPoint(loop_end_block);
+						
+					if (loop->end)
+						codegen(loop->end);
+						
+					build.CreateBr(loop_cond_block);
+				}
+				
+				// codegen cond last, since it does not matter for for & while loops
+				//  but for do-while loop the cond is allowed to access the loop body scope, and thus we need to codegen the body before the cond
+				//  or will crash since the local vars are not defined (alloca'd) in the IR yet
+				{ // loop cond
+					build.SetInsertPoint(loop_cond_block);
+						
+					llvm::Value* cond = codegen(loop->cond);
+					build.CreateCondBr(cond, loop_block, cont_block);
+				}
+				
+				// following code will be in cont block
+				build.SetInsertPoint(cont_block);
+
+				loop_blocks.pop_back();
+
+				return {};
+			}
+
+			case A_BREAK: {
+				if (loop_blocks.empty())
+					throw CompilerExcept{"error: break not inside of any loop", ast->src_tok->source};
+				
+				build.CreateBr( loop_blocks.back().break_block );
+				return {};
+			}
+			case A_CONTINUE: {
+				if (loop_blocks.empty())
+					throw CompilerExcept{"error: continue not inside of any loop", ast->src_tok->source};
+				
+				build.CreateBr( loop_blocks.back().continue_block );
 				return {};
 			}
 			

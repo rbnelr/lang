@@ -110,6 +110,26 @@ struct LLVM_gen {
 	};
 	llvm::SmallVector<LoopBlocks, 16> loop_blocks;
 
+	// Improve names of llvm values and basic blocks by manually keeping count
+	// TODO: This could actually impact compiler perf, so consider not even generating names at all in non-debug info builds
+	// The way that allows for the least overhead while still allowing runtime switching of debug-info on/off
+	// is to make the while codegen pass templated with a template<bool DebugInfo> and instantiate it twice
+	size_t if_count = 0;
+	size_t loop_count = 0;
+	size_t cont_count = 0;
+	size_t strlit_count = 0;
+
+	struct _IDFormStrbuf { char str[32]; } format_id (size_t id) {
+		_IDFormStrbuf buf; // fits any 64-bit int
+		auto len = llvm::format("%" PRIu64, id).print(buf.str, ARRLEN(buf.str));
+		if (len > ARRLEN(buf.str)) {
+			// fail
+			assert(false);
+			buf.str[0] = '\0';
+		}
+		return buf;
+	}
+
 	void codegen_function (AST_funcdef* fdef) {
 		ZoneScoped;
 		cur_func = fdef;
@@ -261,7 +281,7 @@ struct LLVM_gen {
 							llvm::APFloat(lit->value.f));
 						break;
 					case STR:
-						val = build.CreateGlobalStringPtr(lit->value.str, "strlit");
+						val = build.CreateGlobalStringPtr(lit->value.str, llvm::Twine("strlit.") + format_id(strlit_count++).str);
 						break;
 					INVALID_DEFAULT;
 				}
@@ -371,9 +391,12 @@ struct LLVM_gen {
 			case A_SELECT: {
 				auto* aif = (AST_if*)ast;
 
-				auto* then_block =                  llvm::BasicBlock::Create(ctx, "then", cur_func->llvm_func);
-				auto* else_block = aif->else_body ? llvm::BasicBlock::Create(ctx, "else", cur_func->llvm_func) : nullptr;
-				auto* cont_block =                  llvm::BasicBlock::Create(ctx, "cont", cur_func->llvm_func);
+				auto id = format_id(if_count++);
+				auto cid = format_id(cont_count++);
+
+				auto* then_block =                  llvm::BasicBlock::Create(ctx, llvm::Twine("if.") + id.str + ".then", cur_func->llvm_func);
+				auto* else_block = aif->else_body ? llvm::BasicBlock::Create(ctx, llvm::Twine("if.") + id.str + ".else", cur_func->llvm_func) : nullptr;
+				auto* cont_block =                  llvm::BasicBlock::Create(ctx, llvm::Twine("cont.") + cid.str       , cur_func->llvm_func);
 
 				// condition at end of current block
 				llvm::Value* cond = codegen(aif->cond);
@@ -412,11 +435,14 @@ struct LLVM_gen {
 			case A_DO_WHILE:
 			case A_FOR: {
 				auto* loop = (AST_loop*)ast;
+				
+				auto id = format_id(loop_count++);
+				auto cid = format_id(cont_count++);
 
-				auto* loop_cond_block = llvm::BasicBlock::Create(ctx, "loopcond", cur_func->llvm_func); // loop->cond
-				auto* loop_block      = llvm::BasicBlock::Create(ctx, "loop",     cur_func->llvm_func); // loop->body
-				auto* loop_end_block  = llvm::BasicBlock::Create(ctx, "loopend",  cur_func->llvm_func); // loop->end   need this block seperate from loop to allow for continue;
-				auto* cont_block      = llvm::BasicBlock::Create(ctx, "cont",     cur_func->llvm_func); // code after loop
+				auto* loop_cond_block = llvm::BasicBlock::Create(ctx, llvm::Twine("loop.") + id.str + ".cond", cur_func->llvm_func); // loop->cond
+				auto* loop_block      = llvm::BasicBlock::Create(ctx, llvm::Twine("loop.") + id.str + ".body", cur_func->llvm_func); // loop->body
+				auto* loop_end_block  = llvm::BasicBlock::Create(ctx, llvm::Twine("loop.") + id.str + ".end" , cur_func->llvm_func); // loop->end   need this block seperate from loop to allow for continue;
+				auto* cont_block      = llvm::BasicBlock::Create(ctx, llvm::Twine("cont.") + cid.str         , cur_func->llvm_func); // code after loop
 				
 				// do-while is:               for & while is:
 				//   prev ---> loop --|         prev --|  loop --|

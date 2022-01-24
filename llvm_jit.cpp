@@ -202,7 +202,10 @@ struct JIT {
 
 		typedef void (*main_fp)();
 		auto fptr = (main_fp)dyld.getSymbol("main").getAddress();
-		fptr();
+		if (fptr)
+			fptr();
+		else
+			assert(false);
 	}
 	
 	void jit_and_execute (llvm::Module* modl) {

@@ -19,6 +19,14 @@ struct LLVM_gen {
 			declare_function(builtin);
 		}
 	}
+		
+	#define PROFILE_DUPLICATE_FUNCS 1
+	
+#if PROFILE_DUPLICATE_FUNCS
+	bool _is_builtin = true;
+	int _dupl_func_i = 0;
+#endif
+
 	void generate (strview const& filename) {
 		ZoneScoped;
 
@@ -27,7 +35,12 @@ struct LLVM_gen {
 
 		// declare builtin functions
 		declare_builtins();
-		
+
+	#if PROFILE_DUPLICATE_FUNCS
+		_is_builtin = false;
+		for (_dupl_func_i=0; _dupl_func_i<10000; ++_dupl_func_i) {
+	#endif
+
 		// declare functions declared in source
 		for (size_t funcid = 0; funcid < funcdefs.size(); ++funcid) {
 			declare_function(funcdefs[funcid]);
@@ -38,6 +51,10 @@ struct LLVM_gen {
 		for (size_t funcid = 0; funcid < funcdefs.size(); ++funcid) {
 			codegen_function(funcdefs[funcid]);
 		}
+
+	#if PROFILE_DUPLICATE_FUNCS
+		}
+	#endif
 
 		if (options.print_ir) {
 			print_seperator("LLVM IR");
@@ -76,7 +93,16 @@ struct LLVM_gen {
 		}
 
 		auto* func_ty = llvm::FunctionType::get(ret_ty, args_ty, vararg);
+		
+	#if PROFILE_DUPLICATE_FUNCS
+		llvm::Function* func;
+		if (_is_builtin)
+			func =  llvm::Function::Create(func_ty, llvm::Function::InternalLinkage, SR(fdef->ident), *modl);
+		else
+			func =  llvm::Function::Create(func_ty, llvm::Function::InternalLinkage, llvm::Twine(prints("_%d_", _dupl_func_i)) + SR(fdef->ident), *modl);
+	#else
 		auto* func =  llvm::Function::Create(func_ty, llvm::Function::InternalLinkage, SR(fdef->ident), *modl);
+	#endif
 
 		// set argument names
 		unsigned i = 0;

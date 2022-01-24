@@ -1,0 +1,9 @@
+Test source code file: 283 lines
+Profiled with tracy (averaged over 10-1000 runs back-to-back)
+
+duplicated  simulated LOC   llvm compile time   LOC/ms (based on 283 LOC original)
+1x          ~200            ~11ms               24.7
+10x         ~2k             ~85ms               33.3
+100x        ~20k            ~876ms              32.3
+1000x       ~200k           ~8.93s              31.7
+10000x      ~2m             ~73s                38.8

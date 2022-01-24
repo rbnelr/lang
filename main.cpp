@@ -77,7 +77,7 @@ bool compile () {
 			
 				//#ifndef TRACY_ENABLE
 				{
-					ZoneScopedN("llvm exe");
+					ZoneScopedN("llvm_jit_and_exec");
 					llvm_jit_and_exec(llvm_modl);
 				}
 				//#endif

@@ -987,9 +987,12 @@ struct Parser {
 
 		AST** link = &block->statements;
 		while (tok->type != T_BLOCK_CLOSE) {
-			*link = statement();
-			link = &(*link)->next;
-		};
+			AST* statm = statement();
+			if (statm) {
+				*link = statm;
+				link = &statm->next;
+			}
+		}
 
 		//if (tok->type != T_BLOCK_CLOSE)
 		//	throw_error("syntax error, '}' expected", *tok);
@@ -1006,11 +1009,11 @@ struct Parser {
 
 		AST** link = &block->statements;
 		while (tok->type != T_EOF) {
-			AST* expr = statement();
+			AST* statm = statement();
 
-			if (expr) {
-				*link = expr;
-				link = &(*link)->next;
+			if (statm) {
+				*link = statm;
+				link = &statm->next;
 			}
 		}
 

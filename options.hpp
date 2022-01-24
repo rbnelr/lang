@@ -1,7 +1,7 @@
 #pragma once
 
 struct Options {
-	std::string  filename  = "test.la";
+	std::string  filename  = "test_100x.la";
 
 	bool         optimized = 1;
 

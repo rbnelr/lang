@@ -20,7 +20,7 @@ struct LLVM_gen {
 		}
 	}
 		
-	#define PROFILE_DUPLICATE_FUNCS 1
+	#define PROFILE_DUPLICATE_FUNCS 0
 	
 #if PROFILE_DUPLICATE_FUNCS
 	bool _is_builtin = true;

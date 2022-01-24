@@ -124,6 +124,21 @@ struct JIT {
 				llvm::inconvertibleErrorCode())
 			);
 		}
+
+		/*
+		{
+			// write values from a pass vector inside PM into these and view the Pass names that way
+			// we could do this in a better way if they wouldn't make all their variables private...
+			void* ptr = 0;
+			int count = 0;
+
+			auto* pass = (llvm::Pass**)ptr;
+
+			for (int i=0; i<count; ++i) {
+				auto name = pass[i]->getPassName();
+				printf("[%3d]: %.*s\n", i, (int)name.size(), name.data());
+			}
+		}*/
 	}
 
 	void compile_and_load (llvm::Module* modl) {
@@ -138,24 +153,8 @@ struct JIT {
 
 		{
 			ZoneScopedN("run passes");
-			
+
 			llvm::legacy::PassManager PM;
-			
-			/* // Emit assembly file instead
-			llvm::SmallVector<char, 0> DwoBufferSV;
-			llvm::raw_svector_ostream DwoStream(DwoBufferSV);
-		
-			if (TM->addPassesToEmitFile(PM, ObjStream, &DwoStream, llvm::CGFT_AssemblyFile)) {
-				ExitOnErr( llvm::make_error<llvm::StringError>(
-					"Target does not support MC emission",
-					llvm::inconvertibleErrorCode())
-				);
-			}
-
-			PM.run(*modl);
-
-			save_text_file("test.asm", ObjBufferSV.data());
-			*/
 
 			setup_PM(PM, ObjStream);
 			

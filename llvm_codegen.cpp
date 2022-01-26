@@ -147,7 +147,8 @@ struct LLVM_gen {
 	llvm::SmallVector<AST_vardecl*, 32> declared_vars;
 
 	void declare_local_var (AST_vardecl* vardecl) {
-		vardecl->llvm_value = nullptr; // declared vars are initially uninitialized, so we set this to null
+		// declared vars are initially uninitialized, need to use an undef value here
+		vardecl->llvm_value = llvm::UndefValue::get(map_type(vardecl->valtype));
 		vardecl->llvm_next_id = 0;
 
 		declared_vars.push_back(vardecl);
@@ -157,7 +158,8 @@ struct LLVM_gen {
 			return vardecl->llvm_value;
 		}
 		else {
-			//if (vardecl->llvm_value == nullptr)
+			assert(vardecl->llvm_value != nullptr);
+			//if (vardecl->llvm_value->) // how to check for UndefValue?
 			//	throw CompilerExcept{"error: variable uninitialized", op->src_tok->source};
 			
 			return vardecl->llvm_value;
@@ -659,6 +661,14 @@ struct LLVM_gen {
 				end_block_uncond(ast->type == A_DO_WHILE ? loop_body_block : loop_cond_block);
 			}
 
+			if (ast->type != A_DO_WHILE) { // loop cond
+				begin_basic_block(loop_cond_block);
+						
+				llvm::Value* cond = codegen(loop->cond);
+
+				end_block_cond(cond, loop_body_block, cont_block);
+			}
+
 			{ // loop body
 				begin_basic_block(loop_body_block);
 						
@@ -676,10 +686,7 @@ struct LLVM_gen {
 				end_block_uncond(loop_cond_block);
 			}
 				
-			// codegen cond last, since it does not matter for for & while loops
-			//  but for do-while loop the cond is allowed to access the loop body scope, and thus we need to codegen the body before the cond
-			//  or will crash since the local vars are not defined (alloca'd) in the IR yet
-			{ // loop cond
+			if (ast->type == A_DO_WHILE){ // loop cond
 				begin_basic_block(loop_cond_block);
 						
 				llvm::Value* cond = codegen(loop->cond);

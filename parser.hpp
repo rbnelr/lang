@@ -227,6 +227,7 @@ inline constexpr OpType tok2assignop (TokenType tok) {
 }
 
 namespace llvm { // forward decls to associate llvm IR with AST nodes
+	class Type;
 	class Value;
 	class Function;
 }
@@ -268,8 +269,8 @@ struct AST_vardecl : public AST {
 	size_t       var_id;     // for IR gen
 	bool         is_arg; // for IR gen, is this variable a function argument?
 	
+	llvm::Type*  llvm_type;
 	llvm::Value* llvm_value;
-	size_t       llvm_next_id;
 };
 
 struct AST_var : public AST {

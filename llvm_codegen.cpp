@@ -7,26 +7,29 @@
 llvm::LLVMContext ctx;
 llvm::IRBuilder<llvm::NoFolder> build{ctx};
 
+inline struct _IDFormStrbuf { char str[32]; } format_id (size_t id) {
+	_IDFormStrbuf buf; // fits any 64-bit int
+	auto len = llvm::format(".%" PRIu64, id).print(buf.str, ARRLEN(buf.str));
+	if (len > ARRLEN(buf.str)) {
+		// fail
+		assert(false);
+		buf.str[0] = '\0';
+	}
+	return buf;
+}
+	
+	#define PROFILE_DUPLICATE_FUNCS 0
+	
 struct LLVM_gen {
 	std::vector<AST_funcdef*>& funcdefs;
 
 	llvm::Module* modl;
-	
-	void declare_builtins () {
-		// TODO: do this lazily once they are actually called?
 
-		for (auto* builtin : builtin_funcs) {
-			declare_function(builtin);
-		}
-	}
-		
-	#define PROFILE_DUPLICATE_FUNCS 0
-	
 #if PROFILE_DUPLICATE_FUNCS
 	bool _is_builtin = true;
 	int _dupl_func_i = 0;
 #endif
-
+	
 	void generate (strview const& filename) {
 		ZoneScoped;
 
@@ -62,212 +65,56 @@ struct LLVM_gen {
 		}
 	}
 
-	llvm::Function* declare_function (AST_funcdef* fdef) {
-		// returns
-		llvm::Type* ret_ty = llvm::Type::getVoidTy(ctx);
-		assert(fdef->retc <= 1); // TODO: implememt multiple return values
-		
-		for (auto* ret = (AST_vardecl*)fdef->rets; ret != nullptr; ret = (AST_vardecl*)ret->next) {
-			assert(ret->type != A_VARARGS);
-			ret_ty = map_type(ret->valtype);
-		}
-
-		// arguments
-		llvm::SmallVector<llvm::Type*, 16> args_ty;
-		bool vararg = false;
-		
-		for (auto* arg = (AST_vardecl*)fdef->args; arg != nullptr; arg = (AST_vardecl*)arg->next) {
-			if (arg->type == A_VARARGS) {
-				vararg = true;
-				assert(!arg->next);
-			}
-			else {
-				args_ty.push_back(map_type(arg->valtype));
-			}
-
-			arg->is_arg = true;
-			if (arg->init) {
-				// TODO
-				assert(false);
-			}
-		}
-
-		auto* func_ty = llvm::FunctionType::get(ret_ty, args_ty, vararg);
-		
-	#if PROFILE_DUPLICATE_FUNCS
-		llvm::Function* func;
-		if (_is_builtin)
-			func =  llvm::Function::Create(func_ty, llvm::Function::InternalLinkage, SR(fdef->ident), *modl);
-		else
-			func =  llvm::Function::Create(func_ty, llvm::Function::InternalLinkage, llvm::Twine(prints("_%d_", _dupl_func_i)) + SR(fdef->ident), *modl);
-	#else
-		auto* func =  llvm::Function::Create(func_ty, llvm::Function::InternalLinkage, SR(fdef->ident), *modl);
-	#endif
-
-		// set argument names
-		unsigned i = 0;
-		for (auto* arg = (AST_vardecl*)fdef->args; arg != nullptr && arg->type != A_VARARGS; arg = (AST_vardecl*)arg->next) {
-			arg->llvm_value = func->getArg(i++);
-			arg->llvm_value->setName(SR(arg->ident));
-		}
-
-		fdef->llvm_func = func;
-		return func;
-	}
-	
 	AST_funcdef*      cur_fdef;
-	llvm::Function*   cur_func;
+	llvm::BasicBlock* alloca_block;
+
+	// stack of loop blocks to allow for break and continue anywhere (except outside of loop, where loop_blocks will be empty)
+	struct LoopBlocks {
+		llvm::BasicBlock* break_block;    // loop cont  ie. block after loop
+		llvm::BasicBlock* continue_block; // loop end   ie. block after loop body, but befor cond
+	};
+	llvm::SmallVector<LoopBlocks, 8> loop_blocks;
 	
 	// Improve names of llvm values and basic blocks by manually keeping count
 	// TODO: This could actually impact compiler perf, so consider not even generating names at all in non-debug info builds
 	// The way that allows for the least overhead while still allowing runtime switching of debug-info on/off
 	// is to make the while codegen pass templated with a template<bool DebugInfo> and instantiate it twice
-	size_t if_count = 0;
-	size_t loop_count = 0;
-	size_t cont_count = 0;
 	size_t strlit_count = 0;
 
-	struct _IDFormStrbuf { char str[32]; } format_id (size_t id) {
-		_IDFormStrbuf buf; // fits any 64-bit int
-		auto len = llvm::format("%" PRIu64, id).print(buf.str, ARRLEN(buf.str));
-		if (len > ARRLEN(buf.str)) {
-			// fail
-			assert(false);
-			buf.str[0] = '\0';
-		}
-		return buf;
-	}
-
-	void set_var_name (AST_vardecl* vardecl, llvm::Value* val) {
-		auto id = format_id(vardecl->llvm_next_id++);
-
-		val->setName(llvm::Twine(SR(vardecl->ident)) +"."+ id.str);
-	}
-
-	llvm::SmallVector<AST_vardecl*, 32> declared_vars;
+	// per function
+	size_t if_count;
+	size_t loop_count;
+	size_t cont_count;
+	
+	size_t alloca_count;
 
 	void declare_local_var (AST_vardecl* vardecl) {
-		// declared vars are initially uninitialized, need to use an undef value here
-		vardecl->llvm_value = llvm::UndefValue::get(map_type(vardecl->valtype));
-		vardecl->llvm_next_id = 0;
+		auto tmp_build = llvm::IRBuilder<llvm::NoFolder>(alloca_block);
 
-		declared_vars.push_back(vardecl);
+		vardecl->llvm_type = map_type(vardecl->valtype);
+		vardecl->llvm_value = tmp_build.CreateAlloca(vardecl->llvm_type, nullptr, SR(vardecl->ident));
+
+		alloca_count++;
 	}
 	llvm::Value* load_local_var (AST* op, AST_vardecl* vardecl) {
 		if (vardecl->is_arg) {
 			return vardecl->llvm_value;
 		}
 		else {
-			assert(vardecl->llvm_value != nullptr);
-			//if (vardecl->llvm_value->) // how to check for UndefValue?
-			//	throw CompilerExcept{"error: variable uninitialized", op->src_tok->source};
-			
-			return vardecl->llvm_value;
+			return build.CreateLoad(vardecl->llvm_type, vardecl->llvm_value, SR(vardecl->ident));
 		}
 	}
-	void store_local_var (AST_vardecl* vardecl, llvm::Value* val) {
-		set_var_name(vardecl, val);
-
-		vardecl->llvm_value = val;
+	void store_local_var (AST* op, AST_vardecl* vardecl, llvm::Value* val) {
+		if (vardecl->is_arg)
+			throw CompilerExcept{"Cannot assign to function arguments, since arguments are immutable", op->src_tok->source};
+		
+		build.CreateStore(val, vardecl->llvm_value);
 	}
 	
-	struct BasicBlock {
-		llvm::BasicBlock* block;
 
-		llvm::SmallVector<llvm::PHINode*, 32> phis;
-
-		// once a block has been begun, we know what phis are needed in it, thus we should no longer lazily_add_phis()
-		bool phis_fixed = false;
-	};
-
-	BasicBlock* cur_block = nullptr;
-
-	// stack of loop blocks to allow for break and continue anywhere (except outside of loop, where loop_blocks will be empty)
-	struct LoopBlocks {
-		BasicBlock* break_block;    // loop cont  ie. block after loop
-		BasicBlock* continue_block; // loop end   ie. block after loop body, but befor cond
-	};
-	llvm::SmallVector<LoopBlocks, 8> loop_blocks;
-	
-
-	// lazily add phis to current declared vars
-	void lazily_add_phis (BasicBlock* block, size_t count) {
-		size_t old_sz = block->phis.size();
-		
-		block->phis.resize(count);
-		
-		for (size_t i=old_sz; i<count; ++i) {
-			auto* vardecl = declared_vars[i];
-			// Create a phi node for every (declared at that point) variable at the start of every basic block
-			block->phis[i] = build.CreatePHI(map_type(vardecl->valtype), 0);
-		}
-	}
-	void add_phi_nodes_incoming (BasicBlock* dst_block) {
-		
-		build.SetInsertPoint(dst_block->block);
-
-		if (!dst_block->phis_fixed) {
-			if (dst_block->phis.size() < declared_vars.size())
-				lazily_add_phis(dst_block, declared_vars.size());
-		}
-
-		for (size_t i=0; i<dst_block->phis.size(); ++i) {
-			auto* vardecl = declared_vars[i];
-
-			// Add incoming value for phi in dst_block for our cur_block using the latest value noted in declared_vars
-			// which is:
-			//  1. the latest value written in this block
-			//  2. the phi created for this block if it declared before this block and was never overwritten
-			//  3. a nullptr if it was declared in this block but never written (uninitialized)
-
-			// TODO: How do I handle uinitialzed variables being put into phi nodes?
-			// putting null in there likely is not valid, not crating the phi incoming is likely wrong too
-			// Should I use that undef thing for uninitialized?
-			assert(declared_vars[i]->llvm_value != nullptr);
-
-			dst_block->phis[i]->addIncoming(declared_vars[i]->llvm_value, cur_block->block);
-		}
-	}
-
-	// create basic block, so we can add branches to it
-	BasicBlock* create_basic_block (llvm::Twine const& name) {
-		
-		BasicBlock* block = g_allocator.alloc<BasicBlock>();
-		
-		block->block = llvm::BasicBlock::Create(ctx, name);
-		
-		return block;
-	}
-
-	void begin_basic_block (BasicBlock* block) {
-		cur_block = block;
-
-		block->block->insertInto(cur_func);
-
-		build.SetInsertPoint(block->block);
-		
-		// only vars declared before this block (in program order) might need to be phi nodes
-		lazily_add_phis(block, declared_vars.size());
-		
-		for (size_t i=0; i < declared_vars.size(); ++i) {
-			declared_vars[i]->llvm_value = block->phis[i];
-			
-			set_var_name(declared_vars[i], block->phis[i]);
-		}
-
-		block->phis_fixed = true;
-	}
-
-	void end_block_uncond (BasicBlock* dst_block) {
-		build.CreateBr(dst_block->block);
-
-		add_phi_nodes_incoming(dst_block);
-	}
-	void end_block_cond (llvm::Value* cond, BasicBlock* true_block, BasicBlock* false_block) {
-		build.CreateCondBr(cond, true_block->block, false_block->block);
-
-		add_phi_nodes_incoming(true_block);
-		add_phi_nodes_incoming(false_block);
+	void begin_basic_block (llvm::BasicBlock* block) {
+		block->insertInto(cur_fdef->llvm_func);
+		build.SetInsertPoint(block);
 	}
 
 	void unreachable () {
@@ -275,10 +122,8 @@ struct LLVM_gen {
 		// but in debug mode we actually want to keep all code to allow things like "set next statement"
 
 		// Create block that is unreachable
-		auto* block = create_basic_block("unreach");
+		auto* block = llvm::BasicBlock::Create(ctx, "unreach");
 		begin_basic_block(block);
-
-		//add_phi_nodes_incoming(block);
 	}
 	
 ////
@@ -406,15 +251,87 @@ struct LLVM_gen {
 			//throw CompilerExcept{ "LLVM: error!", fdef->src_tok->source };
 		}
 	}
+	
+	void declare_builtins () {
+		// TODO: do this lazily once they are actually called?
+
+		for (auto* builtin : builtin_funcs) {
+			declare_function(builtin);
+		}
+	}
+	
+	llvm::Function* declare_function (AST_funcdef* fdef) {
+		// returns
+		llvm::Type* ret_ty = llvm::Type::getVoidTy(ctx);
+		assert(fdef->retc <= 1); // TODO: implememt multiple return values
+		
+		for (auto* ret = (AST_vardecl*)fdef->rets; ret != nullptr; ret = (AST_vardecl*)ret->next) {
+			assert(ret->type != A_VARARGS);
+			ret_ty = map_type(ret->valtype);
+		}
+
+		// arguments
+		llvm::SmallVector<llvm::Type*, 16> args_ty;
+		bool vararg = false;
+		
+		for (auto* arg = (AST_vardecl*)fdef->args; arg != nullptr; arg = (AST_vardecl*)arg->next) {
+			if (arg->type == A_VARARGS) {
+				vararg = true;
+				assert(!arg->next);
+			}
+			else {
+				args_ty.push_back(map_type(arg->valtype));
+			}
+
+			arg->is_arg = true;
+			if (arg->init) {
+				// TODO
+				assert(false);
+			}
+		}
+
+		auto* func_ty = llvm::FunctionType::get(ret_ty, args_ty, vararg);
+		
+		// TODO: unique func names for shadowed scoped funcs (funcs would have same name) ie. { func f () {} } func f () {}
+		// But llvm actually handles this for us, though defining a main function might break  dyld.getSymbol("main")
+	#if PROFILE_DUPLICATE_FUNCS
+		llvm::Function* func;
+		if (_is_builtin)
+			func =  llvm::Function::Create(func_ty, llvm::Function::InternalLinkage, SR(fdef->ident), *modl);
+		else
+			func =  llvm::Function::Create(func_ty, llvm::Function::InternalLinkage, llvm::Twine(prints("_%d_", _dupl_func_i)) + SR(fdef->ident), *modl);
+	#else
+		auto* func =  llvm::Function::Create(func_ty, llvm::Function::InternalLinkage, SR(fdef->ident), *modl);
+	#endif
+
+		// set argument names
+		unsigned i = 0;
+		for (auto* arg = (AST_vardecl*)fdef->args; arg != nullptr && arg->type != A_VARARGS; arg = (AST_vardecl*)arg->next) {
+			arg->llvm_value = func->getArg(i++);
+			arg->llvm_value->setName(SR(arg->ident));
+		}
+
+		fdef->llvm_func = func;
+		return func;
+	}
+	
 	void codegen_function (AST_funcdef* fdef) {
 		ZoneScoped;
 
 		cur_fdef = fdef;
-		cur_func = fdef->llvm_func;
 
-		//// entry block + start recursively codegening of the function body
-		BasicBlock* entry_block = create_basic_block("entry");
-		begin_basic_block(entry_block); // should not create any phis
+		if_count   = 0;
+		loop_count = 0;
+		cont_count = 0;
+		
+		alloca_count = 0;
+
+		//// 
+		alloca_block = llvm::BasicBlock::Create(ctx, "alloca");
+		auto* entry_block = llvm::BasicBlock::Create(ctx, "entry");
+		alloca_block->insertInto(cur_fdef->llvm_func);
+		
+		begin_basic_block(entry_block);
 
 		for (auto* ret = (AST_vardecl*)fdef->rets; ret != nullptr; ret = (AST_vardecl*)ret->next) {
 			assert(ret->type != A_VARARGS);
@@ -427,11 +344,15 @@ struct LLVM_gen {
 		//// implicit return instruction at end of function body
 		return_ret_vars();
 		
+		// finally add branch from alloca to entry
+		build.SetInsertPoint(alloca_block);
+		build.CreateBr(entry_block);
+
 		//// finish function
 		veryfy_function(fdef);
 
-		cur_func = nullptr;
-		cur_block = nullptr;
+		alloca_block = nullptr;
+		cur_fdef = nullptr;
 	}
 
 	void return_ret_vars () {
@@ -484,7 +405,7 @@ struct LLVM_gen {
 				// eval rhs
 				auto* val = codegen(vardecl->init);
 				// assign to new var
-				store_local_var(vardecl, val);
+				store_local_var(vardecl, vardecl, val);
 			}
 			return {};
 		}
@@ -519,7 +440,7 @@ struct LLVM_gen {
 				result = codegen_binop(op, lhs, rhs);
 			}
 			
-			store_local_var(var->decl, result);
+			store_local_var(op, var->decl, result);
 			return {};
 		}
 
@@ -556,7 +477,7 @@ struct LLVM_gen {
 					auto* var = (AST_var*)op->operand;
 
 					// assign inc/decremented to var
-					store_local_var(var->decl, result);
+					store_local_var(op, var->decl, result);
 					// return old value
 					return old_val;
 				}
@@ -579,35 +500,35 @@ struct LLVM_gen {
 			auto id  = format_id(if_count++);
 			auto cid = format_id(cont_count++);
 
-			auto* then_block =                  create_basic_block(llvm::Twine("if.") + id.str + ".then");
-			auto* else_block = aif->else_body ? create_basic_block(llvm::Twine("if.") + id.str + ".else") : nullptr;
-			auto* cont_block =                  create_basic_block(llvm::Twine("cont.") + cid.str       );
+			auto* then_block =                  llvm::BasicBlock::Create(ctx, llvm::Twine("if") + id.str + ".then");
+			auto* else_block = aif->else_body ? llvm::BasicBlock::Create(ctx, llvm::Twine("if") + id.str + ".else") : nullptr;
+			auto* cont_block =                  llvm::BasicBlock::Create(ctx, llvm::Twine("cont") + cid.str       );
 				
-			llvm::Value *true_result,    *false_result;
-			BasicBlock  *phi_then_block, *phi_else_block;
+			llvm::Value       *true_result,    *false_result;
+			llvm::BasicBlock  *phi_then_block, *phi_else_block;
 
 			{ // condition at end of current block
 				llvm::Value* cond = codegen(aif->cond);
 				
-				end_block_cond(cond, then_block, aif->else_body ? else_block : cont_block);
+				build.CreateCondBr(cond, then_block, aif->else_body ? else_block : cont_block);
 			}
 
 			{ // generate then block
 				begin_basic_block(then_block);
 
 				true_result = codegen(aif->if_body);
-				phi_then_block = cur_block; // nested ifs or loops (in codegen) change the current block
+				phi_then_block = build.GetInsertBlock(); // nested ifs or loops (in codegen) change the current block
 				
-				end_block_uncond(cont_block);
+				build.CreateBr(cont_block);
 			}
 
 			if (else_block) { // generate else block
 				begin_basic_block(else_block);
 					
 				false_result = codegen(aif->else_body);
-				phi_else_block = cur_block;
+				phi_else_block = build.GetInsertBlock();
 					
-				end_block_uncond(cont_block);
+				build.CreateBr(cont_block);
 			}
 				
 			// following code will be in cont block
@@ -619,8 +540,8 @@ struct LLVM_gen {
 				assert(true_result->getType() == false_result->getType());
 				
 				llvm::PHINode* result = build.CreatePHI(true_result->getType(), 2, "_sel");
-				result->addIncoming(true_result,  phi_then_block->block);
-				result->addIncoming(false_result, phi_else_block->block);
+				result->addIncoming(true_result,  phi_then_block);
+				result->addIncoming(false_result, phi_else_block);
 				return result;
 			}
 			return {};
@@ -634,10 +555,10 @@ struct LLVM_gen {
 			auto id  = format_id(loop_count++);
 			auto cid = format_id(cont_count++);
 
-			auto* loop_cond_block = create_basic_block(llvm::Twine("loop.") + id.str + ".cond"); // loop->cond
-			auto* loop_body_block = create_basic_block(llvm::Twine("loop.") + id.str + ".body"); // loop->body
-			auto* loop_end_block  = create_basic_block(llvm::Twine("loop.") + id.str + ".end" ); // loop->end   need this block seperate from loop to allow for continue;
-			auto* cont_block      = create_basic_block(llvm::Twine("cont.") + cid.str         ); // code after loop
+			auto* loop_cond_block = llvm::BasicBlock::Create(ctx, llvm::Twine("loop") + id.str + ".cond"); // loop->cond
+			auto* loop_body_block = llvm::BasicBlock::Create(ctx, llvm::Twine("loop") + id.str + ".body"); // loop->body
+			auto* loop_end_block  = llvm::BasicBlock::Create(ctx, llvm::Twine("loop") + id.str + ".end" ); // loop->end   need this block seperate from loop to allow for continue;
+			auto* cont_block      = llvm::BasicBlock::Create(ctx, llvm::Twine("cont") + cid.str         ); // code after loop
 
 			// do-while is:               for & while are:
 			//                                                     
@@ -658,15 +579,15 @@ struct LLVM_gen {
 						
 				// do-while:     prev block branches to loop body
 				// for & while:  prev block branches to loop cond
-				end_block_uncond(ast->type == A_DO_WHILE ? loop_body_block : loop_cond_block);
+				build.CreateBr(ast->type == A_DO_WHILE ? loop_body_block : loop_cond_block);
 			}
 
-			if (ast->type != A_DO_WHILE) { // loop cond
+			if (ast->type != A_DO_WHILE) { // loop cond for (for & while)
 				begin_basic_block(loop_cond_block);
 						
 				llvm::Value* cond = codegen(loop->cond);
 
-				end_block_cond(cond, loop_body_block, cont_block);
+				build.CreateCondBr(cond, loop_body_block, cont_block);
 			}
 
 			{ // loop body
@@ -674,7 +595,7 @@ struct LLVM_gen {
 						
 				codegen(loop->body);
 				
-				end_block_uncond(loop_end_block);
+				build.CreateBr(loop_end_block);
 			}
 
 			{ // loop end
@@ -683,15 +604,15 @@ struct LLVM_gen {
 				if (loop->end)
 					codegen(loop->end);
 				
-				end_block_uncond(loop_cond_block);
+				build.CreateBr(loop_cond_block);
 			}
 				
-			if (ast->type == A_DO_WHILE){ // loop cond
+			if (ast->type == A_DO_WHILE){ // loop cond (do-while)
 				begin_basic_block(loop_cond_block);
 						
 				llvm::Value* cond = codegen(loop->cond);
 
-				end_block_cond(cond, loop_body_block, cont_block);
+				build.CreateCondBr(cond, loop_body_block, cont_block);
 			}
 				
 			// following code will be in cont block
@@ -706,7 +627,7 @@ struct LLVM_gen {
 			if (loop_blocks.empty())
 				throw CompilerExcept{"error: break not inside of any loop", ast->src_tok->source};
 				
-			end_block_uncond(loop_blocks.back().break_block);
+			build.CreateBr(loop_blocks.back().break_block);
 			unreachable();
 			return {};
 		}
@@ -714,7 +635,7 @@ struct LLVM_gen {
 			if (loop_blocks.empty())
 				throw CompilerExcept{"error: continue not inside of any loop", ast->src_tok->source};
 			
-			end_block_uncond(loop_blocks.back().continue_block);
+			build.CreateBr(loop_blocks.back().continue_block);
 			unreachable();
 			return {};
 		}
@@ -769,7 +690,7 @@ struct LLVM_gen {
 			for (auto* arg = (AST_callarg*)ret->args; arg != nullptr; arg = (AST_callarg*)arg->next) {
 				llvm::Value* result = codegen(arg->expr);
 
-				store_local_var(arg->decl, result);
+				store_local_var(ret, arg->decl, result);
 			}
 			
 			return_ret_vars();

@@ -1,34 +1,38 @@
-//n : int;
-//{
-//	a := 5;
-//	b := 10;
-//	n = a * b - 5;
-//}
-//
-//a := 0;
-//b := 1;
-//
-//printf("Fibbonaci: {i} {i}", a, b);
-//
-//for i := 0; i < n-2; i++ {
-//	c := a + b;
-//	printf(" {i}", c);
-//	a = b;
-//	//break;
-//	b = c;
-//}
-//
-//printf("\n");
-
-sqr := 625; // 25^2
-sqrt : int;
-for i:=0; i<100; i++ {
-	if i*i == sqr {
-		sqrt = i;
-		break;
-	}
+n : int;
+{
+	a := 5;
+	b := 10;
+	n = a * b - 5;
+	
+	func f () {}
 }
-printf("sqrt({i}) is {i}\n", sqr, sqrt);
+
+func f () {}
+
+a := 0;
+b := 1;
+
+printf("Fibbonaci: {i} {i}", a, b);
+
+for i := 0; i < n-2; i++ {
+	c := a + b;
+	printf(" {i}", c);
+	a = b;
+	//break;
+	b = c;
+}
+
+printf("\n");
+
+//sqr := 625; // 25^2
+//sqrt : int;
+//for i:=0; i<100; i++ {
+//	if i*i == sqr {
+//		sqrt = i;
+//		break;
+//	}
+//}
+//printf("sqrt({i}) is {i}\n", sqr, sqrt);
 
 /*
 func test (a : int, b : int) = (ret : int) {

@@ -71,10 +71,6 @@
     </ClInclude>
     <ClInclude Include="..\..\builtins.hpp" />
     <ClInclude Include="..\..\basic_types.hpp" />
-    <ClInclude Include="..\..\bytecode_vm.hpp" />
-    <ClInclude Include="..\..\ir_gen.hpp" />
-    <ClInclude Include="..\..\codegen.hpp" />
-    <ClInclude Include="..\..\ir_opt.hpp" />
     <ClInclude Include="..\..\options.hpp" />
     <ClInclude Include="..\..\resolver.hpp" />
     <ClInclude Include="..\..\llvm_pch.hpp">

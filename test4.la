@@ -1,18 +1,57 @@
-a : int;
-b : int;
-c : int;
+//a : int;
+//b : int;
+//c : int;
+//
+//c = 5;
+//
+//-c; // ignored expression as statement
+//b = c++; // b = 5, c = 6
+//b = b++; // b++: 6  but overwritten with 5 -> b=5
+//
+//a = c; // a = 6
+//a = a++ + a; // a + a+1 = 13
+//
+//c = -c;
+//
+//c = -c;
+//// a: 13  b: 5  c: -6
+//printf("a: {i}  b: {i}  c: {i}\n", a, b, c);
 
-c = 5;
+func T () = (b : bool) {
+	printf("T ");
+	return true;
+}
+func F () = (b : bool) {
+	printf("F ");
+	b = false;
+}
 
--c; // ignored expression as statement
-b = c++; // b = 5, c = 6
-b = b++; // b++: 6  but overwritten with 5 -> b=5
+printf("F() && T():\n  ");
+if F() && T() {
+	printf(" -> true!\n");
+}
+printf("\n");
 
-a = c; // a = 6
-a = a++ + a; // a + a+1 = 13
+printf("T() && F():\n  ");
+if T() && F() {
+	printf(" -> true!\n");
+}
+printf("\n");
 
-c = -c;
+printf("T() || F():\n  ");
+if T() || F() {
+	printf(" -> true!\n");
+}
+printf("\n");
 
-c = -c;
-// a: 13  b: 5  c: -6
-printf("a: {i}  b: {i}  c: {i}\n", a, b, c);
+printf("!T() && F():\n  ");
+if !T() && F() {
+	printf(" -> true!\n");
+}
+printf("\n");
+
+printf("!T() & F():\n  ");
+if !T() & F() {
+	printf(" -> true!\n");
+}
+printf("\n");

@@ -117,7 +117,7 @@ IROpType unary2ir (AST* ast, OpType op, Type type) {
 				default: throw CompilerExcept{"error: negate is not valid for type", ast->src_tok->source};
 			}
 		}
-		case OP_NOT: {
+		case OP_LOGICAL_NOT: {
 			switch (type) {
 				case INT : return OP_i_NOT;
 				case BOOL: return OP_b_NOT;

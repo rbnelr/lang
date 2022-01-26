@@ -63,6 +63,13 @@ enum TokenType {
 	T_DIV,           // /
 	T_MOD,           // %
 
+	T_BIT_AND,       // &
+	T_BIT_OR,        // |
+	T_BIT_XOR,       // ^
+
+	T_AND,           // &&
+	T_OR,            // ||
+
 	T_LESS,          // <
 	T_LESSEQ,        // <=
 	T_GREATER,       // >
@@ -71,7 +78,8 @@ enum TokenType {
 	T_NOT_EQUALS,    // !=
 
 	T_QUESTIONMARK,  // ?
-
+	
+	T_BIT_NOT,       // ~
 	T_NOT,           // !   unary (prefix) operator
 	T_INC,           // x++  postincrement
 	T_DEC,           // x--  postdecrement
@@ -125,6 +133,12 @@ inline constexpr const char* TokenType_str[] = {
 	"T_DIV",
 	"T_MOD",
 
+	"T_BIT_AND",
+	"T_BIT_OR",
+	"T_BIT_XOR",
+	
+	"T_AND",            // ||
+
 	"T_LESS",
 	"T_LESSEQ",
 	"T_GREATER",
@@ -133,7 +147,8 @@ inline constexpr const char* TokenType_str[] = {
 	"T_NOT_EQUALS",
 
 	"T_QUESTIONMARK",
-
+	
+	"T_BIT_NOT",
 	"T_NOT",
 	"T_INC",
 	"T_DEC",
@@ -185,13 +200,21 @@ inline constexpr const char* TokenType_char[] = {
 	"/",
 	"%",
 
+	"&",
+	"|",
+	"^",
+	
+	"&&",
+	"||",
+
 	"<",
 	"<=",
 	">",
 	">=",
 	"==",
 	"!=",
-
+	
+	"~",
 	"!",
 	"++",
 	"--",
@@ -373,6 +396,16 @@ inline std::vector<Token> tokenize (const char* src) {
 				if (cur[1] != '=') tok.type = T_MOD;
 				else {             tok.type = T_MODEQ;       cur++; }
 				break;
+				
+			case '&':
+				if (cur[1] != '&') tok.type = T_BIT_AND;
+				else {             tok.type = T_AND;         cur++; }
+				break;
+
+			case '|':
+				if (cur[1] != '|') tok.type = T_BIT_OR;
+				else {             tok.type = T_OR;          cur++; }
+				break;
 
 			case '<':
 				if (cur[1] != '=') tok.type = T_LESS;
@@ -393,6 +426,9 @@ inline std::vector<Token> tokenize (const char* src) {
 				if (cur[1] != '=') tok.type = T_ASSIGN;
 				else {             tok.type = T_EQUALS;      cur++; }
 				break;
+				
+			case '~': tok.type = T_BIT_NOT;       break;
+			case '^': tok.type = T_BIT_XOR;       break;
 
 			case ':': tok.type = T_COLON;         break;
 			case ';': tok.type = T_SEMICOLON;     break;

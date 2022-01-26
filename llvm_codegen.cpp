@@ -110,6 +110,7 @@ struct LLVM_gen {
 	size_t strlit_count = 0;
 
 	// per function
+	size_t sc_count;
 	size_t if_count;
 	size_t loop_count;
 	size_t cont_count;
@@ -180,11 +181,18 @@ struct LLVM_gen {
 					default: throw CompilerExcept{"error: negate is not valid for type", op->src_tok->source};
 				}
 			}
-			case OP_NOT: {
+			case OP_BIT_NOT: {
 				switch (op->valtype) {
 					case INT :
 					case BOOL: return build.CreateNot(operand, "_not");
-					default: throw CompilerExcept{"error: not is not valid for type", op->src_tok->source};
+					default: throw CompilerExcept{"error: bitwise not (~x) is not valid for type", op->src_tok->source};
+				}
+			}
+			case OP_LOGICAL_NOT: {
+				switch (op->valtype) {
+					case INT :
+					case BOOL: return build.CreateNot(operand, "_not");
+					default: throw CompilerExcept{"error: logical not (!x) is not valid for type", op->src_tok->source};
 				}
 			}
 			case OP_INC: {
@@ -204,8 +212,9 @@ struct LLVM_gen {
 	}
 	llvm::Value* codegen_binop (AST_binop* op, llvm::Value* lhs, llvm::Value* rhs) {
 		assert(op->lhs->valtype == op->rhs->valtype);
+		//assert(op->valtype == op->rhs->valtype); // not true for bools
 
-		switch (op->valtype) {
+		switch (op->lhs->valtype) {
 		case INT: {
 			switch (op->op) {
 				case OP_ADD:        return build.CreateAdd (lhs, rhs, "_add");
@@ -213,6 +222,17 @@ struct LLVM_gen {
 				case OP_MUL:        return build.CreateMul (lhs, rhs, "_mul");
 				case OP_DIV:        return build.CreateSDiv(lhs, rhs, "_div");
 				case OP_MOD:        return build.CreateURem(lhs, rhs, "_mod"); // TODO: is URem the correct thing for  sint % sint  ?
+				
+				case OP_BIT_AND:    return build.CreateAnd (lhs, rhs, "_and");
+				case OP_BIT_OR:     return build.CreateOr  (lhs, rhs, "_or");
+				case OP_BIT_XOR:    return build.CreateXor (lhs, rhs, "_xor");
+
+				// TODO: allow  int && int  by making ints automatically convert to bool as int != 0
+				//  -> How? do this here or doing semantic analysis? if suring semantic, modify the AST?
+				case OP_LOGICAL_AND:
+				case OP_LOGICAL_OR:
+					throw CompilerExcept{ "error: logical and & or operators not valid for ints", op->src_tok->source };
+				
 				case OP_LESS:       return build.CreateCmp(llvm::CmpInst::Predicate::ICMP_SLT, lhs, rhs, "_cmp");
 				case OP_LESSEQ:     return build.CreateCmp(llvm::CmpInst::Predicate::ICMP_SLE, lhs, rhs, "_cmp");
 				case OP_GREATER:    return build.CreateCmp(llvm::CmpInst::Predicate::ICMP_SGT, lhs, rhs, "_cmp");
@@ -231,6 +251,14 @@ struct LLVM_gen {
 				case OP_MOD:        
 					throw CompilerExcept{ "error: math ops not valid for this type", op->src_tok->source };
 		
+				case OP_BIT_AND:    return build.CreateAnd (lhs, rhs, "_and");
+				case OP_BIT_OR:     return build.CreateOr  (lhs, rhs, "_or");
+				case OP_BIT_XOR:    return build.CreateXor (lhs, rhs, "_xor");
+				
+				// implemented below
+				//case OP_LOGICAL_AND:
+				//case OP_LOGICAL_OR:
+				
 				case OP_LESS:       
 				case OP_LESSEQ:     
 				case OP_GREATER:    
@@ -250,6 +278,15 @@ struct LLVM_gen {
 				case OP_SUB:        return build.CreateFSub(lhs, rhs, "_sub");
 				case OP_MUL:        return build.CreateFMul(lhs, rhs, "_mul");
 				case OP_DIV:        return build.CreateFDiv(lhs, rhs, "_div");
+
+				case OP_BIT_AND:
+				case OP_BIT_OR:
+				case OP_BIT_XOR:
+					throw CompilerExcept{ "error: bitwise operators not valid for floats", op->src_tok->source };
+				
+				case OP_LOGICAL_AND:
+				case OP_LOGICAL_OR:
+					throw CompilerExcept{ "error: logical and & or operators not valid for floats", op->src_tok->source };
 				
 				// always ordered comparisons (NaN behavior)
 				case OP_LESS:       return build.CreateFCmp(llvm::CmpInst::Predicate::FCMP_OLT, lhs, rhs, "_cmp");
@@ -368,13 +405,16 @@ struct LLVM_gen {
 
 		cur_fdef = fdef;
 
+		sc_count   = 0;
 		if_count   = 0;
 		loop_count = 0;
 		cont_count = 0;
 
 		//// 
-		alloca_block = llvm::BasicBlock::Create(ctx, "alloca");
-		auto* entry_block = llvm::BasicBlock::Create(ctx, "entry");
+		// dedicated block for local variable alloca (so they are all grouped together)
+		alloca_block = llvm::BasicBlock::Create(ctx, "entry");
+
+		auto* entry_block = llvm::BasicBlock::Create(ctx, "entry.cont");
 		alloca_block->insertInto(cur_fdef->llvm_func);
 		
 		begin_basic_block(entry_block);
@@ -409,7 +449,9 @@ struct LLVM_gen {
 		if (cur_fdef->retc == 1) {
 			auto* vardecl = (AST_vardecl*)cur_fdef->rets;
 			
-			I = build.CreateRet(vardecl->llvm_value);
+			auto* val = load_local_var(ast, vardecl);
+
+			I = build.CreateRet(val);
 		}
 		else {
 			I = build.CreateRetVoid();
@@ -495,10 +537,53 @@ struct LLVM_gen {
 
 		case A_BINOP: {
 			auto* op = (AST_binop*)ast;
+			
+			if (op->op == OP_LOGICAL_AND || op->op == OP_LOGICAL_OR) {
 				
-			assert(op->valtype      == op->lhs->valtype);
-			assert(op->lhs->valtype == op->rhs->valtype);
+				auto id  = format_id(sc_count++);
+				auto cid = format_id(cont_count++);
+
+				const char* name = op->op == OP_LOGICAL_AND ? "and" : "or";
+
+				auto* else_block = llvm::BasicBlock::Create(ctx, llvm::Twine(name) + id.str);
+				auto* cont_block = llvm::BasicBlock::Create(ctx, llvm::Twine("cont") + cid.str);
 				
+				// eval lhs
+				llvm::Value* cond = codegen(op->lhs);
+
+				auto* phi_short_circuit_block = build.GetInsertBlock(); // nested ifs or loops (in codegen) change the current block
+				
+				llvm::Value* short_circuit_result;
+				if (op->op == OP_LOGICAL_AND) {
+					// lhs == false  -->  short circuit to false
+					short_circuit_result = llvm::ConstantInt::getBool(llvm::Type::getInt1Ty(ctx), false);
+					build.CreateCondBr(cond, else_block, cont_block);
+				}
+				else {
+					// lhs == true  -->  short circuit to true
+					short_circuit_result = llvm::ConstantInt::getBool(llvm::Type::getInt1Ty(ctx), true);
+					build.CreateCondBr(cond, cont_block, else_block);
+				}
+
+
+				// eval rhs if did not short-circuit
+				begin_basic_block(else_block);
+					
+				auto* rhs_result = codegen(op->rhs);
+				auto* phi_rhs_block = build.GetInsertBlock();
+					
+				build.CreateBr(cont_block);
+				
+
+				// following code will be in cont block
+				begin_basic_block(cont_block);
+				
+				llvm::PHINode* result = build.CreatePHI(llvm::Type::getInt1Ty(ctx), 2,  llvm::Twine("_") + name);
+				result->addIncoming(short_circuit_result, phi_short_circuit_block);
+				result->addIncoming(rhs_result, phi_rhs_block);
+				return result;
+			}
+
 			// eval lhs
 			llvm::Value* lhs = codegen(op->lhs);
 			// eval rhs
@@ -515,8 +600,8 @@ struct LLVM_gen {
 			llvm::Value* result  = codegen_unary(op, old_val);
 				
 			switch (op->op) {
-				case OP_POSITIVE:
-				case OP_NEGATE: case OP_NOT: {
+				case OP_POSITIVE: case OP_NEGATE:
+				case OP_BIT_NOT: case OP_LOGICAL_NOT: {
 					return result;
 				}
 
@@ -530,6 +615,8 @@ struct LLVM_gen {
 					// return old value
 					return old_val;
 				}
+
+				INVALID_DEFAULT;
 			}
 		}
 

@@ -365,7 +365,29 @@ struct IdentResolver {
 				if (op->lhs->valtype != op->rhs->valtype)
 					throw CompilerExcept{"error: binary operator: types do not match", op->src_tok->source};
 
-				op->valtype = op->lhs->valtype;
+				switch (op->op) {
+					case OP_ADD:
+					case OP_SUB:
+					case OP_MUL:
+					case OP_DIV:
+					case OP_MOD:
+					case OP_BIT_AND:
+					case OP_BIT_OR:
+					case OP_BIT_XOR:
+					case OP_LOGICAL_AND:
+					case OP_LOGICAL_OR:
+						op->valtype = op->lhs->valtype;
+						break;
+					case OP_LESS:       
+					case OP_LESSEQ:     
+					case OP_GREATER:    
+					case OP_GREATEREQ:  
+					case OP_EQUALS:     
+					case OP_NOT_EQUALS:
+						op->valtype = BOOL;
+						break;
+					INVALID_DEFAULT;
+				}
 			} break;
 
 			case A_IF:
@@ -373,6 +395,9 @@ struct IdentResolver {
 				auto* aif = (AST_if*)node;
 
 				recurse(aif->cond);
+				if (aif->cond->valtype != BOOL)
+					throw CompilerExcept{"error: if condition must be a bool", aif->cond->src_tok->source};
+
 				recurse(aif->if_body);
 				if (aif->else_body)
 					recurse(aif->else_body);
@@ -433,6 +458,8 @@ struct IdentResolver {
 					recurse(loop->start);
 
 				recurse(loop->cond);
+				if (loop->cond->valtype != BOOL)
+					throw CompilerExcept{"error: loop condition must be a bool", loop->cond->src_tok->source};
 
 				if (loop->end)
 					recurse(loop->end);

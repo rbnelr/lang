@@ -82,6 +82,11 @@ struct JIT {
 
 	std::unique_ptr<llvm::TargetMachine> TM;
 
+	
+	llvm::legacy::PassManager mem2reg;
+	llvm::legacy::PassManager optimize;
+	llvm::legacy::PassManager MCgen;
+	
 	JIT (): resolver{}, MM{}, dyld{MM, resolver} {
 		ZoneScoped;
 
@@ -109,60 +114,83 @@ struct JIT {
 		llvm::orc::JITTargetMachineBuilder JTMB(TT);
 
 		TM = llvm::cantFail( JTMB.createTargetMachine() );
+
+	////
+		// Opt level (for TM->addPassesToEmitMC() ???)
+		TM->setOptLevel(llvm::CodeGenOpt::Default);
+
+		setup_mem2reg();
+		setup_optimize();
+		//setup_MCgen();
 	}
 	
-	void setup_PM (llvm::legacy::PassManager& PM, llvm::raw_svector_ostream& ObjStream) {
+	void setup_mem2reg () {
 		ZoneScoped;
-		
+
 		// mem2reg pass for alloca'd local vars
-		PM.add(llvm::createPromoteMemoryToRegisterPass());
+		mem2reg.add(llvm::createPromoteMemoryToRegisterPass());
+	}
+	void setup_optimize () {
+		ZoneScoped;
+
+		optimize.add(llvm::createCFGSimplificationPass()); //Dead code elimination
+		//optimize.add(llvm::createSROAPass());
+		optimize.add(llvm::createLoopSimplifyCFGPass());
+		
+		optimize.add(llvm::createSCCPPass()); // createConstantPropagationPass ? 
+			
+		optimize.add(llvm::createNewGVNPass());//Global value numbering
+		optimize.add(llvm::createReassociatePass());
+		//optimize.add(llvm::createPartiallyInlineLibCallsPass()); //Inline standard calls
+		optimize.add(llvm::createDeadCodeEliminationPass());
+		optimize.add(llvm::createCFGSimplificationPass()); //Cleanup
+
+		// This tries to turn  printf("\n");  into putchar, but my printf != C's printf?  O_o
+		//optimize.add(llvm::createInstructionCombiningPass());
+
+		optimize.add(llvm::createFlattenCFGPass()); //Flatten the control flow graph.
+	}
+
+	// TODO: why is the result stream part of the passes manager?
+	// if this was not the case we could easily prepare the PassManager once,
+	// and compile with them multiple times
+	void setup_MCgen (llvm::raw_svector_ostream& ObjStream) {
+		ZoneScoped;
 
 		llvm::MCContext* Ctx;
-		if (TM->addPassesToEmitMC(PM, Ctx, ObjStream)) {
+		if (TM->addPassesToEmitMC(MCgen, Ctx, ObjStream)) {
 			ExitOnErr( llvm::make_error<llvm::StringError>(
 				"Target does not support MC emission",
 				llvm::inconvertibleErrorCode())
 			);
 		}
+	}
+		
+	void run_mem2reg (llvm::Module* modl) {
+		mem2reg.run(*modl);
 
-		/*
-		{
-			// write values from a pass vector inside PM into these and view the Pass names that way
-			// we could do this in a better way if they wouldn't make all their variables private...
-			void* ptr = 0;
-			int count = 0;
-
-			auto* pass = (llvm::Pass**)ptr;
-
-			for (int i=0; i<count; ++i) {
-				auto name = pass[i]->getPassName();
-				printf("[%3d]: %.*s\n", i, (int)name.size(), name.data());
-			}
-		}*/
+		if (options.print_ir) {
+			print_seperator("LLVM IR - After mem2reg");
+			modl->print(llvm::errs(), nullptr);
+		}
+	}
+	void run_optimize (llvm::Module* modl) {
+		optimize.run(*modl);
+		
+		if (options.print_ir) {
+			print_seperator("LLVM IR - After optimize");
+			modl->print(llvm::errs(), nullptr);
+		}
 	}
 
-	void compile_and_load (llvm::Module* modl) {
-		ZoneScoped;
-		
-		auto DL = TM->createDataLayout();
+	void run_MCgen (llvm::Module* modl) {
 
-		modl->setDataLayout(DL);
-		
 		llvm::SmallVector<char, 0> ObjBufferSV;
 		llvm::raw_svector_ostream ObjStream(ObjBufferSV);
 
-		{
-			ZoneScopedN("run passes");
-
-			llvm::legacy::PassManager PM;
-
-			setup_PM(PM, ObjStream);
-			
-			{
-				ZoneScopedN("PM.run()");
-				PM.run(*modl);
-			}
-		}
+		setup_MCgen(ObjStream);
+		
+		MCgen.run(*modl);
 
 		llvm::SmallVectorMemoryBuffer ObjBuffer {
 			std::move(ObjBufferSV),
@@ -184,15 +212,22 @@ struct JIT {
 			dyld.finalizeWithMemoryManagerLocking(); // calls resolveRelocations
 		}
 
-		if (options.print_ir) {
-			print_seperator("LLVM IR - After Opt");
-			modl->print(llvm::errs(), nullptr);
-		}
-
 		if (options.print_code) {
 			DisasmPrinter disasm(TT);
 			disasm.print_disasm(dyld, *Obj, *loadedObj, MM);
 		}
+	}
+
+	void compile_and_load (llvm::Module* modl) {
+		ZoneScoped;
+		
+		auto DL = TM->createDataLayout();
+
+		modl->setDataLayout(DL);
+		
+		run_mem2reg(modl);
+		run_optimize(modl);
+		run_MCgen(modl);
 	}
 	void execute () {
 		ZoneScoped;

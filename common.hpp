@@ -243,4 +243,4 @@ inline void grow (std::vector<T>& vec, size_t min_sz) {
 	}
 }
 
-#define TRACY_REPEAT 100
+#define TRACY_REPEAT 1000

@@ -15,41 +15,69 @@ inline constexpr bool is_binary_assignemnt_op (TokenType tok) {
 }
 
 inline constexpr bool is_unary_op         (TokenType tok) {
-	return (tok >= T_ADD && tok <= T_SUB) || (tok >= T_NOT && tok <= T_DEC);
+	return (tok >= T_ADD && tok <= T_SUB) || (tok >= T_BIT_NOT && tok <= T_DEC);
 }
 inline constexpr bool is_unary_prefix_op  (TokenType tok) {
-	return (tok >= T_ADD && tok <= T_SUB) || tok == T_NOT;
+	return (tok >= T_ADD && tok <= T_SUB) || (tok >= T_BIT_NOT && tok <= T_NOT);
 }
 inline constexpr bool is_unary_postfix_op (TokenType tok) {
 	return tok >= T_INC && tok <= T_DEC;
 }
 
+//  0  T_QUESTIONMARK
+//  1  T_OR
+//  2  T_AND
+//  3  T_EQUALS, T_NOT_EQUALS
+//  4  T_LESS, T_LESSEQ, T_GREATER, T_GREATEREQ
+//  5  T_BIT_OR
+//  6  T_BIT_XOR
+//  7  T_BIT_AND
+//  8  T_ADD, T_SUB
+//  9  unary T_ADD, T_SUB
+// 10  T_MUL, T_DIV, T_MOD
+// 11  T_NOT, T_BITNOT
+// 12  T_INC, T_DEC
 inline constexpr uint8_t BINARY_OP_PRECEDENCE[] = {
-	3, // T_ADD
-	3, // T_SUB
-	5, // T_MUL
-	5, // T_DIV
-	5, // T_MOD
-
-	2, // T_LESS
-	2, // T_LESSEQ
-	2, // T_GREATER
-	2, // T_GREATEREQ
-	1, // T_EQUALS
-	1, // T_NOT_EQUALS
-
-	0, // T_QUESTIONMARK
+	  8, // T_ADD
+	  8, // T_SUB
+	 10, // T_MUL
+	 10, // T_DIV
+	 10, // T_MOD
+	 
+	  7, // T_BIT_AND
+	  5, // T_BIT_OR
+	  6, // T_BIT_XOR
+	 
+	  2, // T_AND
+	  1, // T_OR
+	 
+	  4, // T_LESS
+	  4, // T_LESSEQ
+	  4, // T_GREATER
+	  4, // T_GREATEREQ
+	  3, // T_EQUALS
+	  3, // T_NOT_EQUALS
+	 
+	  0, // T_QUESTIONMARK
 	
+	255, // T_BIT_NOT
 	255, // T_NOT
 	255, // T_INC
 	255, // T_DEC
 };
 inline constexpr uint8_t UNARY_OP_PRECEDENCE[] = {
-	4,   // T_ADD
-	4,   // T_SUB
+	  9, // T_ADD
+	  9, // T_SUB
 	255, // T_MUL
 	255, // T_DIV
 	255, // T_MOD
+
+	255, // T_BIT_AND
+	255, // T_BIT_OR
+	255, // T_BIT_XOR
+	
+	255, // T_AND
+	255, // T_OR
 
 	255, // T_LESS
 	255, // T_LESSEQ
@@ -60,9 +88,10 @@ inline constexpr uint8_t UNARY_OP_PRECEDENCE[] = {
 
 	255, // T_QUESTIONMARK
 	
-	6, // T_NOT
-	7, // T_INC
-	7, // T_DEC
+	 11, // T_BIT_NOT
+	 11, // T_NOT
+	 12, // T_INC
+	 12, // T_DEC
 };
 
 enum Associativity : uint8_t {
@@ -75,6 +104,13 @@ inline constexpr Associativity BINARY_OP_ASSOCIATIVITY[] = { // 0 = left (left t
 	LEFT_ASSOC, // T_MUL
 	LEFT_ASSOC, // T_DIV
 	LEFT_ASSOC, // T_REMAINDER
+
+	LEFT_ASSOC, // T_BIT_AND
+	LEFT_ASSOC, // T_BIT_OR
+	LEFT_ASSOC, // T_BIT_XOR
+
+	LEFT_ASSOC, // T_AND
+	LEFT_ASSOC, // T_OR
 
 	LEFT_ASSOC, // T_LESS
 	LEFT_ASSOC, // T_LESSEQ
@@ -175,6 +211,13 @@ enum OpType {
 	OP_DIV,
 	OP_MOD,
 
+	OP_BIT_AND,
+	OP_BIT_OR,
+	OP_BIT_XOR,
+
+	OP_LOGICAL_AND,
+	OP_LOGICAL_OR,
+
 	OP_LESS,
 	OP_LESSEQ,
 	OP_GREATER,
@@ -185,7 +228,8 @@ enum OpType {
 	// unary operators
 	OP_POSITIVE, // usually a no-op, but possibly could do something with operator overloading
 	OP_NEGATE,
-	OP_NOT,
+	OP_BIT_NOT,
+	OP_LOGICAL_NOT,
 	OP_INC,
 	OP_DEC,
 };
@@ -198,6 +242,13 @@ inline const char* OpType_str[] = {
 	"/",
 	"%",
 
+	"&",
+	"|",
+	"^",
+
+	"&&",
+	"||",
+
 	"<",
 	"<=",
 	">",
@@ -207,6 +258,7 @@ inline const char* OpType_str[] = {
 
 	"+",
 	"-",
+	"~",
 	"!",
 	"x++",
 	"x--",
@@ -219,7 +271,7 @@ inline constexpr OpType tok2unop (TokenType tok) {
 	switch (tok) {
 		case T_ADD: return OP_POSITIVE;
 		case T_SUB: return OP_NEGATE;
-		default:    return (OpType)( tok + (OP_NOT - T_NOT) );
+		default:    return (OpType)( tok + (OP_BIT_NOT - T_BIT_NOT) );
 	}
 }
 inline constexpr OpType tok2assignop (TokenType tok) {

@@ -31,7 +31,7 @@
 
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/InitializePasses.h"
-#include "llvm/PassRegistry.h"
+//#include "llvm/PassRegistry.h"
 
 //// JIT linking and exectution
 #include "llvm/Support/TargetSelect.h"

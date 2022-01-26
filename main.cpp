@@ -3,10 +3,6 @@
 #include "tokenizer.hpp"
 #include "parser.hpp"
 #include "resolver.hpp"
-#include "ir_gen.hpp"
-#include "ir_opt.hpp"
-#include "codegen.hpp"
-#include "bytecode_vm.hpp"
 
 #include "llvm_backend.hpp"
 
@@ -21,8 +17,6 @@ bool compile () {
 			return false;
 		}
 	}
-
-	VM vm; // don't recreate when profling due to stack allocation
 
 #if TRACY_ENABLE
 	for (int profi=0; profi<TRACY_REPEAT; ++profi) {

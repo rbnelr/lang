@@ -174,14 +174,10 @@
   <ItemGroup>
     <ClInclude Include="..\..\..\common\tracy\Tracy.hpp" />
     <ClInclude Include="..\..\builtins.hpp" />
-    <ClInclude Include="..\..\bytecode_vm.hpp" />
-    <ClInclude Include="..\..\codegen.hpp" />
     <ClInclude Include="..\..\common.hpp" />
     <ClInclude Include="..\..\llvm_disasm.hpp" />
     <ClInclude Include="..\..\errors.hpp" />
-    <ClInclude Include="..\..\ir_opt.hpp" />
     <ClInclude Include="..\..\line_map.hpp" />
-    <ClInclude Include="..\..\ir_gen.hpp" />
     <ClInclude Include="..\..\llvm_backend.hpp" />
     <ClCompile Include="..\..\llvm_jit.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Use</PrecompiledHeader>

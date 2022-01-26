@@ -72,7 +72,7 @@ bool compile () {
 
 		#if LLVM
 			{
-				llvm::Module* llvm_modl = llvm_gen_module(options.filename, funcdefs);
+				llvm::Module* llvm_modl = llvm_gen_module(options.filename, funcdefs, lines);
 				defer( llvm_free_module(llvm_modl); );
 			
 				//#ifndef TRACY_ENABLE

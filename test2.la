@@ -3,11 +3,7 @@ n : int;
 	a := 5;
 	b := 10;
 	n = a * b - 5;
-	
-	func f () {}
 }
-
-func f () {}
 
 a := 0;
 b := 1;
@@ -23,6 +19,7 @@ for i := 0; i < n-2; i++ {
 }
 
 printf("\n");
+//return;
 
 //sqr := 625; // 25^2
 //sqrt : int;

@@ -5,7 +5,6 @@
 #include "builtins.hpp"
 
 llvm::LLVMContext ctx;
-llvm::IRBuilder<llvm::NoFolder> build{ctx};
 
 inline struct _IDFormStrbuf { char str[32]; } format_id (size_t id) {
 	_IDFormStrbuf buf; // fits any 64-bit int
@@ -17,31 +16,58 @@ inline struct _IDFormStrbuf { char str[32]; } format_id (size_t id) {
 	}
 	return buf;
 }
-	
-	#define PROFILE_DUPLICATE_FUNCS 0
-	
+
+#define PROFILE_DUPLICATE_FUNCS 0
+
 struct LLVM_gen {
 	std::vector<AST_funcdef*>& funcdefs;
+	SourceLines const& lines;
 
-	llvm::Module* modl;
+	llvm::Module* modl; // owned by caller
+
+	llvm::IRBuilder<llvm::NoFolder> build{ctx};
+	
+	//std::unique_ptr<llvm::DIBuilder> di_build;
+
+	//llvm::DICompileUnit* di_comp_unit;
+	//llvm::DIFile*        di_file;
+
+	void dbg_info (llvm::Instruction* I, AST* ast) {
+		//auto start_lineno = lines.find_lineno(ast->src_tok->source.start);
+		//auto line_str = lines.get_line_text(start_lineno);
+		//
+		//size_t charno = ast->src_tok->source.start - line_str.data();
+		//
+		//I->setDebugLoc( llvm::DILocation::get(ctx, (unsigned)(start_lineno+1), (unsigned)(charno), di_comp_unit));
+	}
 
 #if PROFILE_DUPLICATE_FUNCS
 	bool _is_builtin = true;
 	int _dupl_func_i = 0;
 #endif
 	
-	void generate (strview const& filename) {
+	void generate (strview filename) {
 		ZoneScoped;
 
 		modl = new llvm::Module("<main>", ctx);
 		modl->setSourceFileName(SR(filename));
+
+		/*
+		di_build = std::make_unique<llvm::DIBuilder>(*modl);
+
+		bool is_optimized = false;
+		di_comp_unit = di_build->createCompileUnit(llvm::dwarf::DW_LANG_C,
+			di_build->createFile(SR(filename), "."), "LA Compiler", is_optimized, "", 0);
+
+		di_file = di_build->createFile(di_comp_unit->getFilename(), di_comp_unit->getDirectory());
+		*/
 
 		// declare builtin functions
 		declare_builtins();
 
 	#if PROFILE_DUPLICATE_FUNCS
 		_is_builtin = false;
-		for (_dupl_func_i=0; _dupl_func_i<10000; ++_dupl_func_i) {
+		for (_dupl_func_i=0; _dupl_func_i<1000; ++_dupl_func_i) {
 	#endif
 
 		// declare functions declared in source
@@ -58,6 +84,8 @@ struct LLVM_gen {
 	#if PROFILE_DUPLICATE_FUNCS
 		}
 	#endif
+
+		//di_build->finalize();
 
 		if (options.print_ir) {
 			print_seperator("LLVM IR");
@@ -85,16 +113,14 @@ struct LLVM_gen {
 	size_t if_count;
 	size_t loop_count;
 	size_t cont_count;
-	
-	size_t alloca_count;
 
 	void declare_local_var (AST_vardecl* vardecl) {
 		auto tmp_build = llvm::IRBuilder<llvm::NoFolder>(alloca_block);
 
 		vardecl->llvm_type = map_type(vardecl->valtype);
-		vardecl->llvm_value = tmp_build.CreateAlloca(vardecl->llvm_type, nullptr, SR(vardecl->ident));
-
-		alloca_count++;
+			
+		auto* I = tmp_build.CreateAlloca(vardecl->llvm_type, nullptr, SR(vardecl->ident));
+		vardecl->llvm_value = I;
 	}
 	llvm::Value* load_local_var (AST* op, AST_vardecl* vardecl) {
 		if (vardecl->is_arg) {
@@ -312,6 +338,28 @@ struct LLVM_gen {
 		}
 
 		fdef->llvm_func = func;
+
+		/*
+		auto CreateFunctionType = [&] (size_t NumArgs) {
+			llvm::SmallVector<llvm::Metadata*, 16> EltTys;
+			llvm::DIType* DblTy = di_build->createBasicType("double", 64, llvm::dwarf::DW_ATE_float);
+		
+			// Add the result type.
+			EltTys.push_back(DblTy);
+		
+			for (size_t i = 0, e = NumArgs; i != e; ++i)
+				EltTys.push_back(DblTy);
+		
+			return di_build->createSubroutineType(di_build->getOrCreateTypeArray(EltTys));
+		};
+		
+		unsigned LineNo = 0;
+		unsigned ScopeLine = 0;
+		auto* SP = di_build->createFunction(di_comp_unit, SR(fdef->ident), SR(fdef->ident), di_file, LineNo, 
+			CreateFunctionType(args_ty.size()), ScopeLine);
+		func->setSubprogram(SP);
+		*/
+
 		return func;
 	}
 	
@@ -323,8 +371,6 @@ struct LLVM_gen {
 		if_count   = 0;
 		loop_count = 0;
 		cont_count = 0;
-		
-		alloca_count = 0;
 
 		//// 
 		alloca_block = llvm::BasicBlock::Create(ctx, "alloca");
@@ -342,7 +388,7 @@ struct LLVM_gen {
 		codegen(fdef->body);
 		
 		//// implicit return instruction at end of function body
-		return_ret_vars();
+		return_ret_vars(fdef);
 		
 		// finally add branch from alloca to entry
 		build.SetInsertPoint(alloca_block);
@@ -355,18 +401,21 @@ struct LLVM_gen {
 		cur_fdef = nullptr;
 	}
 
-	void return_ret_vars () {
+	void return_ret_vars (AST* ast) {
 		// TODO: implement multiple returns
 		assert(cur_fdef->retc <= 1);
 
+		llvm::Instruction* I;
 		if (cur_fdef->retc == 1) {
 			auto* vardecl = (AST_vardecl*)cur_fdef->rets;
 			
-			build.CreateRet(vardecl->llvm_value);
+			I = build.CreateRet(vardecl->llvm_value);
 		}
 		else {
-			build.CreateRetVoid();
+			I = build.CreateRetVoid();
 		}
+
+		//dbg_info(I, ast);
 	}
 
 	llvm::Value* codegen (AST* ast) {
@@ -693,7 +742,7 @@ struct LLVM_gen {
 				store_local_var(ret, arg->decl, result);
 			}
 			
-			return_ret_vars();
+			return_ret_vars(ret);
 			unreachable();
 			return {};
 		}
@@ -705,11 +754,11 @@ struct LLVM_gen {
 	}
 };
 
-llvm::Module* llvm_gen_module (strview const& filename, std::vector<AST_funcdef*>& funcdefs) {
+llvm::Module* llvm_gen_module (strview const& filename, std::vector<AST_funcdef*>& funcdefs, SourceLines const& lines) {
 	ZoneScoped;
 
 	LLVM_gen llvm_gen = {
-		funcdefs
+		funcdefs, lines
 	};
 	llvm_gen.generate(filename);
 

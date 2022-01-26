@@ -40,7 +40,7 @@ struct CompilerExcept {
 		size_t charno = tok.start - line_str.data();
 
 		if (ansi_color_supported) fputs(ANSI_COLOR_RED, stderr);
-		fprintf(stderr, "%s:%" PRIuMAX ":%" PRIuMAX ": %s.\n", filename, start_lineno+1, charno+1, errstr);
+		fprintf(stderr, "%s:%" PRIuMAX ":%" PRIuMAX ": %s.\n", filename, start_lineno+1, charno, errstr);
 
 		if (ansi_color_supported) fputs(ANSI_COLOR_RESET, stderr);
 		

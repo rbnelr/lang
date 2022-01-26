@@ -117,17 +117,7 @@ struct LLVM_gen {
 	
 	AST_funcdef*      cur_fdef;
 	llvm::Function*   cur_func;
-	llvm::BasicBlock* entry_block;
-
-	llvm::BasicBlock* ib_block = nullptr; // ib = insert before   -> to preserve block order (keep it in source code order)
 	
-	// stack of loop blocks to allow for break and continue anywhere (except outside of loop, where loop_blocks will be empty)
-	struct LoopBlocks {
-		llvm::BasicBlock* break_block;    // loop cont  ie. block after loop
-		llvm::BasicBlock* continue_block; // loop end   ie. block after loop body, but befor cond
-	};
-	llvm::SmallVector<LoopBlocks, 16> loop_blocks;
-
 	// Improve names of llvm values and basic blocks by manually keeping count
 	// TODO: This could actually impact compiler perf, so consider not even generating names at all in non-debug info builds
 	// The way that allows for the least overhead while still allowing runtime switching of debug-info on/off
@@ -148,6 +138,148 @@ struct LLVM_gen {
 		return buf;
 	}
 
+	void set_var_name (AST_vardecl* vardecl, llvm::Value* val) {
+		auto id = format_id(vardecl->llvm_next_id++);
+
+		val->setName(llvm::Twine(SR(vardecl->ident)) +"."+ id.str);
+	}
+
+	llvm::SmallVector<AST_vardecl*, 32> declared_vars;
+
+	void declare_local_var (AST_vardecl* vardecl) {
+		vardecl->llvm_value = nullptr; // declared vars are initially uninitialized, so we set this to null
+		vardecl->llvm_next_id = 0;
+
+		declared_vars.push_back(vardecl);
+	}
+	llvm::Value* load_local_var (AST* op, AST_vardecl* vardecl) {
+		if (vardecl->is_arg) {
+			return vardecl->llvm_value;
+		}
+		else {
+			//if (vardecl->llvm_value == nullptr)
+			//	throw CompilerExcept{"error: variable uninitialized", op->src_tok->source};
+			
+			return vardecl->llvm_value;
+		}
+	}
+	void store_local_var (AST_vardecl* vardecl, llvm::Value* val) {
+		set_var_name(vardecl, val);
+
+		vardecl->llvm_value = val;
+	}
+	
+	struct BasicBlock {
+		llvm::BasicBlock* block;
+
+		llvm::SmallVector<llvm::PHINode*, 32> phis;
+
+		// once a block has been begun, we know what phis are needed in it, thus we should no longer lazily_add_phis()
+		bool phis_fixed = false;
+	};
+
+	BasicBlock* cur_block = nullptr;
+
+	// stack of loop blocks to allow for break and continue anywhere (except outside of loop, where loop_blocks will be empty)
+	struct LoopBlocks {
+		BasicBlock* break_block;    // loop cont  ie. block after loop
+		BasicBlock* continue_block; // loop end   ie. block after loop body, but befor cond
+	};
+	llvm::SmallVector<LoopBlocks, 8> loop_blocks;
+	
+
+	// lazily add phis to current declared vars
+	void lazily_add_phis (BasicBlock* block, size_t count) {
+		size_t old_sz = block->phis.size();
+		
+		block->phis.resize(count);
+		
+		for (size_t i=old_sz; i<count; ++i) {
+			auto* vardecl = declared_vars[i];
+			// Create a phi node for every (declared at that point) variable at the start of every basic block
+			block->phis[i] = build.CreatePHI(map_type(vardecl->valtype), 0);
+		}
+	}
+	void add_phi_nodes_incoming (BasicBlock* dst_block) {
+		
+		build.SetInsertPoint(dst_block->block);
+
+		if (!dst_block->phis_fixed) {
+			if (dst_block->phis.size() < declared_vars.size())
+				lazily_add_phis(dst_block, declared_vars.size());
+		}
+
+		for (size_t i=0; i<dst_block->phis.size(); ++i) {
+			auto* vardecl = declared_vars[i];
+
+			// Add incoming value for phi in dst_block for our cur_block using the latest value noted in declared_vars
+			// which is:
+			//  1. the latest value written in this block
+			//  2. the phi created for this block if it declared before this block and was never overwritten
+			//  3. a nullptr if it was declared in this block but never written (uninitialized)
+
+			// TODO: How do I handle uinitialzed variables being put into phi nodes?
+			// putting null in there likely is not valid, not crating the phi incoming is likely wrong too
+			// Should I use that undef thing for uninitialized?
+			assert(declared_vars[i]->llvm_value != nullptr);
+
+			dst_block->phis[i]->addIncoming(declared_vars[i]->llvm_value, cur_block->block);
+		}
+	}
+
+	// create basic block, so we can add branches to it
+	BasicBlock* create_basic_block (llvm::Twine const& name) {
+		
+		BasicBlock* block = g_allocator.alloc<BasicBlock>();
+		
+		block->block = llvm::BasicBlock::Create(ctx, name);
+		
+		return block;
+	}
+
+	void begin_basic_block (BasicBlock* block) {
+		cur_block = block;
+
+		block->block->insertInto(cur_func);
+
+		build.SetInsertPoint(block->block);
+		
+		// only vars declared before this block (in program order) might need to be phi nodes
+		lazily_add_phis(block, declared_vars.size());
+		
+		for (size_t i=0; i < declared_vars.size(); ++i) {
+			declared_vars[i]->llvm_value = block->phis[i];
+			
+			set_var_name(declared_vars[i], block->phis[i]);
+		}
+
+		block->phis_fixed = true;
+	}
+
+	void end_block_uncond (BasicBlock* dst_block) {
+		build.CreateBr(dst_block->block);
+
+		add_phi_nodes_incoming(dst_block);
+	}
+	void end_block_cond (llvm::Value* cond, BasicBlock* true_block, BasicBlock* false_block) {
+		build.CreateCondBr(cond, true_block->block, false_block->block);
+
+		add_phi_nodes_incoming(true_block);
+		add_phi_nodes_incoming(false_block);
+	}
+
+	void unreachable () {
+		// Could also manually keep track of when code is unreachable and skip generating instruction
+		// but in debug mode we actually want to keep all code to allow things like "set next statement"
+
+		// Create block that is unreachable
+		auto* block = create_basic_block("unreach");
+		begin_basic_block(block);
+
+		//add_phi_nodes_incoming(block);
+	}
+	
+////
 	llvm::Type* map_type (Type type) {
 		switch (type) {
 			case VOID: return llvm::Type::getVoidTy(ctx);
@@ -157,34 +289,6 @@ struct LLVM_gen {
 			case STR:  return llvm::Type::getInt8PtrTy(ctx);
 			INVALID_DEFAULT;
 		}
-	}
-
-	void codegen_function (AST_funcdef* fdef) {
-		ZoneScoped;
-
-		cur_fdef = fdef;
-		cur_func = fdef->llvm_func;
-
-		//// entry block + start recursively codegening of the function body
-		entry_block = llvm::BasicBlock::Create(ctx, "entry", cur_func);
-		build.SetInsertPoint(entry_block);
-
-		for (auto* ret = (AST_vardecl*)fdef->rets; ret != nullptr; ret = (AST_vardecl*)ret->next) {
-			assert(ret->type != A_VARARGS);
-			
-			declare_local_var(ret);
-		}
-
-		codegen(fdef->body);
-		
-		//// implicit return instruction at end of function body
-		return_ret_vars();
-		
-		//// finish function
-		verifyFunction(*fdef->llvm_func);
-
-		cur_func = nullptr;
-		entry_block = nullptr;
 	}
 	
 	llvm::Value* codegen_unary (AST_unop* op, llvm::Value* operand) {
@@ -289,20 +393,43 @@ struct LLVM_gen {
 		}
 	}
 
-	void declare_local_var (AST_vardecl* vardecl) {
-		llvm::IRBuilder<llvm::NoFolder> tmp_build(entry_block, entry_block->begin());
-		vardecl->llvm_value = tmp_build.CreateAlloca(map_type(vardecl->valtype), nullptr, SR(vardecl->ident));
+////
+	void veryfy_function (AST_funcdef* fdef) {
+		llvm::SmallString<128> msg;
+		llvm::raw_svector_ostream OS(msg);
+
+		if (verifyFunction(*fdef->llvm_func, &OS)) {
+			fprintf(stderr, ">>> LLVM error: %.*s\n", (int)msg.str().size(), msg.str().data());
+			fflush(stderr);
+			//throw CompilerExcept{ "LLVM: error!", fdef->src_tok->source };
+		}
 	}
+	void codegen_function (AST_funcdef* fdef) {
+		ZoneScoped;
 
-	// get alloca-ptr from local variable (not function arguments, since they are not allocas)
-	llvm::Value* local_var_ptr (AST* op, AST_vardecl* vardecl) {
-		assert(vardecl->type == A_VARDECL);
+		cur_fdef = fdef;
+		cur_func = fdef->llvm_func;
 
-		if (vardecl->is_arg)
-			throw CompilerExcept{"error: cannot operate on function arugment since arguments are immutable", op->src_tok->source};
+		//// entry block + start recursively codegening of the function body
+		BasicBlock* entry_block = create_basic_block("entry");
+		begin_basic_block(entry_block); // should not create any phis
 
-		assert(vardecl->llvm_value);
-		return vardecl->llvm_value; // should be a llvm::AllocaInst
+		for (auto* ret = (AST_vardecl*)fdef->rets; ret != nullptr; ret = (AST_vardecl*)ret->next) {
+			assert(ret->type != A_VARARGS);
+			
+			declare_local_var(ret);
+		}
+
+		codegen(fdef->body);
+		
+		//// implicit return instruction at end of function body
+		return_ret_vars();
+		
+		//// finish function
+		veryfy_function(fdef);
+
+		cur_func = nullptr;
+		cur_block = nullptr;
 	}
 
 	void return_ret_vars () {
@@ -312,27 +439,11 @@ struct LLVM_gen {
 		if (cur_fdef->retc == 1) {
 			auto* vardecl = (AST_vardecl*)cur_fdef->rets;
 			
-			llvm::Value* ret = build.CreateLoad(map_type(vardecl->valtype), vardecl->llvm_value, vardecl->llvm_value->getName());
-
-			build.CreateRet(ret);
+			build.CreateRet(vardecl->llvm_value);
 		}
 		else {
 			build.CreateRetVoid();
 		}
-	}
-
-	void unreachable () {
-		// TODO: code beyond here (in the same block) is unreachable, what do?
-		
-		// This other code to fail
-		//build.ClearInsertionPoint();
-		
-		// Could also manually keep track of when code is unreachable and skip generating instruction
-		// but that is somewhat complicated, but might be faster than creating unreachable blocks
-
-		// Create block that is unreachable
-		auto* bb = llvm::BasicBlock::Create(ctx, "unreach", cur_func, ib_block);
-		build.SetInsertPoint(bb);
 	}
 
 	llvm::Value* codegen (AST* ast) {
@@ -371,7 +482,7 @@ struct LLVM_gen {
 				// eval rhs
 				auto* val = codegen(vardecl->init);
 				// assign to new var
-				build.CreateStore(val, vardecl->llvm_value);
+				store_local_var(vardecl, val);
 			}
 			return {};
 		}
@@ -379,13 +490,8 @@ struct LLVM_gen {
 		case A_VAR: {
 			auto* var = (AST_var*)ast;
 			auto* vardecl = (AST_vardecl*)var->decl;
-				
-			if (vardecl->is_arg) {
-				return vardecl->llvm_value;
-			}
-			else {
-				return build.CreateLoad(map_type(var->valtype), vardecl->llvm_value, vardecl->llvm_value->getName());
-			}
+			
+			return load_local_var(ast, vardecl);
 		}
 
 		case A_ASSIGNOP: {
@@ -395,7 +501,6 @@ struct LLVM_gen {
 				throw CompilerExcept{"error: expected variable for assignop lhs", ast->src_tok->source};
 
 			auto* var = (AST_var*)op->lhs;
-			llvm::Value* var_ptr = local_var_ptr(op, var->decl);
 
 			llvm::Value* result;
 
@@ -405,14 +510,14 @@ struct LLVM_gen {
 			}
 			else {
 				// load lhs first
-				llvm::Value* lhs = build.CreateLoad(map_type(op->valtype), var_ptr, var_ptr->getName());
+				llvm::Value* lhs = load_local_var(op, var->decl);
 				// eval rhs
 				llvm::Value* rhs = codegen(op->rhs);
 				// eval binary operator and assign to lhs
 				result = codegen_binop(op, lhs, rhs);
 			}
-
-			build.CreateStore(result, var_ptr);
+			
+			store_local_var(var->decl, result);
 			return {};
 		}
 
@@ -448,10 +553,8 @@ struct LLVM_gen {
 						throw CompilerExcept{"error: expected variable for unary post operator", ast->src_tok->source};
 					auto* var = (AST_var*)op->operand;
 
-					llvm::Value* var_ptr = local_var_ptr(op, var->decl);
-
 					// assign inc/decremented to var
-					build.CreateStore(result, var_ptr);
+					store_local_var(var->decl, result);
 					// return old value
 					return old_val;
 				}
@@ -471,49 +574,42 @@ struct LLVM_gen {
 		case A_SELECT: {
 			auto* aif = (AST_if*)ast;
 
-			auto id = format_id(if_count++);
+			auto id  = format_id(if_count++);
 			auto cid = format_id(cont_count++);
 
-			auto* then_block =                  llvm::BasicBlock::Create(ctx, llvm::Twine("if.") + id.str + ".then", cur_func, ib_block);
-			auto* else_block = aif->else_body ? llvm::BasicBlock::Create(ctx, llvm::Twine("if.") + id.str + ".else", cur_func, ib_block) : nullptr;
-			auto* cont_block =                  llvm::BasicBlock::Create(ctx, llvm::Twine("cont.") + cid.str       , cur_func, ib_block);
+			auto* then_block =                  create_basic_block(llvm::Twine("if.") + id.str + ".then");
+			auto* else_block = aif->else_body ? create_basic_block(llvm::Twine("if.") + id.str + ".else") : nullptr;
+			auto* cont_block =                  create_basic_block(llvm::Twine("cont.") + cid.str       );
 				
-			llvm::Value      *true_result,    *false_result;
-			llvm::BasicBlock *phi_then_block, *phi_else_block;
+			llvm::Value *true_result,    *false_result;
+			BasicBlock  *phi_then_block, *phi_else_block;
 
 			{ // condition at end of current block
-				ib_block = then_block;
-
 				llvm::Value* cond = codegen(aif->cond);
-				build.CreateCondBr(cond, then_block, aif->else_body ? else_block : cont_block);
+				
+				end_block_cond(cond, then_block, aif->else_body ? else_block : cont_block);
 			}
 
 			{ // generate then block
-				ib_block = else_block ? else_block : cont_block;
-
-				build.SetInsertPoint(then_block);
+				begin_basic_block(then_block);
 
 				true_result = codegen(aif->if_body);
-				phi_then_block = build.GetInsertBlock(); // nested ifs or loops (in codegen) change the current block
+				phi_then_block = cur_block; // nested ifs or loops (in codegen) change the current block
 				
-				build.CreateBr(cont_block);
+				end_block_uncond(cont_block);
 			}
 
 			if (else_block) { // generate else block
-				ib_block = cont_block;
-				
-				build.SetInsertPoint(else_block);
+				begin_basic_block(else_block);
 					
 				false_result = codegen(aif->else_body);
-				phi_else_block = build.GetInsertBlock();
+				phi_else_block = cur_block;
 					
-				build.CreateBr(cont_block);
+				end_block_uncond(cont_block);
 			}
 				
 			// following code will be in cont block
-			ib_block = nullptr;
-
-			build.SetInsertPoint(cont_block);
+			begin_basic_block(cont_block);
 				
 			if (aif->type == A_SELECT) {
 				assert(else_block);
@@ -521,8 +617,8 @@ struct LLVM_gen {
 				assert(true_result->getType() == false_result->getType());
 				
 				llvm::PHINode* result = build.CreatePHI(true_result->getType(), 2, "_sel");
-				result->addIncoming(true_result, phi_then_block);
-				result->addIncoming(false_result, phi_else_block);
+				result->addIncoming(true_result,  phi_then_block->block);
+				result->addIncoming(false_result, phi_else_block->block);
 				return result;
 			}
 			return {};
@@ -533,20 +629,21 @@ struct LLVM_gen {
 		case A_FOR: {
 			auto* loop = (AST_loop*)ast;
 				
-			auto id = format_id(loop_count++);
+			auto id  = format_id(loop_count++);
 			auto cid = format_id(cont_count++);
 
-			auto* loop_cond_block = llvm::BasicBlock::Create(ctx, llvm::Twine("loop.") + id.str + ".cond", cur_func, ib_block); // loop->cond
-			auto* loop_body_block = llvm::BasicBlock::Create(ctx, llvm::Twine("loop.") + id.str + ".body", cur_func, ib_block); // loop->body
-			auto* loop_end_block  = llvm::BasicBlock::Create(ctx, llvm::Twine("loop.") + id.str + ".end" , cur_func, ib_block); // loop->end   need this block seperate from loop to allow for continue;
-			auto* cont_block      = llvm::BasicBlock::Create(ctx, llvm::Twine("cont.") + cid.str         , cur_func, ib_block); // code after loop
-				
-			// do-while is:               for & while is:
-			//   prev ---> loop --|         prev --|  loop --|
-			//               ^    v                |    ^    v
-			//               |   end               |    |   end
-			//               |    |                ---v |    |
-			//   cont <--  cond <--         cont <--  cond <--
+			auto* loop_cond_block = create_basic_block(llvm::Twine("loop.") + id.str + ".cond"); // loop->cond
+			auto* loop_body_block = create_basic_block(llvm::Twine("loop.") + id.str + ".body"); // loop->body
+			auto* loop_end_block  = create_basic_block(llvm::Twine("loop.") + id.str + ".end" ); // loop->end   need this block seperate from loop to allow for continue;
+			auto* cont_block      = create_basic_block(llvm::Twine("cont.") + cid.str         ); // code after loop
+
+			// do-while is:               for & while are:
+			//                                                     
+			//   cur_block --> loop --|     cur_block --|  loop --|
+			//                   ^    v                 |    ^    v
+			//                   |   end                |    |   end
+			//                   |    |                 ---v |    |
+			//        cont <-- cond <--           cont <-- cond <--
 
 			// break;    will jump to cont
 			// continue; will jump to end
@@ -554,53 +651,44 @@ struct LLVM_gen {
 			loop_blocks.push_back(LoopBlocks{ cont_block, loop_end_block });
 
 			{ // prev block
-				ib_block = ast->type == A_DO_WHILE ? loop_body_block : loop_cond_block;
-
 				if (loop->start)
 					codegen(loop->start);
 						
 				// do-while:     prev block branches to loop body
 				// for & while:  prev block branches to loop cond
-				build.CreateBr(ast->type == A_DO_WHILE ? loop_body_block : loop_cond_block);
+				end_block_uncond(ast->type == A_DO_WHILE ? loop_body_block : loop_cond_block);
 			}
 
 			{ // loop body
-				ib_block = loop_end_block;
-
-				build.SetInsertPoint(loop_body_block);
+				begin_basic_block(loop_body_block);
 						
 				codegen(loop->body);
-						
-				build.CreateBr(loop_end_block);
+				
+				end_block_uncond(loop_end_block);
 			}
 
 			{ // loop end
-				ib_block = loop_cond_block;
-
-				build.SetInsertPoint(loop_end_block);
+				begin_basic_block(loop_end_block);
 						
 				if (loop->end)
 					codegen(loop->end);
-						
-				build.CreateBr(loop_cond_block);
+				
+				end_block_uncond(loop_cond_block);
 			}
 				
 			// codegen cond last, since it does not matter for for & while loops
 			//  but for do-while loop the cond is allowed to access the loop body scope, and thus we need to codegen the body before the cond
 			//  or will crash since the local vars are not defined (alloca'd) in the IR yet
 			{ // loop cond
-				ib_block = ast->type == A_DO_WHILE ? cont_block : loop_body_block;
-
-				build.SetInsertPoint(loop_cond_block);
+				begin_basic_block(loop_cond_block);
 						
 				llvm::Value* cond = codegen(loop->cond);
-				build.CreateCondBr(cond, loop_body_block, cont_block);
+
+				end_block_cond(cond, loop_body_block, cont_block);
 			}
 				
 			// following code will be in cont block
-			ib_block = nullptr;
-
-			build.SetInsertPoint(cont_block);
+			begin_basic_block(cont_block);
 
 			loop_blocks.pop_back();
 
@@ -611,17 +699,15 @@ struct LLVM_gen {
 			if (loop_blocks.empty())
 				throw CompilerExcept{"error: break not inside of any loop", ast->src_tok->source};
 				
-			build.CreateBr( loop_blocks.back().break_block );
-			
+			end_block_uncond(loop_blocks.back().break_block);
 			unreachable();
 			return {};
 		}
 		case A_CONTINUE: {
 			if (loop_blocks.empty())
 				throw CompilerExcept{"error: continue not inside of any loop", ast->src_tok->source};
-				
-			build.CreateBr( loop_blocks.back().continue_block );
 			
+			end_block_uncond(loop_blocks.back().continue_block);
 			unreachable();
 			return {};
 		}
@@ -674,15 +760,12 @@ struct LLVM_gen {
 
 			llvm::Value* retval = nullptr;
 			for (auto* arg = (AST_callarg*)ret->args; arg != nullptr; arg = (AST_callarg*)arg->next) {
-				llvm::Value* var_ptr = local_var_ptr(ret, arg->decl);
-
 				llvm::Value* result = codegen(arg->expr);
 
-				build.CreateStore(result, var_ptr);
+				store_local_var(arg->decl, result);
 			}
-				
+			
 			return_ret_vars();
-
 			unreachable();
 			return {};
 		}

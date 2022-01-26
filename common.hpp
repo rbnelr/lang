@@ -116,6 +116,12 @@ struct BumpAllocator {
 		return nullptr;
 	}
 	inline char* alloc (size_t size, size_t align) {
+		// code would work fine with size=0, but maybe avoid returning a pointer to _no_ data
+		// esp. since it actually does align the pointer to align and
+		// potentially triggers new block allocation for no reason
+		if (size == 0)
+			return nullptr;
+
 		cur = (char*)align_ptr(cur, align);
 
 		char* ptr = cur;
@@ -129,8 +135,12 @@ struct BumpAllocator {
 
 	template <typename T>
 	T* alloc () {
-		return (T*)alloc(sizeof(T), alignof(T));
+		T* ptr = (T*)alloc(sizeof(T), alignof(T));
+		new (ptr) T ();
+		return ptr;
 	}
+
+	// WARNING: ctor not called due to performance concerns
 	template <typename T>
 	T* alloc_array (size_t count) {
 		return (T*)alloc(sizeof(T)*count, alignof(T));
@@ -233,4 +243,4 @@ inline void grow (std::vector<T>& vec, size_t min_sz) {
 	}
 }
 
-#define TRACY_REPEAT 4
+#define TRACY_REPEAT 100

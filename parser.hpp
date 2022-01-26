@@ -269,6 +269,7 @@ struct AST_vardecl : public AST {
 	bool         is_arg; // for IR gen, is this variable a function argument?
 	
 	llvm::Value* llvm_value;
+	size_t       llvm_next_id;
 };
 
 struct AST_var : public AST {

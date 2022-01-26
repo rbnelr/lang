@@ -1,24 +1,26 @@
-//n : int;
-//{
-//	a := 5;
-//	b := 10;
-//	n = a * b - 5;
-//}
-//
-//a := 0;
-//b := 1;
-//
-//printf("Fibbonaci: {i} {i}", a, b);
-//
-//for i := 0; i < n-2; i++ {
-//	c := a + b;
-//	printf(" {i}", c);
-//	a = b;
-//	b = c;
-//}
-//
-//printf("\n");
+n : int;
+{
+	a := 5;
+	b := 10;
+	n = a * b - 5;
+}
 
+a := 0;
+b := 1;
+
+printf("Fibbonaci: {i} {i}", a, b);
+
+for i := 0; i < n-2; i++ {
+	c := a + b;
+	printf(" {i}", c);
+	a = b;
+	//break;
+	b = c;
+}
+
+printf("\n");
+
+/*
 func test (a : int, b : int) = (ret : int) {
 	//a := 5;
 	//b := 3;
@@ -50,3 +52,4 @@ for i := 0; i<10; i++ {
 	printf("\n>> i: {i}\n", i);
 	test(i, 3);
 }
+*/

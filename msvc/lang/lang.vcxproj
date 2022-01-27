@@ -173,6 +173,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\..\common\tracy\Tracy.hpp" />
+    <ClInclude Include="..\..\allocators.hpp" />
     <ClInclude Include="..\..\builtins.hpp" />
     <ClInclude Include="..\..\common.hpp" />
     <ClInclude Include="..\..\llvm_disasm.hpp" />

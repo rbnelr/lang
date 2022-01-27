@@ -284,9 +284,9 @@ struct LLVM_gen {
 	llvm::Function* declare_function (AST_funcdef* fdef) {
 		// returns
 		llvm::Type* ret_ty = llvm::Type::getVoidTy(ctx);
-		assert(fdef->retc <= 1); // TODO: implememt multiple return values
+		assert(fdef->rets.count <= 1); // TODO: implememt multiple return values
 		
-		for (auto* ret = (AST_vardecl*)fdef->rets; ret != nullptr; ret = (AST_vardecl*)ret->next) {
+		for (auto* ret : fdef->rets) {
 			assert(ret->type != A_VARARGS);
 			ret_ty = map_type(ret->valtype);
 		}
@@ -295,10 +295,10 @@ struct LLVM_gen {
 		llvm::SmallVector<llvm::Type*, 16> args_ty;
 		bool vararg = false;
 		
-		for (auto* arg = (AST_vardecl*)fdef->args; arg != nullptr; arg = (AST_vardecl*)arg->next) {
+		for (auto* arg : fdef->args) {
 			if (arg->type == A_VARARGS) {
 				vararg = true;
-				assert(!arg->next);
+				break;
 			}
 			else {
 				args_ty.push_back(map_type(arg->valtype));
@@ -314,16 +314,18 @@ struct LLVM_gen {
 	#if PROFILE_DUPLICATE_FUNCS
 		llvm::Function* func;
 		if (_is_builtin)
-			func =  llvm::Function::Create(func_ty, llvm::Function::InternalLinkage, SR(fdef->ident), *modl);
+			func = llvm::Function::Create(func_ty, llvm::Function::InternalLinkage, SR(fdef->ident), *modl);
 		else
-			func =  llvm::Function::Create(func_ty, llvm::Function::InternalLinkage, llvm::Twine(prints("_%d_", _dupl_func_i)) + SR(fdef->ident), *modl);
+			func = llvm::Function::Create(func_ty, llvm::Function::InternalLinkage, llvm::Twine(prints("_%d_", _dupl_func_i)) + SR(fdef->ident), *modl);
 	#else
-		auto* func =  llvm::Function::Create(func_ty, llvm::Function::InternalLinkage, SR(fdef->ident), *modl);
+		auto* func = llvm::Function::Create(func_ty, llvm::Function::InternalLinkage, SR(fdef->ident), *modl);
 	#endif
 
 		// set argument names
 		unsigned i = 0;
-		for (auto* arg = (AST_vardecl*)fdef->args; arg != nullptr && arg->type != A_VARARGS; arg = (AST_vardecl*)arg->next) {
+		for (auto* arg : fdef->args) {
+			if (arg->type == A_VARARGS)
+				break;
 			arg->llvm_value = func->getArg(i++);
 			arg->llvm_value->setName(SR(arg->ident));
 		}
@@ -373,7 +375,7 @@ struct LLVM_gen {
 		
 		begin_basic_block(entry_block);
 
-		for (auto* ret = (AST_vardecl*)fdef->rets; ret != nullptr; ret = (AST_vardecl*)ret->next) {
+		for (auto* ret : fdef->rets) {
 			assert(ret->type != A_VARARGS);
 			
 			declare_local_var(ret);
@@ -402,13 +404,11 @@ struct LLVM_gen {
 
 	void return_ret_vars (AST* ast) {
 		// TODO: implement multiple returns
-		assert(cur_fdef->retc <= 1);
+		assert(cur_fdef->rets.count <= 1);
 
 		llvm::Instruction* I;
-		if (cur_fdef->retc == 1) {
-			auto* vardecl = (AST_vardecl*)cur_fdef->rets;
-			
-			auto* val = load_local_var(ast, vardecl);
+		if (cur_fdef->rets.count == 1) {
+			auto* val = load_local_var(ast, cur_fdef->rets[0]);
 
 			I = build.CreateRet(val);
 		}
@@ -581,7 +581,7 @@ struct LLVM_gen {
 		case A_BLOCK: {
 			auto* block = (AST_block*)ast;
 
-			for (auto* n=block->statements; n != nullptr; n = n->next) {
+			for (auto* n : block->statements) {
 				codegen(n);
 			}
 			return {};
@@ -738,49 +738,26 @@ struct LLVM_gen {
 			auto* call = (AST_call*)ast;
 			auto* fdef = (AST_funcdef*)call->fdef;
 
-			size_t non_vararg_argc = 0;
-			for (auto* arg = (AST_vardecl*)fdef->args; arg != nullptr; arg = (AST_vardecl*)arg->next) {
-				if (arg->type == A_VARARGS) break;
-				non_vararg_argc++;
-			}
-
 			llvm::SmallVector<llvm::Value*, 16> arg_values;
-			arg_values.resize(non_vararg_argc, nullptr);
+			arg_values.resize(call->resolved_args.count, nullptr);
 
-			for (auto* arg = (AST_callarg*)call->args; arg != nullptr; arg = (AST_callarg*)arg->next) {
-				llvm::Value* val = codegen(arg->expr);
-				
-				if (arg->decl->type == A_VARARGS) {
-					arg_values.push_back(val);
-				}
-				else {
-					assert(arg_values[arg->decli] == nullptr);
-					arg_values[arg->decli] = val;
-				}
-			}
+			for (size_t i=0; i<call->resolved_args.count; ++i)
+				arg_values[i] = codegen(call->resolved_args[i]);
 
-			size_t i = 0;
-			for (auto* arg = (AST_vardecl*)fdef->args; arg != nullptr && i < non_vararg_argc; arg = (AST_vardecl*)arg->next) {
-				if (!arg_values[i]) {
-					arg_values[i] = codegen(arg->init);
-				}
-				i++;
-			}
-
-			return build.CreateCall(fdef->llvm_func, arg_values, fdef->rets ? "_call" : "");
+			return build.CreateCall(fdef->llvm_func, arg_values, fdef->rets.count > 0 ? "_call" : "");
 		}
 			
 		case A_RETURN: {
 			auto* ret = (AST_return*)ast;
 
 			// TODO: implement multiple returns
-			assert(ret->argc <= 1);
+			assert(ret->args.count <= 1);
 
 			llvm::Value* retval = nullptr;
-			for (auto* arg = (AST_callarg*)ret->args; arg != nullptr; arg = (AST_callarg*)arg->next) {
-				llvm::Value* result = codegen(arg->expr);
+			for (size_t i=0; i<ret->args.count; ++i) {
+				llvm::Value* result = codegen(ret->args[i]->expr);
 
-				store_local_var(ret, arg->decl, result);
+				store_local_var(ret, ret->args[i]->decl, result);
 			}
 			
 			return_ret_vars(ret);

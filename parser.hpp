@@ -24,6 +24,7 @@ inline constexpr bool is_unary_postfix_op (TokenType tok) {
 	return tok >= T_INC && tok <= T_DEC;
 }
 
+/*
 //  0  T_QUESTIONMARK
 //  1  T_OR
 //  2  T_AND
@@ -37,6 +38,7 @@ inline constexpr bool is_unary_postfix_op (TokenType tok) {
 // 10  T_MUL, T_DIV, T_MOD
 // 11  T_NOT, T_BITNOT
 // 12  T_INC, T_DEC
+*/
 inline constexpr uint8_t BINARY_OP_PRECEDENCE[] = {
 	  8, // T_ADD
 	  8, // T_SUB
@@ -289,7 +291,6 @@ struct AST {
 
 	Token const* src_tok;
 
-	AST*         next;
 	Type         valtype;
 };
 
@@ -297,16 +298,15 @@ template <typename T>
 inline T* ast_alloc (ASTType type, Token const* tok) {
 	T* ret = g_allocator.alloc<T>();
 	
-	memset(ret, 0, sizeof(T));
+	//memset(ret, 0, sizeof(T));
 
 	ret->type     = type;
 	ret->src_tok  = tok;
-	ret->next     = nullptr;
 	return ret;
 }
 
 struct AST_block : public AST {
-	AST*         statements;
+	arrview<AST*> statements;
 };
 
 struct AST_literal : public AST {
@@ -316,82 +316,76 @@ struct AST_literal : public AST {
 struct AST_vardecl : public AST {
 	strview      ident;
 
-	AST*         init;   // initialization during declaration
+	AST*         init         = nullptr;   // initialization during declaration
 
-	bool         is_arg; // for IR gen, is this variable a function argument?
+	bool         is_arg      = false; // for IR gen, is this variable a function argument?
 	
-	llvm::Type*  llvm_type;
-	llvm::Value* llvm_value;
+	llvm::Type*  llvm_type    = nullptr;
+	llvm::Value* llvm_value   = nullptr;
 };
 
 struct AST_var : public AST {
 	strview      ident;
-	AST_vardecl* decl;
+	AST_vardecl* decl = nullptr;
 };
 
 struct AST_funcdef : public AST {
-	bool         is_builtin;
-
 	strview      ident;
 	
-	// number of args in funcdecl (including 1 for "vararg" arg)
-	// NOTE: that this does not always match the number of callargs with varargs
-	size_t       argc;
-	AST*         args;
+	arrview<AST_vardecl*> args;
+	arrview<AST_vardecl*> rets;
 
-	size_t       retc;
-	AST*         rets;
+	AST*         body         = nullptr;
+	
+	void*        builtin_func_ptr = nullptr;
 
-	AST*         body;
-
-
-	void*        builtin_func_ptr;
-
-	llvm::Function* llvm_func;
+	llvm::Function* llvm_func = nullptr;
 };
 
 struct AST_callarg : public AST {
 	strview      ident; // empty if positional argument
-	AST*         expr;
+	AST*         expr       = nullptr;
 
-	AST_vardecl* decl;
-	size_t       decli; // index of vardecl in funcdecl
+	AST_vardecl* decl       = nullptr;
 };
 struct AST_call : public AST {
 	strview      ident;
 
-	size_t       argc;
-	AST*         args;
+	// source code args
+	arrview<AST_callarg*> args;
 
-	AST*         fdef; // either points to AST_funcdef or AST_funcdef_builtin, check via AST.type
+	AST*         fdef       = nullptr; // either points to AST_funcdef or AST_funcdef_builtin, check via AST.type
+
+	// resolved args, ie. list of expressions each corresponding to one arg in fdef->args
+	// where 0-n expressions can appear in place of the last varargs arg
+	// for non-provided default args  AST_vardecl->init is the expression
+	arrview<AST*> resolved_args;
 };
 
 struct AST_if : public AST {
-	AST*         cond;
-	AST*         if_body;
-	AST*         else_body;
+	AST*         cond      = nullptr;
+	AST*         if_body   = nullptr;
+	AST*         else_body = nullptr;
 };
 struct AST_loop : public AST {
-	AST*         start;
-	AST*         cond;
-	AST*         end;
-	AST*         body;
+	AST*         start     = nullptr;
+	AST*         cond      = nullptr;
+	AST*         end       = nullptr;
+	AST*         body      = nullptr;
 };
 
 struct AST_unop : public AST {
 	OpType       op;
-	AST*         operand;
+	AST*         operand   = nullptr;
 };
 struct AST_binop : public AST {
 	OpType       op;
-	AST*         lhs;
-	AST*         rhs;
+	AST*         lhs       = nullptr;
+	AST*         rhs       = nullptr;
 };
 
 struct AST_return : public AST {
-	OpType       op;
-	size_t       argc;
-	AST*         args;
+	arrview<AST_callarg*> args;
 };
 
 // TODO: fix this
@@ -442,7 +436,7 @@ inline void dbg_print (AST* node, int depth=0) {
 			
 		case A_BLOCK: { auto* block = (AST_block*)node;
 			printf(" (\n");
-			for (auto* n=block->statements; n != nullptr; n = n->next)
+			for (auto* n : block->statements)
 				dbg_print(n, depth+1);
 			indent(depth); printf(")\n");
 		} break;
@@ -484,23 +478,16 @@ inline void dbg_print (AST* node, int depth=0) {
 
 			depth++;
 
-			if (f->args) {
-				indent(depth); printf("args: (\n");
-				for (auto* n=f->args; n != nullptr; n = n->next)
-					dbg_print(node, depth+1);
-				indent(depth); printf(")\n");
-			} else {
-				indent(depth); printf("args: ()\n");
-			}
-
-			if (f->rets) {
-				indent(depth); printf("rets: (\n");
-				for (auto* n=f->rets; n != nullptr; n = n->next)
-					dbg_print(node, depth+1);
-				indent(depth); printf(")\n");
-			} else {
-				indent(depth); printf("rets: ()\n");
-			}
+			
+			indent(depth); printf("args: (\n");
+			for (auto* arg : f->args)
+				dbg_print(arg, depth+1);
+			indent(depth); printf(")\n");
+			
+			indent(depth); printf("rets: (\n");
+			for (auto* ret : f->rets)
+				dbg_print(ret, depth+1);
+			indent(depth); printf(")\n");
 
 			indent(depth); printf("(\n");
 			dbg_print(f->body, depth+1);
@@ -520,14 +507,14 @@ inline void dbg_print (AST* node, int depth=0) {
 		case A_CALL: { auto* call = (AST_call*)node;
 			std::string str(call->ident);
 			printf(" %s (\n", str.c_str());
-			for (auto* arg=call->args; arg != nullptr; arg = arg->next)
+			for (auto* arg : call->args)
 				dbg_print(arg, depth+1);
 			indent(depth); printf(")\n");
 		} break;
 		
 		case A_RETURN: { auto* ret = (AST_return*)node;
 			printf(" (\n");
-			for (auto* arg=ret->args; arg != nullptr; arg = arg->next)
+			for (auto* arg : ret->args)
 				dbg_print(arg, depth+1);
 			indent(depth); printf(")\n");
 		} break;
@@ -556,16 +543,12 @@ struct Parser {
 		tok++;
 	}
 
-	template <typename FUNC>
-	size_t comma_seperated_list (AST** link, FUNC element, TokenType endtok) {
-		*link = nullptr;
+	template <typename T, typename FUNC>
+	arrview<T> comma_seperated_list (FUNC element, TokenType endtok) {
+		smallvec<T, 32> tmp;
 
-		size_t count = 0;
 		while (tok->type != endtok) {
-			*link = element();
-
-			link = &(*link)->next;
-			count++;
+			tmp.push( element() );
 
 			if (tok->type == T_COMMA) {
 				tok++;
@@ -574,7 +557,10 @@ struct Parser {
 				throw_error_after("syntax error: ',' or ')' expected!", tok[-1]); // TODO: use endtok
 			}
 		}
-		return count;
+
+		T* arr = g_allocator.alloc_array<T>(tmp.count);
+		memcpy(arr, tmp.data, tmp.count * sizeof(T));
+		return { arr, tmp.count };
 	}
 
 	//    (<expression>)                               -> Parenthesized expression 
@@ -702,7 +688,7 @@ struct Parser {
 
 	//    <varname> :              -> variable declaration with inferred type (must be followed by  = <expression>  to infer the type from)
 	// or <varname> : <typename>   -> variable declaration with explicit type
-	AST* var_decl () {
+	AST_vardecl* var_decl () {
 		if (!(tok[0].type == T_IDENTIFIER && tok[1].type == T_COLON))
 			throw_error("syntax error: expected variable declaration", *tok);
 
@@ -734,7 +720,26 @@ struct Parser {
 			tok++;
 			var->init = expression(0);
 		}
-		return (AST*)var;
+		return var;
+	}
+	
+	AST_vardecl* _const_vardecl () {
+		auto* decl = (AST_vardecl*)var_decl();
+
+		if (decl->init) {
+			// TOOD: implement at const-foldable expression for default args at the very least
+			// better yet allow things like  sqrt(5)  or even custom compile-time const functions to be called as well
+			// or just const values in general (const globals or const locally captured vars)
+			// the question is where the const folding happens -> wait until I get to actually implementing compile-time execution
+			if (decl->init->type != A_LITERAL)
+				throw_error("syntax error: only literals allowed as default argument values (for now)", *decl->init->src_tok);
+
+			// TODO: do this now to simply code during resolving (after funcdef prescan we need to know arg/ret types)
+			//       later we will need a more structured way to handle dependencies between struct members/func args and their use sites
+			decl->valtype = decl->init->valtype;
+		}
+
+		return decl;
 	}
 
 	//    <expression>
@@ -771,7 +776,7 @@ struct Parser {
 
 	//    <expression>
 	// or <argname> = <expression>
-	AST* call_arg (TokenType endtok) {
+	AST_callarg* call_arg (TokenType endtok) {
 		auto* arg = ast_alloc<AST_callarg>(A_CALLARG, tok);
 		arg->ident = strview();
 
@@ -781,29 +786,29 @@ struct Parser {
 		}
 
 		arg->expr = expression(0);
-		return (AST*)arg;
+		return arg;
 	}
 
 	// (<call_arg>, <call_arg> etc.)
-	size_t call_args (AST** args) {
+	arrview<AST_callarg*> call_args () {
 		assert(tok->type == T_PAREN_OPEN);
 		tok++;
 
-		auto count = comma_seperated_list(args, [this] () {
+		auto arr = comma_seperated_list<AST_callarg*>([this] () {
 			return call_arg(T_PAREN_CLOSE);
 		}, T_PAREN_CLOSE);
 
 		tok++; // T_PAREN_CLOSE
-		return count;
+		return arr;
 	}
 	// <call_arg>, <call_arg> etc.
-	size_t return_args (AST** args) {
+	arrview<AST_callarg*> return_args () {
 
-		auto count = comma_seperated_list(args, [this] () {
+		auto arr = comma_seperated_list<AST_callarg*>([this] () {
 			return call_arg(T_SEMICOLON);
 		}, T_SEMICOLON);
 
-		return count;
+		return arr;
 	}
 
 	// <funcname><call_args>
@@ -812,7 +817,7 @@ struct Parser {
 		call->ident = tok->source.text();
 		tok++;
 
-		call->argc = call_args(&call->args);
+		call->args = call_args();
 
 		return (AST*)call;
 	}
@@ -821,7 +826,7 @@ struct Parser {
 	AST* return_statement () {
 		auto* ast = ast_alloc<AST_return>(A_RETURN, tok++);
 
-		ast->argc = return_args(&ast->args);
+		ast->args = return_args();
 
 		eat_semicolon();
 		return ast;
@@ -896,35 +901,16 @@ struct Parser {
 		return (AST*)loop;
 	}
 	
-	AST* _const_vardecl () {
-		auto* decl = (AST_vardecl*)var_decl();
-
-		if (decl->init) {
-			// TOOD: implement at const-foldable expression for default args at the very least
-			// better yet allow things like  sqrt(5)  or even custom compile-time const functions to be called as well
-			// or just const values in general (const globals or const locally captured vars)
-			// the question is where the const folding happens -> wait until I get to actually implementing compile-time execution
-			if (decl->init->type != A_LITERAL)
-				throw_error("syntax error: only literals allowed as default argument values (for now)", *decl->init->src_tok);
-
-			// TODO: do this now to simply code during resolving (after funcdef prescan we need to know arg/ret types)
-			//       later we will need a more structured way to handle dependencies between struct members/func args and their use sites
-			decl->valtype = decl->init->valtype;
-		}
-
-		return (AST*)decl;
-	}
-
-	size_t fdef_arglist (AST** link) {
+	arrview<AST_vardecl*> fdef_arglist () {
 		assert(tok->type == T_PAREN_OPEN);
 		tok++;
 
-		auto count = comma_seperated_list(link, [this] () {
+		auto arr = comma_seperated_list<AST_vardecl*>([this] () {
 			return _const_vardecl();
 		}, T_PAREN_CLOSE);
 
 		tok++; // T_PAREN_CLOSE
-		return count;
+		return arr;
 	}
 
 	//    func <funcname> (<arg_decl>, <arg_decl>, ...) <block>
@@ -941,18 +927,17 @@ struct Parser {
 		if (tok->type != T_PAREN_OPEN)
 			throw_error_after("syntax error: '(' expected after function identifer!", tok[-1]);
 
-		func->argc = fdef_arglist(&func->args);
+		func->args = fdef_arglist();
 
 		// implicit (void) return list
 		if (tok->type != T_ASSIGN) {
-			func->retc = 0;
-			func->rets = nullptr;
+			// rets already empty
 		}
 		// explicit return list
 		else {
 			tok++;
 
-			func->retc = fdef_arglist(&func->rets);
+			func->rets = fdef_arglist();
 		}
 
 		func->body = block();
@@ -1023,6 +1008,24 @@ struct Parser {
 		}
 	}
 
+	AST* _block (Token* blocktok, TokenType endtok) {
+		auto* block = ast_alloc<AST_block>(A_BLOCK, blocktok);
+
+		smallvec<AST*, 16> statements;
+
+		while (tok->type != endtok) {
+			auto* s = statement();
+			if (s)
+				statements.push(s);
+		}
+
+		auto* arr = g_allocator.alloc_array<AST*>(statements.count);
+		memcpy(arr, statements.data, statements.count * sizeof(statements[0]));
+		block->statements = { arr, statements.count };
+
+		return block;
+	}
+
 	// {
 	//   <statement>
 	//   <statement>
@@ -1032,45 +1035,24 @@ struct Parser {
 		if (tok->type != T_BLOCK_OPEN)
 			throw_error("syntax error: '{' expected", *tok);
 
-		auto* block = ast_alloc<AST_block>(A_BLOCK, tok++);
+		auto* block = _block(tok++, T_BLOCK_CLOSE);
 
-		block->statements = nullptr;
+		if (tok->type != T_BLOCK_CLOSE)
+			throw_error("syntax error, '}' expected", *tok);
 
-		AST** link = &block->statements;
-		while (tok->type != T_BLOCK_CLOSE) {
-			AST* statm = statement();
-			if (statm) {
-				*link = statm;
-				link = &statm->next;
-			}
-		}
-
-		//if (tok->type != T_BLOCK_CLOSE)
-		//	throw_error("syntax error, '}' expected", *tok);
 		tok++;
-		return (AST*)block;
+		return block;
 	}
 
 	// <statement>
 	// <statement>
 	// ...
 	AST* file () {
-		auto* block = ast_alloc<AST_block>(A_BLOCK, tok);
-		block->statements = nullptr;
-
-		AST** link = &block->statements;
-		while (tok->type != T_EOF) {
-			AST* statm = statement();
-
-			if (statm) {
-				*link = statm;
-				link = &statm->next;
-			}
-		}
+		auto* block = _block(tok, T_EOF);
 
 		if (tok->type != T_EOF)
 			throw_error("syntax error: end of file expected", *tok);
 
-		return (AST*)block;
+		return block;
 	}
 };

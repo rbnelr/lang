@@ -114,10 +114,8 @@ struct SemanticAnalysis {
 		{ // add a declaration for a main function (global space of the file itself represents the main function)
 			AST_funcdef* module_main = ast_alloc<AST_funcdef>(A_FUNCDEF, root->src_tok);
 			module_main->ident = "main";
-			module_main->retc = 0;
-			module_main->rets = nullptr;
-			module_main->argc = 0;
-			module_main->args = nullptr;
+			module_main->rets = {};
+			module_main->args = {};
 			module_main->body = root;
 
 			funcs.emplace_back(module_main);
@@ -305,7 +303,7 @@ struct SemanticAnalysis {
 	}
 	
 	void prescan_block_for_funcs (AST_block* block) {
-		for (auto* n=block->statements; n != nullptr; n = n->next) {
+		for (auto* n : block->statements) {
 			if (n->type == A_FUNCDEF) {
 				auto* fdef = (AST_funcdef*)n;
 
@@ -341,27 +339,28 @@ struct SemanticAnalysis {
 		}
 	}
 
-	void resolve_funcdecl_args (AST_vardecl* declarg) {
+	void resolve_funcdecl_args (arrview<AST_vardecl*> args) {
+		
 		bool default_args = false;
+		
+		for (size_t i=0; i<args.count; ++i) {
+			auto& arg = args[i];
 
-		while (declarg) {
-			if (declarg->type == A_VARARGS) {
-				if (declarg->next != nullptr)
-					throw CompilerExcept{"error: variadic argument can only appear on the end of the argument list", declarg->src_tok->source};
+			if (arg->type == A_VARARGS) {
+				if (i != args.count-1)
+					throw CompilerExcept{"error: variadic argument can only appear on the end of the argument list", arg->src_tok->source};
 				break;
 			}
 
-			if (declarg->init) {
+			if (arg->init) {
 				default_args = true;
 			}
 			else {
 				if (default_args)
-					throw CompilerExcept{"error: default arguments can only appear after all positional arguments", declarg->src_tok->source};
+					throw CompilerExcept{"error: default arguments can only appear after all positional arguments", arg->src_tok->source};
 			}
 
-			resolve_vardecl(declarg);
-
-			declarg = (AST_vardecl*)declarg->next;
+			resolve_vardecl(arg);
 		}
 	}
 	
@@ -371,90 +370,120 @@ struct SemanticAnalysis {
 
 		if (declarg->type != A_VARARGS && callarg->valtype != declarg->valtype)
 			throw CompilerExcept{"error: argument type mismatch", callarg->src_tok->source};
+
+		callarg->decl = declarg;
 	}
-	void resolve_call_args (AST* call, AST_callarg* callarg, AST_vardecl* declarg, size_t declargc, bool returns=false) {
+	void resolve_call_args (AST* op, arrview<AST_callarg*> callargs, arrview<AST_vardecl*> declargs) {
+		size_t non_vararg_count = 0;
+		if (declargs.count > 0)
+			non_vararg_count = declargs[declargs.count-1]->type == A_VARARGS ? declargs.count-1 : declargs.count;
+
 		struct Arg {
 			AST_vardecl* decl; // funcdef argdecl this callarg is matched to
-			bool         required; // true unless it is a default argument or a vararg
-			bool         provided; // true if it was specified positionally or 
+			AST*         expr;
 		};
-		std::vector<Arg> declargs;
-		declargs.resize(declargc);
+		smallvec<Arg, 32> args(non_vararg_count);
 
 		//// collect decl args and start them out not provided
 
-		size_t decli = 0;
-		for (AST_vardecl* arg=declarg; arg; arg = (AST_vardecl*)arg->next) {
-			if (returns && arg->type == A_VARARGS)
-				throw CompilerExcept{"error: variadic argument no allowed for return values", arg->src_tok->source};
+		for (size_t i = 0; i < declargs.count; ++i) {
+			if (op->type == A_RETURN && declargs[i]->type == A_VARARGS)
+				throw CompilerExcept{"error: variadic argument no allowed for return values", declargs[i]->src_tok->source};
 
-			declargs[decli].decl = arg;
-			// variables do not required if they are default args or if they are varargs
-			declargs[decli].required = arg->type != A_VARARGS && !arg->init;
-			declargs[decli].provided = false;
-			decli++;
+			if (declargs[i]->type == A_VARARGS)
+				break;
+
+			args[i].decl = declargs[i];
+			args[i].expr = nullptr;
 		}
 
 		//// positional args
-		decli = 0;
-		for (; callarg && callarg->ident.empty(); callarg = (AST_callarg*)callarg->next) {
+		size_t i = 0;
 
-			if (!declarg) // no more args in func
-				throw CompilerExcept{"error: too many arguments", callarg->src_tok->source};
+		for (; i < callargs.count && callargs[i]->ident.empty(); ++i) {
+			if (i >= declargs.count) // no more args in func
+				throw CompilerExcept{"error: too many arguments", callargs[i]->src_tok->source};
 
-			callarg->decl = declarg;
-			callarg->decli = decli;
+			if (declargs[i]->type == A_VARARGS) {
+				auto* vararg_decl = declargs[i];
 
-			declargs[decli].provided = true;
+				for (; i < callargs.count; ++i) {
+					assert(callargs[i]->ident.empty());
 
-			resolve_callarg(callarg, declarg);
+					resolve_callarg(callargs[i], vararg_decl);
 
-			if (declarg->type != A_VARARGS) {
-				declarg = (AST_vardecl*)declarg->next;
-				decli++;
+					args.push().expr = callargs[i]->expr;
+				}
+				break;
 			}
+
+			resolve_callarg(callargs[i], declargs[i]);
+
+			args[i].expr = callargs[i]->expr;
+		}
+
+		for (; i < callargs.count && callargs[i]->ident.empty(); ++i) {
+			if (i >= declargs.count) // no more args in func
+				throw CompilerExcept{"error: too many arguments", callargs[i]->src_tok->source};
+
+			if (declargs[i]->type == A_VARARGS) {
+				args.push();
+			}
+
+			resolve_callarg(callargs[i], declargs[i]);
+
+			args[i].expr = callargs[i]->expr;
 		}
 		
 		//// named args
 
-		auto find_named_arg = [] (std::vector<Arg>& declargs, AST_callarg* callarg) {
-			for (size_t i=0; i<declargs.size(); ++i) {
-				if (declargs[i].decl->ident == callarg->ident)
+		auto find_named_arg = [&] (AST_callarg* callarg) {
+			for (size_t i=0; i<args.count; ++i) {
+				if (args[i].decl->ident == callarg->ident)
 					return i;
 			}
 			throw CompilerExcept{"error: unknown argument", callarg->src_tok->source};
 		};
-
-		for (; callarg; callarg = (AST_callarg*)callarg->next) {
+		
+		for (; i < callargs.count; ++i) {
 			
-			if (callarg->ident.empty())
-				throw CompilerExcept{"error: named arguments can only appear after all positional arguments", callarg->src_tok->source};
+			if (callargs[i]->ident.empty())
+				throw CompilerExcept{"error: named arguments can only appear after all positional arguments", callargs[i]->src_tok->source};
 
-			decli = find_named_arg(declargs, callarg);
+			size_t argi = find_named_arg(callargs[i]);
 
-			if (declargs[decli].decl->type == A_VARARGS)
-				throw CompilerExcept{"error: variadic arguments cannot be assigned directly", callarg->src_tok->source};
+			if (args[argi].decl->type == A_VARARGS)
+				throw CompilerExcept{"error: variadic arguments cannot be assigned directly", callargs[i]->src_tok->source};
 
-			if (declargs[decli].provided)
-				throw CompilerExcept{"error: argument already set in call", callarg->src_tok->source}; // TODO: specify where
+			if (args[argi].expr)
+				throw CompilerExcept{"error: argument already set in call", callargs[i]->src_tok->source}; // TODO: specify where
 			
-			declargs[decli].provided = true;
+			resolve_callarg(callargs[i], args[argi].decl);
 
-			callarg->decli = decli;
-			callarg->decl = declargs[decli].decl;
-
-			resolve_callarg(callarg, callarg->decl);
+			args[argi].expr = callargs[i]->expr;
 		}
 
-		if (returns) {
+		if (op->type == A_RETURN) {
 			// return args can be set like variables outside of the return statement
 			// thus we can't check if they are actually provided
 		}
 		else {
+			assert(op->type == A_CALL);
+			auto* call = (AST_call*)op;
+
+			auto* resolved_args = g_allocator.alloc_array<AST*>(args.count);
+			call->resolved_args = { resolved_args, args.count };
+
 			// check that all callargs are provided
-			for (size_t i=0; i<declargs.size(); ++i) {
-				if (declargs[i].required && !declargs[i].provided)
-					throw CompilerExcept{"error: required argument not provided", call->src_tok->source}; // TODO: specify which argument
+			for (size_t i=0; i<args.count; ++i) {
+				if (args[i].expr == nullptr) {
+					if (args[i].decl->init == nullptr)
+						throw CompilerExcept{"error: required argument not provided", call->src_tok->source}; // TODO: specify which argument
+					
+					args[i].expr = args[i].decl->init;
+				}
+
+				resolved_args[i] = args[i].expr;
 			}
 		}
 	}
@@ -577,7 +606,7 @@ struct SemanticAnalysis {
 			prescan_block_for_funcs(block);
 
 			// handle body block without opening a scope for it, so that vars are visible to cond
-			for (auto* n=block->statements; n != nullptr; n = n->next)
+			for (auto* n : block->statements)
 				recurse(n);
 
 			condition_expr(loop->cond); // can access vars and funcs declared inside the loop body
@@ -598,7 +627,7 @@ struct SemanticAnalysis {
 
 			prescan_block_for_funcs(block); // can call functions before they are declared from anywhere inside the block
 
-			for (auto* n=block->statements; n != nullptr; n = n->next)
+			for (auto* n : block->statements)
 				recurse(n);
 
 			stack.reset_scope(old_scope);
@@ -610,8 +639,8 @@ struct SemanticAnalysis {
 			funcs_stack.emplace_back(fdef);
 			auto func_scope = stack.push_scope(true);
 
-			resolve_funcdecl_args((AST_vardecl*)fdef->args);
-			resolve_funcdecl_args((AST_vardecl*)fdef->rets);
+			resolve_funcdecl_args(fdef->args);
+			resolve_funcdecl_args(fdef->rets);
 
 			recurse(fdef->body);
 
@@ -625,16 +654,16 @@ struct SemanticAnalysis {
 			stack.resolve_func_call(call);
 			auto* fdef = (AST_funcdef*)call->fdef;
 
-			resolve_call_args(call, (AST_callarg*)call->args, (AST_vardecl*)fdef->args, fdef->argc);
+			resolve_call_args(call, call->args, fdef->args);
 
-			call->valtype = fdef->retc > 0 ? fdef->rets->valtype : VOID;
+			call->valtype = fdef->rets.count > 0 ? fdef->rets[0]->valtype : VOID;
 		} break;
 
 		case A_RETURN: {
 			auto* ret = (AST_return*)ast;
 			auto* fdef = funcs_stack.back();
 
-			resolve_call_args(ret, (AST_callarg*)ret->args, (AST_vardecl*)fdef->rets, fdef->retc, true);
+			resolve_call_args(ret, ret->args, fdef->rets);
 		} break;
 
 		INVALID_DEFAULT;

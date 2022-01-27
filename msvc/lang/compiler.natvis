@@ -1,5 +1,29 @@
 <?xml version="1.0" encoding="utf-8"?>
 <AutoVisualizer xmlns="http://schemas.microsoft.com/vstudio/debugger/natvis/2010">
+
+	<Type Name="arrview&lt;*&gt;">
+		<DisplayString Condition="count == 0">empty</DisplayString>
+		<DisplayString Condition="count != 0">{{ count={count} }}</DisplayString>
+		<Expand>
+			<Item Name="[size]">count</Item>
+			<ArrayItems>
+				<Size>count</Size>
+				<ValuePointer>data</ValuePointer>
+			</ArrayItems>
+		</Expand>
+	</Type>
+	<Type Name="smallvec&lt;*&gt;">
+		<DisplayString Condition="count == 0">empty</DisplayString>
+		<DisplayString Condition="count != 0">{{ count={count} }}</DisplayString>
+		<Expand>
+			<Item Name="[size]">count</Item>
+			<ArrayItems>
+				<Size>count</Size>
+				<ValuePointer>data</ValuePointer>
+			</ArrayItems>
+		</Expand>
+	</Type>
+	
 	<Type Name="AST">
 		<DisplayString>{type,en} ({source})</DisplayString>
 	</Type>

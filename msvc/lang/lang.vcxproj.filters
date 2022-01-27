@@ -85,6 +85,7 @@
     <ClInclude Include="..\..\llvm_sec_mem_manager.hpp">
       <Filter>llvm</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\allocators.hpp" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="util">

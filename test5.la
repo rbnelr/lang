@@ -7,6 +7,7 @@ fvoid2(ret=false, a="a2");
 fvoid2("a3", ret=true);
 fvoid2(b="b4", a="a4");
 
+//fvoid("a1", "b1", "c1"); // error: too many arguments.
 //fvoid2(ret=true, "a3"); // error: named arguments can only appear after all positional arguments.
 //fvoid2(c=true, "a3"); // error: unknown argument.
 //fvoid2("a1", a="a2"); // error: argument already set in call.
@@ -24,7 +25,7 @@ func fvoid2 (a : str, b := "b", ret := false) = () {
 	}
 	printf("{s}\n", b);
 }
-
+ 
 //func fvoid3 (b := "b", a : str) {} // error: default arguments can only appear after all positional arguments.
 //func fvoid4 (a : str, a := "a_again") {} // error: identifer already declared in this scope.
 

@@ -316,9 +316,8 @@ struct AST_literal : public AST {
 struct AST_vardecl : public AST {
 	strview      ident;
 
-	AST*         init;       // initialization during declaration
+	AST*         init;   // initialization during declaration
 
-	size_t       var_id;     // for IR gen
 	bool         is_arg; // for IR gen, is this variable a function argument?
 	
 	llvm::Type*  llvm_type;
@@ -334,7 +333,9 @@ struct AST_funcdef : public AST {
 	bool         is_builtin;
 
 	strview      ident;
-
+	
+	// number of args in funcdecl (including 1 for "vararg" arg)
+	// NOTE: that this does not always match the number of callargs with varargs
 	size_t       argc;
 	AST*         args;
 
@@ -344,9 +345,7 @@ struct AST_funcdef : public AST {
 	AST*         body;
 
 
-	void*        builti_func_ptr;
-
-	size_t       codegen_funcid;
+	void*        builtin_func_ptr;
 
 	llvm::Function* llvm_func;
 };
@@ -356,7 +355,7 @@ struct AST_callarg : public AST {
 	AST*         expr;
 
 	AST_vardecl* decl;
-	size_t       decli;
+	size_t       decli; // index of vardecl in funcdecl
 };
 struct AST_call : public AST {
 	strview      ident;

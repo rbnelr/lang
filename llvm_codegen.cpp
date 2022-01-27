@@ -262,7 +262,7 @@ struct LLVM_gen {
 	}
 
 ////
-	void veryfy_function (AST_funcdef* fdef) {
+	void verify_function (AST_funcdef* fdef) {
 		llvm::SmallString<128> msg;
 		llvm::raw_svector_ostream OS(msg);
 
@@ -305,10 +305,6 @@ struct LLVM_gen {
 			}
 
 			arg->is_arg = true;
-			if (arg->init) {
-				// TODO
-				assert(false);
-			}
 		}
 
 		auto* func_ty = llvm::FunctionType::get(ret_ty, args_ty, vararg);
@@ -381,6 +377,11 @@ struct LLVM_gen {
 			assert(ret->type != A_VARARGS);
 			
 			declare_local_var(ret);
+
+			if (ret->init) {
+				llvm::Value* val = codegen(ret->init);
+				store_local_var(ret->init, ret, val);
+			}
 		}
 
 		codegen(fdef->body);
@@ -393,7 +394,7 @@ struct LLVM_gen {
 		build.CreateBr(entry_block);
 
 		//// finish function
-		veryfy_function(fdef);
+		verify_function(fdef);
 
 		alloca_block = nullptr;
 		cur_fdef = nullptr;
@@ -737,40 +738,36 @@ struct LLVM_gen {
 			auto* call = (AST_call*)ast;
 			auto* fdef = (AST_funcdef*)call->fdef;
 
-			// collect function args
-			struct Argdecl {
-				AST_vardecl* decl;
-				bool         set;
-				size_t       callarg;
-			};
-			std::vector<Argdecl> declargs;
-			declargs.reserve(32);
-
+			size_t non_vararg_argc = 0;
 			for (auto* arg = (AST_vardecl*)fdef->args; arg != nullptr; arg = (AST_vardecl*)arg->next) {
-				declargs.push_back({ arg, false, (size_t)-1 });
+				if (arg->type == A_VARARGS) break;
+				non_vararg_argc++;
 			}
 
-			// generate IR for callargs first (move into temps)
-			std::vector<llvm::Value*> callargs;
-			callargs.reserve(32);
+			llvm::SmallVector<llvm::Value*, 16> arg_values;
+			arg_values.resize(non_vararg_argc, nullptr);
 
-			bool vararg = false;
-			size_t vararg_i = 0;
-
-			size_t calli = 0;
 			for (auto* arg = (AST_callarg*)call->args; arg != nullptr; arg = (AST_callarg*)arg->next) {
-				callargs.push_back( codegen(arg->expr) );
-
+				llvm::Value* val = codegen(arg->expr);
+				
 				if (arg->decl->type == A_VARARGS) {
-					vararg = true;
-					vararg_i = calli;
+					arg_values.push_back(val);
 				}
-
-				declargs[arg->decli].set = true;
-				declargs[arg->decli].callarg = calli++;
+				else {
+					assert(arg_values[arg->decli] == nullptr);
+					arg_values[arg->decli] = val;
+				}
 			}
 
-			return build.CreateCall(fdef->llvm_func, callargs, fdef->rets ? "_call" : "");
+			size_t i = 0;
+			for (auto* arg = (AST_vardecl*)fdef->args; arg != nullptr && i < non_vararg_argc; arg = (AST_vardecl*)arg->next) {
+				if (!arg_values[i]) {
+					arg_values[i] = codegen(arg->init);
+				}
+				i++;
+			}
+
+			return build.CreateCall(fdef->llvm_func, arg_values, fdef->rets ? "_call" : "");
 		}
 			
 		case A_RETURN: {

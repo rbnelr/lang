@@ -20,50 +20,41 @@ template<> struct std::hash<ScopedIdentifer> {
 struct IdentiferStack {
 	// scope_idx, identifer -> vardef or funcdef AST
 	std::unordered_map<ScopedIdentifer, AST*> ident_map;
-
-	std::vector<strview> vars_stack;
-	std::vector<strview> funcs_stack;
+	std::vector<strview>                      ident_stack;
 
 	size_t scope_id = 0;
 
 	struct Scope {
-		// index of first variable of each scope in <vars_stack>
-		size_t vars_base;
-		// index of first variable of each scope in <funcs_stack>
-		size_t funcs_base;
-		// 
-		size_t func_vars_base;
+		// index of first ident of each scope in <ident_stack>
+		// to be able to remove identifiers when the scope is reset
+		size_t ident_base;
+		// innermost scope that corresponds to a function
+		// to enfore functions only being able to access variables outside their scope
+		// TODO: allow to capture these variables
+		// (but they can access functions outside their scope)
 		size_t func_scope_id;
 	};
-	Scope cur_scope = {0,0,0};
+	Scope cur_scope = {0,0};
 
 	Scope push_scope (bool func_scope=false) {
 		Scope old_scope = cur_scope;
 
 		scope_id++;
 
-		cur_scope.vars_base  = vars_stack .size();
-		cur_scope.funcs_base = funcs_stack.size();
+		cur_scope.ident_base = ident_stack.size();
 
-		if (func_scope) {
-			cur_scope.func_vars_base = cur_scope.vars_base;
+		if (func_scope)
 			cur_scope.func_scope_id = scope_id;
-		}
 
 		return old_scope;
 	}
-	void reset_scope (Scope& old_scope, bool func_scope=false) {
+	void reset_scope (Scope& old_scope) {
 		assert(scope_id > 0);
 
-		for (size_t i=cur_scope.vars_base; i<vars_stack.size(); ++i) {
-			ident_map.erase({ scope_id, vars_stack[i] });
+		for (size_t i=cur_scope.ident_base; i<ident_stack.size(); ++i) {
+			ident_map.erase({ scope_id, ident_stack[i] });
 		}
-		for (size_t i=cur_scope.funcs_base; i<funcs_stack.size(); ++i) {
-			ident_map.erase({ scope_id, funcs_stack[i] });
-		}
-
-		vars_stack .resize(cur_scope.vars_base);
-		funcs_stack.resize(cur_scope.funcs_base);
+		ident_stack.resize(cur_scope.ident_base);
 
 		scope_id--;
 		cur_scope = old_scope;
@@ -73,17 +64,8 @@ struct IdentiferStack {
 		auto res = ident_map.try_emplace(ScopedIdentifer{ scope_id, ident }, ast);
 		if (!res.second)
 			throw CompilerExcept{"error: identifer already declared in this scope", ast->src_tok->source}; // TODO: print declaration of that identifer
-	}
-
-	void declare_var (AST_vardecl* var) {
-		declare_ident((AST*)var, var->ident);
-
-		vars_stack.emplace_back(var->ident);
-	}
-	void declare_func (AST_funcdef* func) {
-		declare_ident((AST*)func, func->ident);
-
-		funcs_stack.emplace_back(func->ident);
+		
+		ident_stack.emplace_back(ident);
 	}
 
 	AST* resolve_ident (AST* node, strview const& ident, size_t min_scope) {
@@ -123,9 +105,11 @@ struct SemanticAnalysis {
 
 	std::vector<AST_funcdef*> funcs;
 
+	std::vector<AST_funcdef*> funcs_stack;
+
 	void semantic_analysis (AST* root) {
 		for (auto* f : builtin_funcs)
-			stack.declare_func(f);
+			stack.declare_ident(f, f->ident);
 
 		{ // add a declaration for a main function (global space of the file itself represents the main function)
 			AST_funcdef* module_main = ast_alloc<AST_funcdef>(A_FUNCDEF, root->src_tok);
@@ -146,131 +130,6 @@ struct SemanticAnalysis {
 		assert(funcs_stack.size() == 1);
 		funcs_stack.pop_back();
 	}
-
-	void resolve_decl_args (AST_vardecl* declarg) {
-		bool default_args = false;
-
-		while (declarg) {
-			if (declarg->type == A_VARARGS) {
-				// last func arg is varargs, any number of remaining call args match (including 0)
-				if (declarg->next != nullptr)
-					throw CompilerExcept{"error: variadic argument can only appear on the end of the argument list", declarg->src_tok->source};
-				break;
-			}
-
-			if (declarg->init) {
-				default_args = true;
-			}
-			else {
-				if (default_args)
-					throw CompilerExcept{"error: default arguments can only appear after all positional arguments", declarg->src_tok->source};
-			}
-
-			recurse(declarg);
-
-			declarg = (AST_vardecl*)declarg->next;
-		}
-	}
-	void resolve_call_args (AST* call, AST_callarg* callarg, AST_vardecl* declarg, size_t declargc, bool returns=false) {
-		struct Arg {
-			AST_vardecl* decl;
-			bool         required;
-			bool         provided;
-		};
-		std::vector<Arg> declargs;
-		declargs.resize(declargc);
-
-		auto find_named_arg = [] (std::vector<Arg>& declargs, AST_callarg* callarg, size_t* decli) {
-			for (size_t i=0; i<declargs.size(); ++i) {
-				if (declargs[i].decl->ident == callarg->ident) {
-					if (declargs[i].provided)
-						throw CompilerExcept{"error: argument already set in call", callarg->src_tok->source};
-
-					declargs[i].provided = true;
-
-					*decli = i;
-					return declargs[i].decl;
-				}
-			}
-			throw CompilerExcept{"error: unknown argument", callarg->src_tok->source};
-		};
-
-		// collect decl args and have them be not-set
-		size_t decli = 0;
-		for (AST_vardecl* arg=declarg; arg; arg = (AST_vardecl*)arg->next) {
-			if (returns && arg->type == A_VARARGS)
-				throw CompilerExcept{"error: variadic argument no allowed for return values", arg->src_tok->source};
-
-			declargs[decli].decl = arg;
-			// variables do not required if they are default args or if they are varargs
-			declargs[decli].required = arg->type != A_VARARGS && !arg->init;
-			declargs[decli].provided = false;
-			decli++;
-		}
-
-		auto resolve_callarg = [this] (AST_callarg* callarg, AST_vardecl* declarg) {
-			recurse(callarg->expr);
-			callarg->valtype = callarg->expr->valtype;
-
-			if (declarg->type != A_VARARGS && callarg->valtype != declarg->valtype)
-				throw CompilerExcept{"error: argument type mismatch", callarg->src_tok->source};
-		};
-
-		decli = 0;
-		// positional args
-		for (; callarg && callarg->ident.empty(); callarg = (AST_callarg*)callarg->next) {
-
-			if (!declarg) // no more args in func
-				throw CompilerExcept{"error: too many arguments", callarg->src_tok->source};
-
-			callarg->decl = declarg;
-			callarg->decli = decli;
-
-			resolve_callarg(callarg, declarg);
-
-			declargs[decli].provided = true;
-
-			if (declarg->type != A_VARARGS) {
-				declarg = (AST_vardecl*)declarg->next;
-				decli++;
-			}
-		}
-
-		// named args
-		for (; callarg; callarg = (AST_callarg*)callarg->next) {
-			
-			if (callarg->ident.empty())
-				throw CompilerExcept{"error: named arguments can only appear after all positional arguments", callarg->src_tok->source};
-
-			callarg->decl = find_named_arg(declargs, callarg, &callarg->decli);
-
-			if (callarg->decl->type == A_VARARGS)
-				throw CompilerExcept{"error: variadic arguments cannot be assigned directly", callarg->src_tok->source};
-
-			resolve_callarg(callarg, callarg->decl);
-		}
-
-		if (!returns) {
-			// check that all args are set
-			for (size_t i=0; i<declargs.size(); ++i) {
-				if (declargs[i].required && !declargs[i].provided)
-					throw CompilerExcept{"error: too few arguments, required argument not provided", call->src_tok->source};
-			}
-		}
-	}
-
-	void prescan_block_for_funcs (AST_block* block) {
-		for (auto* n=block->statements; n != nullptr; n = n->next) {
-			if (n->type == A_FUNCDEF) {
-				auto* fdef = (AST_funcdef*)n;
-
-				stack.declare_func(fdef);
-				funcs.emplace_back(fdef);
-			}
-		}
-	}
-
-	std::vector<AST_funcdef*> funcs_stack;
 
 	Type typecheck_unary_op (AST_unop* op, AST* operand) {
 
@@ -444,212 +303,341 @@ struct SemanticAnalysis {
 			throw CompilerExcept{ "error: math ops not valid for this type", op->src_tok->source };
 		}
 	}
+	
+	void prescan_block_for_funcs (AST_block* block) {
+		for (auto* n=block->statements; n != nullptr; n = n->next) {
+			if (n->type == A_FUNCDEF) {
+				auto* fdef = (AST_funcdef*)n;
+
+				stack.declare_ident(fdef, fdef->ident);
+				funcs.emplace_back(fdef);
+			}
+		}
+	}
+	
+	void resolve_vardecl (AST_vardecl* vardecl) {
+
+		stack.declare_ident(vardecl, vardecl->ident);
+		
+		if (vardecl->init) {
+
+			recurse(vardecl->init);
+
+			// everything on the rhs of assignments except calls with void return should have a non-void type
+			if (vardecl->init->valtype == VOID) {
+				assert(vardecl->init->type == A_CALL);
+				throw CompilerExcept{"error: variable initialization: void is not a valid variable type", vardecl->init->src_tok->source};
+			}
+
+			// variable declaration without explicit type -> infer type
+			if (vardecl->valtype == VOID) {
+				vardecl->valtype = vardecl->init->valtype;
+			}
+			// variable declaration with explicit type -> check if types match
+			else {
+				if (vardecl->valtype != vardecl->init->valtype)
+					throw CompilerExcept{"error: variable initialization: types do not match", vardecl->init->src_tok->source};
+			}
+		}
+	}
+
+	void resolve_funcdecl_args (AST_vardecl* declarg) {
+		bool default_args = false;
+
+		while (declarg) {
+			if (declarg->type == A_VARARGS) {
+				if (declarg->next != nullptr)
+					throw CompilerExcept{"error: variadic argument can only appear on the end of the argument list", declarg->src_tok->source};
+				break;
+			}
+
+			if (declarg->init) {
+				default_args = true;
+			}
+			else {
+				if (default_args)
+					throw CompilerExcept{"error: default arguments can only appear after all positional arguments", declarg->src_tok->source};
+			}
+
+			resolve_vardecl(declarg);
+
+			declarg = (AST_vardecl*)declarg->next;
+		}
+	}
+	
+	void resolve_callarg (AST_callarg* callarg, AST_vardecl* declarg) {
+		recurse(callarg->expr);
+		callarg->valtype = callarg->expr->valtype;
+
+		if (declarg->type != A_VARARGS && callarg->valtype != declarg->valtype)
+			throw CompilerExcept{"error: argument type mismatch", callarg->src_tok->source};
+	}
+	void resolve_call_args (AST* call, AST_callarg* callarg, AST_vardecl* declarg, size_t declargc, bool returns=false) {
+		struct Arg {
+			AST_vardecl* decl; // funcdef argdecl this callarg is matched to
+			bool         required; // true unless it is a default argument or a vararg
+			bool         provided; // true if it was specified positionally or 
+		};
+		std::vector<Arg> declargs;
+		declargs.resize(declargc);
+
+		//// collect decl args and start them out not provided
+
+		size_t decli = 0;
+		for (AST_vardecl* arg=declarg; arg; arg = (AST_vardecl*)arg->next) {
+			if (returns && arg->type == A_VARARGS)
+				throw CompilerExcept{"error: variadic argument no allowed for return values", arg->src_tok->source};
+
+			declargs[decli].decl = arg;
+			// variables do not required if they are default args or if they are varargs
+			declargs[decli].required = arg->type != A_VARARGS && !arg->init;
+			declargs[decli].provided = false;
+			decli++;
+		}
+
+		//// positional args
+		decli = 0;
+		for (; callarg && callarg->ident.empty(); callarg = (AST_callarg*)callarg->next) {
+
+			if (!declarg) // no more args in func
+				throw CompilerExcept{"error: too many arguments", callarg->src_tok->source};
+
+			callarg->decl = declarg;
+			callarg->decli = decli;
+
+			declargs[decli].provided = true;
+
+			resolve_callarg(callarg, declarg);
+
+			if (declarg->type != A_VARARGS) {
+				declarg = (AST_vardecl*)declarg->next;
+				decli++;
+			}
+		}
+		
+		//// named args
+
+		auto find_named_arg = [] (std::vector<Arg>& declargs, AST_callarg* callarg) {
+			for (size_t i=0; i<declargs.size(); ++i) {
+				if (declargs[i].decl->ident == callarg->ident)
+					return i;
+			}
+			throw CompilerExcept{"error: unknown argument", callarg->src_tok->source};
+		};
+
+		for (; callarg; callarg = (AST_callarg*)callarg->next) {
+			
+			if (callarg->ident.empty())
+				throw CompilerExcept{"error: named arguments can only appear after all positional arguments", callarg->src_tok->source};
+
+			decli = find_named_arg(declargs, callarg);
+
+			if (declargs[decli].decl->type == A_VARARGS)
+				throw CompilerExcept{"error: variadic arguments cannot be assigned directly", callarg->src_tok->source};
+
+			if (declargs[decli].provided)
+				throw CompilerExcept{"error: argument already set in call", callarg->src_tok->source}; // TODO: specify where
+			
+			declargs[decli].provided = true;
+
+			callarg->decli = decli;
+			callarg->decl = declargs[decli].decl;
+
+			resolve_callarg(callarg, callarg->decl);
+		}
+
+		if (returns) {
+			// return args can be set like variables outside of the return statement
+			// thus we can't check if they are actually provided
+		}
+		else {
+			// check that all callargs are provided
+			for (size_t i=0; i<declargs.size(); ++i) {
+				if (declargs[i].required && !declargs[i].provided)
+					throw CompilerExcept{"error: required argument not provided", call->src_tok->source}; // TODO: specify which argument
+			}
+		}
+	}
+
+	void condition_expr (AST* ast) {
+		recurse(ast);
+		
+		if (ast->valtype != BOOL)
+			throw CompilerExcept{"error: condition expression must be a bool", ast->src_tok->source};
+	}
 
 	void recurse (AST* ast) {
 		switch (ast->type) {
 
-			case A_LITERAL: {
-				auto* lit = (AST_literal*)ast;
-			} break;
+		case A_LITERAL: {
+			auto* lit = (AST_literal*)ast;
+		} break;
 
-			case A_VARDECL: {
-				auto* vardecl = (AST_vardecl*)ast;
-				stack.declare_var(vardecl);
+		case A_VARDECL: {
+			resolve_vardecl((AST_vardecl*)ast);
+		} break;
 
-				if (vardecl->init) {
+		case A_VAR: {
+			auto* var = (AST_var*)ast;
+			stack.resolve_var(var);
+			ast->valtype = var->decl->valtype;
+		} break;
 
-					recurse(vardecl->init);
+		case A_ASSIGNOP: {
+			auto* op = (AST_binop*)ast;
+			recurse(op->lhs);
+			recurse(op->rhs);
 
-					// everything on the rhs of assignments except calls with void return should have a non-void type
-					if (vardecl->init->valtype == VOID) {
-						assert(vardecl->init->type == A_CALL);
-						throw CompilerExcept{"error: variable initialization: void is not a valid variable type", vardecl->init->src_tok->source};
-					}
+			if (op->lhs->type != A_VAR)
+				throw CompilerExcept{"error: can only assign to variables, not arbitrary expressions", op->lhs->src_tok->source};
 
-					// variable declaration without explicit type -> infer type
-					if (vardecl->valtype == VOID) {
-						vardecl->valtype = vardecl->init->valtype;
-					}
-					// variable declaration with explicit type -> check if types match
-					else {
-						if (vardecl->valtype != vardecl->init->valtype)
-							throw CompilerExcept{"error: variable initialization: types do not match", vardecl->init->src_tok->source};
-					}
-				}
-			} break;
+			// everything on the rhs of assignments except calls with void return should have a non-void type
+			if (op->rhs->valtype == VOID) {
+				assert(op->rhs->type == A_CALL);
+				throw CompilerExcept{"error: variable initialization: void is not a valid variable type", op->rhs->src_tok->source};
+			}
 
-			case A_VAR: {
-				auto* var = (AST_var*)ast;
-				stack.resolve_var(var);
-				ast->valtype = var->decl->valtype;
-			} break;
+			// check if types match
+			if (op->lhs->valtype != op->rhs->valtype)
+				throw CompilerExcept{"error: assignment: types do not match", op->src_tok->source};
 
-			case A_ASSIGNOP: {
-				auto* op = (AST_binop*)ast;
-				recurse(op->lhs);
-				recurse(op->rhs);
+			op->valtype = op->lhs->valtype;
+		} break;
 
-				if (op->lhs->type != A_VAR)
-					throw CompilerExcept{"error: can only assign to variables, not arbitrary expressions", op->lhs->src_tok->source};
+		case A_UNOP: {
+			auto* op = (AST_unop*)ast;
 
-				// everything on the rhs of assignments except calls with void return should have a non-void type
-				if (op->rhs->valtype == VOID) {
-					assert(op->rhs->type == A_CALL);
-					throw CompilerExcept{"error: variable initialization: void is not a valid variable type", op->rhs->src_tok->source};
-				}
+			recurse(op->operand);
 
-				// check if types match
-				if (op->lhs->valtype != op->rhs->valtype)
-					throw CompilerExcept{"error: assignment: types do not match", op->src_tok->source};
+			op->valtype = typecheck_unary_op(op, op->operand);
+		} break;
 
-				op->valtype = op->lhs->valtype;
-			} break;
+		case A_BINOP: {
+			auto* op = (AST_binop*)ast;
 
-			case A_CALL: {
-				auto* call = (AST_call*)ast;
-				auto* fdef = (AST_funcdef*)call->fdef;
+			recurse(op->lhs);
+			recurse(op->rhs);
 
-				stack.resolve_func_call(call);
-				auto* funcdef = (AST_funcdef*)call->fdef;
+			op->valtype = typecheck_binary_op(op, op->lhs, op->rhs);
+		} break;
 
-				resolve_call_args(call, (AST_callarg*)call->args, (AST_vardecl*)funcdef->args, funcdef->argc);
+		case A_IF:
+		case A_SELECT: {
+			auto* aif = (AST_if*)ast;
 
-				call->valtype = funcdef->retc > 0 ? funcdef->rets->valtype : VOID;
-			} break;
+			condition_expr(aif->cond);
+			recurse(aif->if_body);
+			if (aif->else_body) recurse(aif->else_body);
 
-			case A_RETURN: {
-				auto* ret = (AST_return*)ast;
-				auto* fdef = funcs_stack.back();
+			if (ast->type == A_SELECT) {
+				if (aif->if_body->valtype != aif->else_body->valtype)
+					throw CompilerExcept{"error: select expression: types do not match", aif->src_tok->source};
+				aif->valtype = aif->if_body->valtype;
+			}
+		} break;
 
-				resolve_call_args(ret, (AST_callarg*)ret->args, (AST_vardecl*)fdef->rets, fdef->retc, true);
-			} break;
+		case A_WHILE: {
+			auto* loop = (AST_loop*)ast;
 
-			case A_UNOP: {
-				auto* op = (AST_unop*)ast;
-				recurse(op->operand);
+			assert(!loop->start);
+			condition_expr(loop->cond);
+			recurse(loop->body); // for scoping: rely on body being a block
+			assert(!loop->end);
+		} break;
 
-				op->valtype = typecheck_unary_op(op, op->operand);
-			} break;
+		case A_FOR: {
+			auto* loop = (AST_loop*)ast;
 
-			case A_BINOP: {
-				auto* op = (AST_binop*)ast;
-				recurse(op->lhs);
-				recurse(op->rhs);
+			// open extra scope for for-header variables
+			auto old_scope = stack.push_scope();
 
-				op->valtype = typecheck_binary_op(op, op->lhs, op->rhs);
-			} break;
+			// resolve for-header first so that even though loop->end is executed last
+			// it still can't see vars inside the loop (since C does it this way and also since it comes before the body)
+			if (loop->start) recurse(loop->start);
+			condition_expr(loop->cond);
+			if (loop->end)   recurse(loop->end);
 
-			case A_IF:
-			case A_SELECT: {
-				auto* aif = (AST_if*)ast;
+			// resolve body last
+			recurse(loop->body);
 
-				recurse(aif->cond);
-				if (aif->cond->valtype != BOOL)
-					throw CompilerExcept{"error: if condition must be a bool", aif->cond->src_tok->source};
+			stack.reset_scope(old_scope);
+		} break;
 
-				recurse(aif->if_body);
+		case A_DO_WHILE: {
+			auto* loop = (AST_loop*)ast;
 
-				if (aif->else_body)
-					recurse(aif->else_body);
+			// need special handling for do-while due to special scoping rules
+			auto* block = (AST_block*)loop->body;
 
-				if (ast->type == A_SELECT) {
-					if (aif->if_body->valtype != aif->else_body->valtype)
-						throw CompilerExcept{"error: select expression: types do not match", aif->src_tok->source};
-					aif->valtype = aif->if_body->valtype;
-				}
-			} break;
+			// open scope
+			auto old_scope = stack.push_scope();
 
-			case A_BLOCK: {
-				auto* block = (AST_block*)ast;
+			// can call functions before they are declared from anywhere inside the block
+			// _and_ from inside the while condition
+			prescan_block_for_funcs(block);
 
-				auto old_scope = stack.push_scope();
+			// handle body block without opening a scope for it, so that vars are visible to cond
+			for (auto* n=block->statements; n != nullptr; n = n->next)
+				recurse(n);
 
-				prescan_block_for_funcs(block); // can call functions before they are declared from anywhere inside the block
+			condition_expr(loop->cond); // can access vars and funcs declared inside the loop body
 
-				for (auto* n=block->statements; n != nullptr; n = n->next)
-					recurse(n);
+			// close the scope after cond
+			stack.reset_scope(old_scope);
+		} break;
 
-				stack.reset_scope(old_scope);
-			} break;
+		case A_BREAK:
+		case A_CONTINUE: {
+			// nothing to resolve
+		} break;
 
-			case A_FUNCDEF: {
-				auto* fdef = (AST_funcdef*)ast;
+		case A_BLOCK: {
+			auto* block = (AST_block*)ast;
 
-				funcs_stack.emplace_back(fdef);
-				auto func_scope = stack.push_scope(true);
+			auto old_scope = stack.push_scope();
 
-				resolve_decl_args((AST_vardecl*)fdef->args);
-				resolve_decl_args((AST_vardecl*)fdef->rets);
+			prescan_block_for_funcs(block); // can call functions before they are declared from anywhere inside the block
 
-				recurse(fdef->body);
+			for (auto* n=block->statements; n != nullptr; n = n->next)
+				recurse(n);
 
-				stack.reset_scope(func_scope, true);
-				funcs_stack.pop_back();
-			} break;
+			stack.reset_scope(old_scope);
+		} break;
 
-			case A_WHILE:
-			case A_FOR:
-			case A_DO_WHILE: {
-				auto* loop = (AST_loop*)ast;
+		case A_FUNCDEF: {
+			auto* fdef = (AST_funcdef*)ast;
 
-				switch (ast->type) {
-					case A_WHILE: {
-						assert(!loop->start);
-						recurse(loop->cond);
-						recurse(loop->body); // for scoping: rely on body being a block
-						assert(!loop->end);
-					} break;
+			funcs_stack.emplace_back(fdef);
+			auto func_scope = stack.push_scope(true);
 
-					case A_FOR: {
-						// open extra scope for for-header variables
-						auto old_scope = stack.push_scope();
+			resolve_funcdecl_args((AST_vardecl*)fdef->args);
+			resolve_funcdecl_args((AST_vardecl*)fdef->rets);
 
-						// resolve for-header first so that even though loop->end is executed last
-						// it still can't see vars inside the loop (since C does it this way and also since it comes before the body)
-						if (loop->start) recurse(loop->start);
-										 recurse(loop->cond);
-						if (loop->end)   recurse(loop->end);
+			recurse(fdef->body);
 
-						// resolve body last
-						recurse(loop->body);
+			stack.reset_scope(func_scope);
+			funcs_stack.pop_back();
+		} break;
 
-						stack.reset_scope(old_scope);
-					} break;
-						
-					case A_DO_WHILE: {
-						// need special handling for do-while due to special scoping rules
-						auto* block = (AST_block*)loop->body;
+		case A_CALL: {
+			auto* call = (AST_call*)ast;
 
-						// open scope
-						auto old_scope = stack.push_scope();
+			stack.resolve_func_call(call);
+			auto* fdef = (AST_funcdef*)call->fdef;
 
-						// can call functions before they are declared from anywhere inside the block
-						// _and_ from inside the while condition
-						prescan_block_for_funcs(block);
+			resolve_call_args(call, (AST_callarg*)call->args, (AST_vardecl*)fdef->args, fdef->argc);
 
-						// handle body block without opening a scope for it, so that vars are visible to cond
-						for (auto* n=block->statements; n != nullptr; n = n->next)
-							recurse(n);
+			call->valtype = fdef->retc > 0 ? fdef->rets->valtype : VOID;
+		} break;
 
-						recurse(loop->cond); // can access vars and funcs declared inside the loop body
+		case A_RETURN: {
+			auto* ret = (AST_return*)ast;
+			auto* fdef = funcs_stack.back();
 
-						// close the scope after cond
-						stack.reset_scope(old_scope);
-					} break;
+			resolve_call_args(ret, (AST_callarg*)ret->args, (AST_vardecl*)fdef->rets, fdef->retc, true);
+		} break;
 
-					INVALID_DEFAULT;
-				}
-
-				if (loop->cond->valtype != BOOL)
-					throw CompilerExcept{"error: loop condition must be a bool", loop->cond->src_tok->source};
-			} break;
-
-			case A_BREAK:
-			case A_CONTINUE: {
-				// nothing to resolve
-			} break;
-
-			INVALID_DEFAULT;
+		INVALID_DEFAULT;
 		}
 	}
 };

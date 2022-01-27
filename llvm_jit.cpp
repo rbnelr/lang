@@ -68,7 +68,7 @@ struct JIT {
 	};
 	void register_builtins () {
 		for (auto& builtin : builtin_funcs) {
-			resolver.external_funcs.emplace(SR(builtin->ident), (llvm::JITTargetAddress)builtin->builti_func_ptr);
+			resolver.external_funcs.emplace(SR(builtin->ident), (llvm::JITTargetAddress)builtin->builtin_func_ptr);
 		}
 	}
 

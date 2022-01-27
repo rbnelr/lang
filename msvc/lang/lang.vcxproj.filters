@@ -72,7 +72,7 @@
     <ClInclude Include="..\..\builtins.hpp" />
     <ClInclude Include="..\..\basic_types.hpp" />
     <ClInclude Include="..\..\options.hpp" />
-    <ClInclude Include="..\..\resolver.hpp" />
+    <ClInclude Include="..\..\semantic.hpp" />
     <ClInclude Include="..\..\llvm_pch.hpp">
       <Filter>llvm</Filter>
     </ClInclude>

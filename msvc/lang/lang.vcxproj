@@ -191,7 +191,7 @@
     <ClInclude Include="..\..\llvm_sec_mem_manager.hpp" />
     <ClInclude Include="..\..\options.hpp" />
     <ClInclude Include="..\..\parser.hpp" />
-    <ClInclude Include="..\..\resolver.hpp" />
+    <ClInclude Include="..\..\semantic.hpp" />
     <ClInclude Include="..\..\tokenizer.hpp" />
     <ClInclude Include="..\..\basic_types.hpp" />
     <ClInclude Include="..\..\util\console_colors.hpp" />

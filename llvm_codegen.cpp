@@ -166,48 +166,33 @@ struct LLVM_gen {
 	}
 	
 	llvm::Value* codegen_unary (AST_unop* op, llvm::Value* operand) {
-		switch (op->op) {
-			case OP_POSITIVE: {
-				switch (op->valtype) {
-					case INT:
-					case FLT: return operand; // no-op
-					default: throw CompilerExcept{"error: positive operator is not valid for type", op->src_tok->source};
-				}
+		switch (op->operand->valtype) {
+		case INT: {
+			switch (op->op) {
+				case OP_POSITIVE:    return operand; // no-op
+				case OP_NEGATE:      return build.CreateNeg (operand, "_neg");
+				case OP_BIT_NOT:     return build.CreateNot(operand, "_not");
+				//case OP_LOGICAL_NOT:
+				case OP_INC:         return build.CreateAdd(operand, llvm::ConstantInt::get(operand->getType(), 1), "_inc");
+				case OP_DEC:         return build.CreateSub(operand, llvm::ConstantInt::get(operand->getType(), 1), "_dec");
+				INVALID_DEFAULT;
 			}
-			case OP_NEGATE: {
-				switch (op->valtype) {
-					case INT: return build.CreateNeg (operand, "_neg");
-					case FLT: return build.CreateFNeg(operand, "_neg");
-					default: throw CompilerExcept{"error: negate is not valid for type", op->src_tok->source};
-				}
+		}
+		case BOOL: {
+			switch (op->op) {
+				case OP_BIT_NOT:
+				case OP_LOGICAL_NOT: return build.CreateNot(operand, "_not");
+				INVALID_DEFAULT;
 			}
-			case OP_BIT_NOT: {
-				switch (op->valtype) {
-					case INT :
-					case BOOL: return build.CreateNot(operand, "_not");
-					default: throw CompilerExcept{"error: bitwise not (~x) is not valid for type", op->src_tok->source};
-				}
+		}
+		case FLT: {
+			switch (op->op) {
+				case OP_POSITIVE:    return operand; // no-op
+				case OP_NEGATE:      return build.CreateFNeg(operand, "_neg");
+				INVALID_DEFAULT;
 			}
-			case OP_LOGICAL_NOT: {
-				switch (op->valtype) {
-					case INT :
-					case BOOL: return build.CreateNot(operand, "_not");
-					default: throw CompilerExcept{"error: logical not (!x) is not valid for type", op->src_tok->source};
-				}
-			}
-			case OP_INC: {
-				switch (op->valtype) {
-					case INT : return build.CreateAdd(operand, llvm::ConstantInt::get(operand->getType(), 1), "_inc");
-					default: throw CompilerExcept{"error: increment is not valid for type", op->src_tok->source};
-				}
-			}
-			case OP_DEC: {
-				switch (op->valtype) {
-					case INT : return build.CreateSub(operand, llvm::ConstantInt::get(operand->getType(), 1), "_dec");
-					default: throw CompilerExcept{"error: decrement is not valid for type", op->src_tok->source};
-				}
-			}
-			INVALID_DEFAULT;
+		}
+		INVALID_DEFAULT;
 		}
 	}
 	llvm::Value* codegen_binop (AST_binop* op, llvm::Value* lhs, llvm::Value* rhs) {
@@ -227,30 +212,18 @@ struct LLVM_gen {
 				case OP_BIT_OR:     return build.CreateOr  (lhs, rhs, "_or");
 				case OP_BIT_XOR:    return build.CreateXor (lhs, rhs, "_xor");
 
-				// TODO: allow  int && int  by making ints automatically convert to bool as int != 0
-				//  -> How? do this here or doing semantic analysis? if suring semantic, modify the AST?
-				case OP_LOGICAL_AND:
-				case OP_LOGICAL_OR:
-					throw CompilerExcept{ "error: logical and & or operators not valid for ints", op->src_tok->source };
-				
 				case OP_LESS:       return build.CreateCmp(llvm::CmpInst::Predicate::ICMP_SLT, lhs, rhs, "_cmp");
 				case OP_LESSEQ:     return build.CreateCmp(llvm::CmpInst::Predicate::ICMP_SLE, lhs, rhs, "_cmp");
 				case OP_GREATER:    return build.CreateCmp(llvm::CmpInst::Predicate::ICMP_SGT, lhs, rhs, "_cmp");
 				case OP_GREATEREQ:  return build.CreateCmp(llvm::CmpInst::Predicate::ICMP_SGE, lhs, rhs, "_cmp");
 				case OP_EQUALS:     return build.CreateCmp(llvm::CmpInst::Predicate::ICMP_EQ , lhs, rhs, "_cmp");
 				case OP_NOT_EQUALS: return build.CreateCmp(llvm::CmpInst::Predicate::ICMP_NE , lhs, rhs, "_cmp");
+
 				INVALID_DEFAULT;
 			}
 		} break;
 		case BOOL: {
 			switch (op->op) {
-				case OP_ADD:        
-				case OP_SUB:        
-				case OP_MUL:        
-				case OP_DIV:        
-				case OP_MOD:        
-					throw CompilerExcept{ "error: math ops not valid for this type", op->src_tok->source };
-		
 				case OP_BIT_AND:    return build.CreateAnd (lhs, rhs, "_and");
 				case OP_BIT_OR:     return build.CreateOr  (lhs, rhs, "_or");
 				case OP_BIT_XOR:    return build.CreateXor (lhs, rhs, "_xor");
@@ -259,35 +232,19 @@ struct LLVM_gen {
 				//case OP_LOGICAL_AND:
 				//case OP_LOGICAL_OR:
 				
-				case OP_LESS:       
-				case OP_LESSEQ:     
-				case OP_GREATER:    
-				case OP_GREATEREQ:  
-					throw CompilerExcept{ "error: can't compare bools like that", op->src_tok->source };
-		
 				case OP_EQUALS:     return build.CreateCmp(llvm::CmpInst::Predicate::ICMP_EQ, lhs, rhs, "_cmp");
 				case OP_NOT_EQUALS: return build.CreateCmp(llvm::CmpInst::Predicate::ICMP_NE, lhs, rhs, "_cmp");
+
 				INVALID_DEFAULT;
 			}
 		} break;
 		case FLT: {
 			switch (op->op) {
-				case OP_MOD:
-					throw CompilerExcept{ "error: remainder operator not valid for floats", op->src_tok->source };
 				case OP_ADD:        return build.CreateFAdd(lhs, rhs, "_add");
 				case OP_SUB:        return build.CreateFSub(lhs, rhs, "_sub");
 				case OP_MUL:        return build.CreateFMul(lhs, rhs, "_mul");
 				case OP_DIV:        return build.CreateFDiv(lhs, rhs, "_div");
 
-				case OP_BIT_AND:
-				case OP_BIT_OR:
-				case OP_BIT_XOR:
-					throw CompilerExcept{ "error: bitwise operators not valid for floats", op->src_tok->source };
-				
-				case OP_LOGICAL_AND:
-				case OP_LOGICAL_OR:
-					throw CompilerExcept{ "error: logical and & or operators not valid for floats", op->src_tok->source };
-				
 				// always ordered comparisons (NaN behavior)
 				case OP_LESS:       return build.CreateFCmp(llvm::CmpInst::Predicate::FCMP_OLT, lhs, rhs, "_cmp");
 				case OP_LESSEQ:     return build.CreateFCmp(llvm::CmpInst::Predicate::FCMP_OLE, lhs, rhs, "_cmp");
@@ -295,6 +252,7 @@ struct LLVM_gen {
 				case OP_GREATEREQ:  return build.CreateFCmp(llvm::CmpInst::Predicate::FCMP_OGE, lhs, rhs, "_cmp");
 				case OP_EQUALS:     return build.CreateFCmp(llvm::CmpInst::Predicate::FCMP_OEQ , lhs, rhs, "_cmp");
 				case OP_NOT_EQUALS: return build.CreateFCmp(llvm::CmpInst::Predicate::FCMP_ONE , lhs, rhs, "_cmp");
+
 				INVALID_DEFAULT;
 			}
 		} break;
@@ -535,11 +493,38 @@ struct LLVM_gen {
 			return {};
 		}
 
+		case A_UNOP: {
+			auto* op = (AST_unop*)ast;
+			assert(op->valtype == op->operand->valtype);
+				
+			llvm::Value* old_val = codegen(op->operand);
+			llvm::Value* result  = codegen_unary(op, old_val);
+				
+			switch (op->op) {
+				case OP_POSITIVE: case OP_NEGATE:
+				case OP_BIT_NOT: case OP_LOGICAL_NOT: {
+					return result;
+				}
+
+				case OP_INC: case OP_DEC: {
+					if (op->operand->type != A_VAR)
+						throw CompilerExcept{"error: expected variable for unary post operator", ast->src_tok->source};
+					auto* var = (AST_var*)op->operand;
+
+					// assign inc/decremented to var
+					store_local_var(op, var->decl, result);
+					// return old value
+					return old_val;
+				}
+
+				INVALID_DEFAULT;
+			}
+		}
+
 		case A_BINOP: {
 			auto* op = (AST_binop*)ast;
 			
 			if (op->op == OP_LOGICAL_AND || op->op == OP_LOGICAL_OR) {
-				
 				auto id  = format_id(sc_count++);
 				auto cid = format_id(cont_count++);
 
@@ -590,34 +575,6 @@ struct LLVM_gen {
 			llvm::Value* rhs = codegen(op->rhs);
 			// eval binary operator
 			return codegen_binop(op, lhs, rhs);
-		}
-
-		case A_UNOP: {
-			auto* op = (AST_unop*)ast;
-			assert(op->valtype == op->operand->valtype);
-				
-			llvm::Value* old_val = codegen(op->operand);
-			llvm::Value* result  = codegen_unary(op, old_val);
-				
-			switch (op->op) {
-				case OP_POSITIVE: case OP_NEGATE:
-				case OP_BIT_NOT: case OP_LOGICAL_NOT: {
-					return result;
-				}
-
-				case OP_INC: case OP_DEC: {
-					if (op->operand->type != A_VAR)
-						throw CompilerExcept{"error: expected variable for unary post operator", ast->src_tok->source};
-					auto* var = (AST_var*)op->operand;
-
-					// assign inc/decremented to var
-					store_local_var(op, var->decl, result);
-					// return old value
-					return old_val;
-				}
-
-				INVALID_DEFAULT;
-			}
 		}
 
 		case A_BLOCK: {

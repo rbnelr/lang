@@ -118,12 +118,12 @@ struct IdentiferStack {
 	}
 };
 
-struct IdentResolver {
+struct SemanticAnalysis {
 	IdentiferStack stack;
 
 	std::vector<AST_funcdef*> funcs;
 
-	void resolve_ast (AST* root) {
+	void semantic_analysis (AST* root) {
 		for (auto* f : builtin_funcs)
 			stack.declare_func(f);
 
@@ -272,15 +272,188 @@ struct IdentResolver {
 
 	std::vector<AST_funcdef*> funcs_stack;
 
-	void recurse (AST* node) {
-		switch (node->type) {
+	Type typecheck_unary_op (AST_unop* op, AST* operand) {
+
+		if (op->op == OP_LOGICAL_NOT) {
+			// TODO: !<non-bool> should be transformed (in ast?) to !(bool)<non-bool>
+			if (operand->valtype != BOOL)
+				throw CompilerExcept{"error: logical not (!x) is not valid for type", op->src_tok->source};
+
+			return BOOL;
+		}
+
+		switch (operand->valtype) {
+		case INT: {
+			switch (op->op) {
+				case OP_POSITIVE: // no-op
+				case OP_NEGATE: 
+				case OP_BIT_NOT:
+				case OP_INC:    
+				case OP_DEC:    
+					return operand->valtype;
+
+				INVALID_DEFAULT;
+			}
+		}
+		case BOOL: {
+			switch (op->op) {
+				case OP_BIT_NOT:
+					return operand->valtype;
+
+				case OP_POSITIVE: throw CompilerExcept{"error: positive operator is not valid for bool", op->src_tok->source};
+				case OP_NEGATE:   throw CompilerExcept{"error: negate is not valid for bool",            op->src_tok->source};
+				case OP_INC:      throw CompilerExcept{"error: increment is not valid for bool",         op->src_tok->source};
+				case OP_DEC:      throw CompilerExcept{"error: decrement is not valid for bool",         op->src_tok->source};
+
+				INVALID_DEFAULT;
+			}
+		}
+		case FLT: {
+			switch (op->op) {
+				case OP_POSITIVE:
+				case OP_NEGATE:  
+					return operand->valtype;
+
+				case OP_BIT_NOT: throw CompilerExcept{ "error: bitwise operators not valid for floats", op->src_tok->source };
+
+				// NOTE: Maybe this is a weird decision, but incrementing a float rarely makes sense unlike ints
+				// Furthermore unlike for ints there is no inc/dec instruction in the cpu either, so maybe don't define this operator for floats
+				case OP_INC: throw CompilerExcept{"error: increment is not valid for type (are you sure you want a float?)", op->src_tok->source};
+				case OP_DEC: throw CompilerExcept{"error: decrement is not valid for type (are you sure you want a float?)", op->src_tok->source};
+
+				INVALID_DEFAULT;
+			}
+		}
+		INVALID_DEFAULT;
+		}
+	}
+	Type typecheck_binary_op (AST_binop* op, AST* lhs, AST* rhs) {
+		if (op->op == OP_LOGICAL_AND || op->op == OP_LOGICAL_OR) {
+			// TODO: <non-bool> with and or or should be each transformed (in ast?) to (bool)<non-bool>
+			if (lhs->valtype != BOOL)
+				throw CompilerExcept{"error: logical not (!x) is not valid for type", lhs->src_tok->source};
+			if (rhs->valtype != BOOL)
+				throw CompilerExcept{"error: logical not (!x) is not valid for type", rhs->src_tok->source};
+
+			// these operators short-ciruit behavior which is currently implemented in codegen
+			// TODO: could also implement this as a AST-transformation?
+			// I was thinking as a A_SELECT (lhs == false ? false : rhs)
+			// But this might result in slightly worst IR being generated
+
+			// OP_LOGICAL_AND evaluated like:
+			//   l : bool = eval lhs;
+			//   if l == false: return false;
+			//   r : bool = eval rhs;
+			//   return r;
+			
+			// OP_LOGICAL_OR evaluated like:
+			//   l : bool = eval lhs;
+			//   if l == true: return true;
+			//   r : bool = eval rhs;
+			//   return r;
+
+			return BOOL;
+		}
+
+		// TOOD: there might be operators for which this is not true
+		if (lhs->valtype != rhs->valtype)
+			throw CompilerExcept{"error: binary operator: types do not match", op->src_tok->source};
+
+		switch (lhs->valtype) {
+		case INT: {
+			switch (op->op) {
+				case OP_ADD:
+				case OP_SUB:
+				case OP_MUL:
+				case OP_DIV:
+				case OP_MOD:
+					return lhs->valtype;
+				
+				case OP_BIT_AND:
+				case OP_BIT_OR: 
+				case OP_BIT_XOR:
+					return lhs->valtype;
+				
+				case OP_LESS:      
+				case OP_LESSEQ:    
+				case OP_GREATER:   
+				case OP_GREATEREQ: 
+				case OP_EQUALS:    
+				case OP_NOT_EQUALS:
+					return BOOL;
+
+				INVALID_DEFAULT;
+			}
+		} break;
+		case BOOL: {
+			switch (op->op) {
+				case OP_ADD:
+				case OP_SUB:
+				case OP_MUL:
+				case OP_DIV:
+				case OP_MOD:
+					throw CompilerExcept{ "error: math ops not valid for this type", op->src_tok->source };
+		
+				case OP_BIT_AND:
+				case OP_BIT_OR: 
+				case OP_BIT_XOR:
+					return lhs->valtype;
+				
+				case OP_LESS:
+				case OP_LESSEQ:
+				case OP_GREATER:
+				case OP_GREATEREQ:
+					throw CompilerExcept{ "error: can't compare bools like that", op->src_tok->source };
+		
+				case OP_EQUALS:    
+				case OP_NOT_EQUALS:
+					return BOOL;
+
+				INVALID_DEFAULT;
+			}
+		} break;
+		case FLT: {
+			switch (op->op) {
+				case OP_ADD:
+				case OP_SUB:
+				case OP_MUL:
+				case OP_DIV:
+					return lhs->valtype;
+
+				case OP_MOD:
+					throw CompilerExcept{ "error: remainder operator not valid for floats", op->src_tok->source };
+
+				case OP_BIT_AND:
+				case OP_BIT_OR:
+				case OP_BIT_XOR:
+					throw CompilerExcept{ "error: bitwise operators not valid for floats", op->src_tok->source };
+				
+				// always ordered comparisons (NaN behavior)
+				case OP_LESS:
+				case OP_LESSEQ:
+				case OP_GREATER:
+				case OP_GREATEREQ:
+				case OP_EQUALS:
+				case OP_NOT_EQUALS:
+					return BOOL;
+
+				INVALID_DEFAULT;
+			}
+		} break;
+		default:
+			throw CompilerExcept{ "error: math ops not valid for this type", op->src_tok->source };
+		}
+	}
+
+	void recurse (AST* ast) {
+		switch (ast->type) {
 
 			case A_LITERAL: {
-				auto* lit = (AST_literal*)node;
+				auto* lit = (AST_literal*)ast;
 			} break;
 
 			case A_VARDECL: {
-				auto* vardecl = (AST_vardecl*)node;
+				auto* vardecl = (AST_vardecl*)ast;
 				stack.declare_var(vardecl);
 
 				if (vardecl->init) {
@@ -306,13 +479,13 @@ struct IdentResolver {
 			} break;
 
 			case A_VAR: {
-				auto* var = (AST_var*)node;
+				auto* var = (AST_var*)ast;
 				stack.resolve_var(var);
-				node->valtype = var->decl->valtype;
+				ast->valtype = var->decl->valtype;
 			} break;
 
 			case A_ASSIGNOP: {
-				auto* op = (AST_binop*)node;
+				auto* op = (AST_binop*)ast;
 				recurse(op->lhs);
 				recurse(op->rhs);
 
@@ -333,7 +506,7 @@ struct IdentResolver {
 			} break;
 
 			case A_CALL: {
-				auto* call = (AST_call*)node;
+				auto* call = (AST_call*)ast;
 				auto* fdef = (AST_funcdef*)call->fdef;
 
 				stack.resolve_func_call(call);
@@ -345,64 +518,41 @@ struct IdentResolver {
 			} break;
 
 			case A_RETURN: {
-				auto* ret = (AST_return*)node;
+				auto* ret = (AST_return*)ast;
 				auto* fdef = funcs_stack.back();
 
 				resolve_call_args(ret, (AST_callarg*)ret->args, (AST_vardecl*)fdef->rets, fdef->retc, true);
 			} break;
 
 			case A_UNOP: {
-				auto* op = (AST_unop*)node;
+				auto* op = (AST_unop*)ast;
 				recurse(op->operand);
-				op->valtype = op->operand->valtype;
+
+				op->valtype = typecheck_unary_op(op, op->operand);
 			} break;
 
 			case A_BINOP: {
-				auto* op = (AST_binop*)node;
+				auto* op = (AST_binop*)ast;
 				recurse(op->lhs);
 				recurse(op->rhs);
 
-				if (op->lhs->valtype != op->rhs->valtype)
-					throw CompilerExcept{"error: binary operator: types do not match", op->src_tok->source};
-
-				switch (op->op) {
-					case OP_ADD:
-					case OP_SUB:
-					case OP_MUL:
-					case OP_DIV:
-					case OP_MOD:
-					case OP_BIT_AND:
-					case OP_BIT_OR:
-					case OP_BIT_XOR:
-					case OP_LOGICAL_AND:
-					case OP_LOGICAL_OR:
-						op->valtype = op->lhs->valtype;
-						break;
-					case OP_LESS:       
-					case OP_LESSEQ:     
-					case OP_GREATER:    
-					case OP_GREATEREQ:  
-					case OP_EQUALS:     
-					case OP_NOT_EQUALS:
-						op->valtype = BOOL;
-						break;
-					INVALID_DEFAULT;
-				}
+				op->valtype = typecheck_binary_op(op, op->lhs, op->rhs);
 			} break;
 
 			case A_IF:
 			case A_SELECT: {
-				auto* aif = (AST_if*)node;
+				auto* aif = (AST_if*)ast;
 
 				recurse(aif->cond);
 				if (aif->cond->valtype != BOOL)
 					throw CompilerExcept{"error: if condition must be a bool", aif->cond->src_tok->source};
 
 				recurse(aif->if_body);
+
 				if (aif->else_body)
 					recurse(aif->else_body);
 
-				if (node->type == A_SELECT) {
+				if (ast->type == A_SELECT) {
 					if (aif->if_body->valtype != aif->else_body->valtype)
 						throw CompilerExcept{"error: select expression: types do not match", aif->src_tok->source};
 					aif->valtype = aif->if_body->valtype;
@@ -410,7 +560,7 @@ struct IdentResolver {
 			} break;
 
 			case A_BLOCK: {
-				auto* block = (AST_block*)node;
+				auto* block = (AST_block*)ast;
 
 				auto old_scope = stack.push_scope();
 
@@ -423,7 +573,7 @@ struct IdentResolver {
 			} break;
 
 			case A_FUNCDEF: {
-				auto* fdef = (AST_funcdef*)node;
+				auto* fdef = (AST_funcdef*)ast;
 
 				funcs_stack.emplace_back(fdef);
 				auto func_scope = stack.push_scope(true);
@@ -437,56 +587,61 @@ struct IdentResolver {
 				funcs_stack.pop_back();
 			} break;
 
-			case A_WHILE: {
-				auto* loop = (AST_loop*)node;
+			case A_WHILE:
+			case A_FOR:
+			case A_DO_WHILE: {
+				auto* loop = (AST_loop*)ast;
 
-				assert(!loop->start);
-				recurse(loop->cond);
-				recurse(loop->body);
-				assert(!loop->end);
-			} break;
+				switch (ast->type) {
+					case A_WHILE: {
+						assert(!loop->start);
+						recurse(loop->cond);
+						recurse(loop->body); // for scoping: rely on body being a block
+						assert(!loop->end);
+					} break;
 
-			case A_FOR: {
-				auto* loop = (AST_loop*)node;
+					case A_FOR: {
+						// open extra scope for for-header variables
+						auto old_scope = stack.push_scope();
 
-				// open extra scope for for-header variables
-				auto old_scope = stack.push_scope();
+						// resolve for-header first so that even though loop->end is executed last
+						// it still can't see vars inside the loop (since C does it this way and also since it comes before the body)
+						if (loop->start) recurse(loop->start);
+										 recurse(loop->cond);
+						if (loop->end)   recurse(loop->end);
 
-				// resolve for-header first so that even though loop->end is executed last
-				// it still can't see vars inside the loop (since C does it this way and also since it comes before the body)
-				if (loop->start)
-					recurse(loop->start);
+						// resolve body last
+						recurse(loop->body);
 
-				recurse(loop->cond);
+						stack.reset_scope(old_scope);
+					} break;
+						
+					case A_DO_WHILE: {
+						// need special handling for do-while due to special scoping rules
+						auto* block = (AST_block*)loop->body;
+
+						// open scope
+						auto old_scope = stack.push_scope();
+
+						// can call functions before they are declared from anywhere inside the block
+						// _and_ from inside the while condition
+						prescan_block_for_funcs(block);
+
+						// handle body block without opening a scope for it, so that vars are visible to cond
+						for (auto* n=block->statements; n != nullptr; n = n->next)
+							recurse(n);
+
+						recurse(loop->cond); // can access vars and funcs declared inside the loop body
+
+						// close the scope after cond
+						stack.reset_scope(old_scope);
+					} break;
+
+					INVALID_DEFAULT;
+				}
+
 				if (loop->cond->valtype != BOOL)
 					throw CompilerExcept{"error: loop condition must be a bool", loop->cond->src_tok->source};
-
-				if (loop->end)
-					recurse(loop->end);
-
-				// resolve body last
-				recurse(loop->body);
-
-				stack.reset_scope(old_scope);
-			} break;
-
-			// need special handling for do-while due to special scoping rules
-			case A_DO_WHILE: {
-				auto* loop = (AST_loop*)node;
-				auto* block = (AST_block*)loop->body;
-
-				// open scope
-				auto old_scope = stack.push_scope();
-
-				// can call functions before they are declared from anywhere inside the block
-				// _and_ from inside the while condition
-				prescan_block_for_funcs(block);
-
-				for (auto* n=block->statements; n != nullptr; n = n->next)
-					recurse(n);
-				recurse(loop->cond); // can access vars and funcs declared inside the loop body
-
-				stack.reset_scope(old_scope);
 			} break;
 
 			case A_BREAK:
@@ -494,10 +649,7 @@ struct IdentResolver {
 				// nothing to resolve
 			} break;
 
-			default: {
-				assert(false);
-				_UNREACHABLE;
-			}
+			INVALID_DEFAULT;
 		}
 	}
 };

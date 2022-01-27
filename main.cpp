@@ -2,7 +2,7 @@
 #include "errors.hpp"
 #include "tokenizer.hpp"
 #include "parser.hpp"
-#include "resolver.hpp"
+#include "semantic.hpp"
 
 #include "llvm_backend.hpp"
 
@@ -57,11 +57,11 @@ bool compile () {
 
 			std::vector<AST_funcdef*> funcdefs;
 			{
-				ZoneScopedN("resolve");
-				IdentResolver resolve;
-				resolve.resolve_ast(ast);
+				ZoneScopedN("semantic_analysis");
+				SemanticAnalysis semantic;
+				semantic.semantic_analysis(ast);
 
-				funcdefs = std::move(resolve.funcs);
+				funcdefs = std::move(semantic.funcs);
 			}
 
 		#if LLVM

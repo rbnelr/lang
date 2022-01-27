@@ -797,6 +797,15 @@ struct Parser {
 		tok++; // T_PAREN_CLOSE
 		return count;
 	}
+	// <call_arg>, <call_arg> etc.
+	size_t return_args (AST** args) {
+
+		auto count = comma_seperated_list(args, [this] () {
+			return call_arg(T_SEMICOLON);
+		}, T_SEMICOLON);
+
+		return count;
+	}
 
 	// <funcname><call_args>
 	AST* call () {
@@ -809,18 +818,8 @@ struct Parser {
 		return (AST*)call;
 	}
 
-	// <call_arg>, <call_arg> etc.
-	size_t return_args (AST** args) {
-
-		auto count = comma_seperated_list(args, [this] () {
-			return call_arg(T_SEMICOLON);
-		}, T_SEMICOLON);
-
-		return count;
-	}
-
 	// return <return_args>;
-	AST* return_ () {
+	AST* return_statement () {
 		auto* ast = ast_alloc<AST_return>(A_RETURN, tok++);
 
 		ast->argc = return_args(&ast->args);
@@ -980,7 +979,6 @@ struct Parser {
 		};
 
 		switch (tok[0].type) {
-
 			case T_BLOCK_OPEN: 
 				return block();
 
@@ -995,7 +993,7 @@ struct Parser {
 				return for_loop();
 
 			case T_RETURN: {
-				return return_();
+				return return_statement();
 			}
 			case T_BREAK: {
 				auto* ast = ast_alloc<AST>(A_BREAK, tok++);

@@ -30,43 +30,58 @@ bool compile () {
 		SourceLines lines; // need lines outside of try to allow me to print error messages with line numbers
 		try {
 
-			#define LLVM 1
-
 			ZoneScopedN("compile");
-			{
-				lines.parse_lines(tok.c_str());
-			}
-
+			
 			std::vector<Token> tokens;
-			{
-				tokens = tokenize(tok.c_str());
-			}
-
 			AST* ast;
+			std::vector<AST_funcdef*>   funcdefs;
+			std::vector<AST_structdef*> structdefs;
 			{
-				ZoneScopedN("parse");
-				Parser parser;
-				parser.tok = &tokens[0];
-				ast = parser.file();
+				ZoneScopedNC("frontend", tracy::Color::CadetBlue);
+				{
+					lines.parse_lines(tok.c_str());
+				}
 
-				if (options.print_ast) { // print AST
-					print_seperator("AST:");
-					dbg_print(ast);
+				{
+					tokens = tokenize(tok.c_str());
+				}
+
+				{
+					ZoneScopedN("parse");
+
+				#if TRACY_ENABLE
+					ast_nodes = 0;
+				#endif
+
+					Parser parser;
+					parser.tok = &tokens[0];
+					ast = parser.file();
+
+				#if TRACY_ENABLE
+					auto str = prints("AST nodes: %llu", ast_nodes);
+					ZoneText(str.data(), str.size());
+				#endif
+
+					if (options.print_ast) { // print AST
+						print_seperator("AST:");
+						dbg_print(ast);
+					}
+				}
+
+				{
+					ZoneScopedN("semantic_analysis");
+					SemanticAnalysis semantic;
+					semantic.semantic_analysis(ast);
+
+					funcdefs   = std::move(semantic.funcs);
+					structdefs = std::move(semantic.structs);
 				}
 			}
 
-			std::vector<AST_funcdef*> funcdefs;
 			{
-				ZoneScopedN("semantic_analysis");
-				SemanticAnalysis semantic;
-				semantic.semantic_analysis(ast);
+				ZoneScopedNC("backend", tracy::Color::Burlywood);
 
-				funcdefs = std::move(semantic.funcs);
-			}
-
-		#if LLVM
-			{
-				llvm::Module* llvm_modl = llvm_gen_module(options.filename, funcdefs, lines);
+				llvm::Module* llvm_modl = llvm_gen_module(options.filename, funcdefs, structdefs, lines);
 				defer( llvm_free_module(llvm_modl); );
 			
 				//#ifndef TRACY_ENABLE
@@ -76,37 +91,6 @@ bool compile () {
 				}
 				//#endif
 			}
-		#else
-			std::vector<Instruction> code;
-			{
-				IR::IRGen irgen = { funcdefs };
-				{
-					irgen.generate();
-				}
-				
-				{
-					IR::ir_opt(irgen);
-				}
-				
-				{
-					ZoneScopedN("codegen");
-					Codegen codegen;
-					codegen.generate(irgen);
-				
-					if (options.print_code)
-						codegen.dbg_print();
-				
-					code = std::move(codegen.code);
-				}
-			}
-
-			#ifndef TRACY_ENABLE
-			{
-				ZoneScopedN("vm.execute");
-				vm.execute(code.data(), code.size(), 0);
-			}
-			#endif
-		#endif
 		}
 		catch (CompilerExcept& ex) {
 			ex.print(options.filename.c_str(), lines);

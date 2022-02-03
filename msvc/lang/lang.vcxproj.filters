@@ -70,7 +70,7 @@
       <Filter>util\smhasher</Filter>
     </ClInclude>
     <ClInclude Include="..\..\builtins.hpp" />
-    <ClInclude Include="..\..\basic_types.hpp" />
+    <ClInclude Include="..\..\types.hpp" />
     <ClInclude Include="..\..\options.hpp" />
     <ClInclude Include="..\..\semantic.hpp" />
     <ClInclude Include="..\..\llvm_pch.hpp">
@@ -86,6 +86,7 @@
       <Filter>llvm</Filter>
     </ClInclude>
     <ClInclude Include="..\..\allocators.hpp" />
+    <ClInclude Include="..\..\basic_types.hpp" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="util">

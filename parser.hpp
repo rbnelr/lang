@@ -2,13 +2,12 @@
 #include "common.hpp"
 #include "tokenizer.hpp"
 #include "errors.hpp"
-#include "basic_types.hpp"
 
 //typedef void (*builtin_func_t)(Value* vals);
 typedef void* builtin_func_t;
 
 inline constexpr bool is_binary_or_ternary_op (TokenType tok) {
-	return (tok >= T_ADD && tok <= T_NOT_EQUALS) || tok == T_QUESTIONMARK;
+	return tok >= T_ADD && tok <= T_QUESTIONMARK;
 }
 inline constexpr bool is_binary_assignemnt_op (TokenType tok) {
 	return tok >= T_ASSIGN && tok <= T_MODEQ;
@@ -38,6 +37,7 @@ inline constexpr bool is_unary_postfix_op (TokenType tok) {
 // 10  T_MUL, T_DIV, T_MOD
 // 11  T_NOT, T_BITNOT
 // 12  T_INC, T_DEC
+// 13  T_MEMBER
 */
 inline constexpr uint8_t BINARY_OP_PRECEDENCE[] = {
 	  8, // T_ADD
@@ -59,6 +59,8 @@ inline constexpr uint8_t BINARY_OP_PRECEDENCE[] = {
 	  4, // T_GREATEREQ
 	  3, // T_EQUALS
 	  3, // T_NOT_EQUALS
+
+	 13, // T_MEMBER
 	 
 	  0, // T_QUESTIONMARK
 	
@@ -87,6 +89,8 @@ inline constexpr uint8_t UNARY_OP_PRECEDENCE[] = {
 	255, // T_GREATEREQ
 	255, // T_EQUALS
 	255, // T_NOT_EQUALS
+
+	255, // T_MEMBER
 
 	255, // T_QUESTIONMARK
 	
@@ -121,6 +125,8 @@ inline constexpr Associativity BINARY_OP_ASSOCIATIVITY[] = { // 0 = left (left t
 	LEFT_ASSOC, // T_EQUALS
 	LEFT_ASSOC, // T_NOT_EQUALS
 
+	LEFT_ASSOC, // T_MEMBER
+
 	RIGHT_ASSOC, // T_QUESTIONMARK
 };
 
@@ -137,7 +143,10 @@ inline unsigned bt_assoc (TokenType tok) {
 	return (bool)BINARY_OP_ASSOCIATIVITY[tok - T_ADD];
 }
 
-enum ASTType {
+// called "kind" instead of "type" to avoid confusion with types in the actual language, which we also need to store
+enum ASTKind : uint8_t {
+	A_TYPE,
+
 	A_BLOCK,
 	A_TUPLE,
 
@@ -148,6 +157,8 @@ enum ASTType {
 	A_VAR,
 
 	A_VARARGS,
+
+	A_STRUCTDEF,
 
 	A_FUNCDEF,
 
@@ -171,7 +182,9 @@ enum ASTType {
 	// ternary operator
 	A_SELECT,
 };
-inline const char* ASTType_str[] = {
+inline const char* ASTKind_str[] = {
+	"A_TYPE",
+
 	"A_BLOCK",
 	"A_TUPLE",
 
@@ -181,6 +194,8 @@ inline const char* ASTType_str[] = {
 	"A_VAR",
 
 	"A_VARARGS",
+
+	"A_STRUCTDEF",
 
 	"A_FUNCDEF",
 
@@ -227,6 +242,8 @@ enum OpType {
 	OP_EQUALS,
 	OP_NOT_EQUALS,
 
+	OP_MEMBER,
+
 	// unary operators
 	OP_POSITIVE, // usually a no-op, but possibly could do something with operator overloading
 	OP_NEGATE,
@@ -258,6 +275,8 @@ inline const char* OpType_str[] = {
 	"==",
 	"!=",
 
+	".",
+
 	"+",
 	"-",
 	"~",
@@ -284,24 +303,47 @@ namespace llvm { // forward decls to associate llvm IR with AST nodes
 	class Type;
 	class Value;
 	class Function;
+	class StructType;
 }
 
-struct AST {
-	ASTType      type;
+#if TRACY_ENABLE
+inline size_t ast_nodes;
+#endif
 
-	Token const* src_tok;
+struct AST_type;
 
-	Type         valtype;
+struct Typeref {
+	AST_type* ty   = nullptr;
+	bool      rval = false;
+	
+	static Typeref LValue (AST_type* ty) { return { ty, false }; }
+	static Typeref RValue (AST_type* ty) { return { ty, true }; }
 };
 
+struct AST {
+	ASTKind      kind;
+
+	Token*       src_tok;
+
+	Typeref      type;
+};
+
+inline constexpr AST cAST (ASTKind type, AST_type* valtype=nullptr) {
+	return { type, nullptr, valtype };
+}
+
+#include "types.hpp"
+
 template <typename T>
-inline T* ast_alloc (ASTType type, Token const* tok) {
+inline T* ast_alloc (ASTKind kind, Token* tok) {
 	T* ret = g_allocator.alloc<T>();
 	
-	//memset(ret, 0, sizeof(T));
-
-	ret->type     = type;
+	ret->kind     = kind;
 	ret->src_tok  = tok;
+
+#if TRACY_ENABLE
+	ast_nodes++;
+#endif
 	return ret;
 }
 
@@ -318,15 +360,33 @@ struct AST_vardecl : public AST {
 
 	AST*         init         = nullptr;   // initialization during declaration
 
-	bool         is_arg      = false; // for IR gen, is this variable a function argument?
+	bool         is_arg       = false; // for IR gen, is this variable a function argument?
 	
 	llvm::Type*  llvm_type    = nullptr;
 	llvm::Value* llvm_value   = nullptr;
+	unsigned     llvm_GEP_idx = 0; // only for struct members
+
+	Token* get_type_tok () {
+		if (src_tok[2].type != T_IDENTIFIER)
+			return nullptr;
+
+		return &src_tok[2];
+	}
 };
 
+// TODO: either a variable identifier or a struct member identifer
+//       could split these into seperate AST types if desired
 struct AST_var : public AST {
 	strview      ident;
 	AST_vardecl* decl = nullptr;
+};
+
+struct AST_structdef : public AST {
+	strview      ident;
+	
+	arrview<AST_vardecl*> members;
+	
+	llvm::StructType*  llvm_struct = nullptr;
 };
 
 struct AST_funcdef : public AST {
@@ -398,9 +458,9 @@ inline void dbg_print (AST* node, int depth=0) {
 	};
 
 	indent(depth);
-	printf("%s", ASTType_str[node->type]);
+	printf("%s", ASTKind_str[node->kind]);
 
-	switch (node->type) {
+	switch (node->kind) {
 		case A_LITERAL: { auto* lit = (AST_literal*)node;
 			std::string str(lit->src_tok->source.text());
 			printf(" %s\n", str.c_str());
@@ -470,6 +530,15 @@ inline void dbg_print (AST* node, int depth=0) {
 			dbg_print(loop->body, depth+1);
 
 			indent(depth); printf(")\n");
+		} break;
+
+		case A_STRUCTDEF: { auto* struc = (AST_structdef*)node;
+			
+			printf(" (\n");
+			for (auto* n : struc->members)
+				dbg_print(n, depth+1);
+			indent(depth); printf(")\n");
+			
 		} break;
 
 		case A_FUNCDEF: { auto* f = (AST_funcdef*)node;
@@ -593,16 +662,16 @@ struct Parser {
 					var->ident = tok->source.text();
 
 					tok++;
-					return (AST*)var;
+					return var;
 				}
 			}
 
 			case T_LITERAL: {
 				auto* lit = ast_alloc<AST_literal>(A_LITERAL, tok);
-				lit->valtype = tok->lit_type;
-				lit->value   = tok->lit_val;
+				lit->type  = Typeref::RValue( BASIC_TYPES[tok->lit_type] );
+				lit->value = tok->lit_val;
 				tok++;
-				return (AST*)lit;
+				return lit;
 			}
 			
 			default: {
@@ -625,7 +694,7 @@ struct Parser {
 			tok++;
 
 			unary_op->operand = expression(prec);
-			lhs = (AST*)unary_op;
+			lhs = unary_op;
 		}
 		// once all unary operators are parsed right-recursion stops
 		else {
@@ -643,7 +712,7 @@ struct Parser {
 			tok++;
 
 			post_op->operand = lhs;
-			lhs = (AST*)post_op;
+			lhs = post_op;
 		}
 
 		// binary and ternary operators
@@ -664,7 +733,7 @@ struct Parser {
 				op->op = tok2binop(op_tok->type);
 				op->lhs = lhs;
 				op->rhs = rhs;
-				lhs = (AST*)op;
+				lhs = op;
 			}
 			// special case: ternary operator
 			else {
@@ -679,7 +748,7 @@ struct Parser {
 				assert(assoc == RIGHT_ASSOC);
 				op->else_body = expression(prec);
 
-				lhs = (AST*)op;
+				lhs = op;
 			}
 		}
 
@@ -688,58 +757,40 @@ struct Parser {
 
 	//    <varname> :              -> variable declaration with inferred type (must be followed by  = <expression>  to infer the type from)
 	// or <varname> : <typename>   -> variable declaration with explicit type
-	AST_vardecl* var_decl () {
+	AST_vardecl* var_decl (int allow_init=true) {
 		if (!(tok[0].type == T_IDENTIFIER && tok[1].type == T_COLON))
 			throw_error("syntax error: expected variable declaration", *tok);
 
 		auto* var = ast_alloc<AST_vardecl>(A_VARDECL, tok);
 		var->ident = tok[0].source.text();
 
-		tok+=2;
+		tok += 2;
 
 		// type specifier
 		if (tok->type == T_IDENTIFIER) {
-			auto ident = tok->source.text();
-
-			if      (ident == "bool") var->valtype = BOOL;
-			else if (ident == "int" ) var->valtype = INT;
-			else if (ident == "flt" ) var->valtype = FLT;
-			else if (ident == "str" ) var->valtype = STR;
+			// ident specifies type, but these identifiers can only be matched to AST_Type's in the later phase
+			// leave later phase to find this on it's own
+			
+			//auto ident = tok->source.text();
 
 			tok++;
 		}
 		else {
-			var->valtype = VOID;
+			// no type identifier, type will have to be inferred from initialization
 
 			if (tok->type != T_ASSIGN)
 				throw_error_after("syntax error: \neither specify type during variable declaration with \"<var> : <type>;\"\n"
-					                              "or let type be inferred with \"<var> := <expr>;\"", tok[-1]);
+				                                  "or let type be inferred with \"<var> := <expr>;\"", tok[-1]);
 		}
 
 		if (tok->type == T_ASSIGN) {
+			if (!allow_init)
+				throw_error("syntax error: vardecl initialization not allowed in struct (yet)", *tok);
+
 			tok++;
 			var->init = expression(0);
 		}
 		return var;
-	}
-	
-	AST_vardecl* _const_vardecl () {
-		auto* decl = (AST_vardecl*)var_decl();
-
-		if (decl->init) {
-			// TOOD: implement at const-foldable expression for default args at the very least
-			// better yet allow things like  sqrt(5)  or even custom compile-time const functions to be called as well
-			// or just const values in general (const globals or const locally captured vars)
-			// the question is where the const folding happens -> wait until I get to actually implementing compile-time execution
-			if (decl->init->type != A_LITERAL)
-				throw_error("syntax error: only literals allowed as default argument values (for now)", *decl->init->src_tok);
-
-			// TODO: do this now to simply code during resolving (after funcdef prescan we need to know arg/ret types)
-			//       later we will need a more structured way to handle dependencies between struct members/func args and their use sites
-			decl->valtype = decl->init->valtype;
-		}
-
-		return decl;
 	}
 
 	//    <expression>
@@ -755,7 +806,7 @@ struct Parser {
 
 			op->lhs = expr;
 			op->rhs = expression(0);
-			return (AST*)op;
+			return op;
 		}
 		return expr;
 	}
@@ -819,7 +870,7 @@ struct Parser {
 
 		call->args = call_args();
 
-		return (AST*)call;
+		return call;
 	}
 
 	// return <return_args>;
@@ -842,7 +893,7 @@ struct Parser {
 		aif->if_body   = block();
 		aif->else_body = elif_statement();
 
-		return (AST*)aif;
+		return aif;
 	}
 	AST* elif_statement () {
 		if (tok->type == T_ELIF) {
@@ -864,7 +915,7 @@ struct Parser {
 		loop->cond = expression(0);
 		loop->body = block();
 
-		return (AST*)loop;
+		return loop;
 	}
 
 	// do <block> while <cond>
@@ -881,7 +932,7 @@ struct Parser {
 		loop->cond = expression(0);
 		eat_semicolon();
 
-		return (AST*)loop;
+		return loop;
 	}
 
 	// for [start]; <cond>; [end] <block>
@@ -898,15 +949,65 @@ struct Parser {
 
 		loop->body = block();
 
-		return (AST*)loop;
+		return loop;
 	}
 	
-	arrview<AST_vardecl*> fdef_arglist () {
+	AST* struct_def () {
+		auto* struc = ast_alloc<AST_structdef>(A_STRUCTDEF, tok);
+		tok++;
+
+		if (tok->type != T_IDENTIFIER)
+			throw_error_after("syntax error: function identifer expected!", tok[-1]);
+		struc->ident = tok->source.text();
+		tok++;
+
+		smallvec<AST_vardecl*, 16> members;
+
+		if (tok->type != T_BLOCK_OPEN)
+			throw_error("syntax error: '{' expected", *tok);
+		tok++;
+
+		while (tok->type != T_BLOCK_CLOSE) {
+			auto* s = var_decl(false);
+			if (s)
+				members.push(s);
+			eat_semicolon();
+		}
+
+		auto* arr = g_allocator.alloc_array<AST_vardecl*>(members.count);
+		memcpy(arr, members.data, members.count * sizeof(members[0]));
+		struc->members = { arr, members.count };
+
+		if (tok->type != T_BLOCK_CLOSE)
+			throw_error("syntax error, '}' expected", *tok);
+		tok++;
+
+		return struc;
+	}
+	
+	AST_vardecl* funcdecl_arg () {
+		auto* decl = (AST_vardecl*)var_decl();
+
+		if (decl->init) {
+			// TOOD: implement at const-foldable expression for default args at the very least
+			// better yet allow things like  sqrt(5)  or even custom compile-time const functions to be called as well
+			// or just const values in general (const globals or const locally captured vars)
+			// the question is where the const folding happens -> wait until I get to actually implementing compile-time execution
+			if (decl->init->kind != A_LITERAL)
+				throw_error("syntax error: only literals allowed as default argument values (for now)", *decl->init->src_tok);
+			
+			assert(decl->init->type.ty && decl->init->type.rval);
+		}
+
+		return decl;
+	}
+
+	arrview<AST_vardecl*> funcdecl_arglist () {
 		assert(tok->type == T_PAREN_OPEN);
 		tok++;
 
 		auto arr = comma_seperated_list<AST_vardecl*>([this] () {
-			return _const_vardecl();
+			return funcdecl_arg();
 		}, T_PAREN_CLOSE);
 
 		tok++; // T_PAREN_CLOSE
@@ -927,7 +1028,7 @@ struct Parser {
 		if (tok->type != T_PAREN_OPEN)
 			throw_error_after("syntax error: '(' expected after function identifer!", tok[-1]);
 
-		func->args = fdef_arglist();
+		func->args = funcdecl_arglist();
 
 		// implicit (void) return list
 		if (tok->type != T_ASSIGN) {
@@ -937,12 +1038,12 @@ struct Parser {
 		else {
 			tok++;
 
-			func->rets = fdef_arglist();
+			func->rets = funcdecl_arglist();
 		}
 
 		func->body = block();
 
-		return (AST*)func;
+		return func;
 	}
 
 	//    <block>
@@ -989,6 +1090,10 @@ struct Parser {
 				eat_semicolon();
 				return ast;
 			}
+			
+			case T_STRUCT: {
+				return struct_def();
+			}
 
 			case T_FUNC: {
 				return function_def();
@@ -1011,7 +1116,7 @@ struct Parser {
 	AST* _block (Token* blocktok, TokenType endtok) {
 		auto* block = ast_alloc<AST_block>(A_BLOCK, blocktok);
 
-		smallvec<AST*, 16> statements;
+		smallvec<AST*, 64> statements;
 
 		while (tok->type != endtok) {
 			auto* s = statement();

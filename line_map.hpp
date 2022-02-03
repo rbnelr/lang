@@ -49,8 +49,10 @@ struct SourceLines {
 			}
 		}
 
-		// add dummy line after EOF starting on the EOF character
-		lines.emplace_back(cur);
+		// add dummy line after EOF on one past the EOF character
+		// TODO: is this safe? I changed this from the dummy line being _on_ the EOF
+		// since my binary search below had a bug in the case of the source loc being _on_ the EOF as well
+		lines.emplace_back(cur + 1);
 	}
 
 	std::string_view get_line_text (size_t lineno) const {

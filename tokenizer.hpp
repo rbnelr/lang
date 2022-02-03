@@ -57,6 +57,40 @@ inline bool parse_double (const char*& c, double* out) {
 enum TokenType {
 	T_EOF=0, // end of file
 
+	// literals of differing types
+	T_LITERAL,
+
+	// starts with  '_' or [a-Z]  and then any number of  '_' or [a-Z] or [0-9]
+	T_IDENTIFIER,
+
+	T_FUNC,
+	T_STRUCT,
+
+	// keywords
+	T_IF,
+	T_ELIF,
+	T_ELSE,
+
+	T_WHILE,
+	T_FOR,
+	T_DO,
+
+	T_RETURN,
+	T_BREAK,
+	T_CONTINUE,
+	T_GOTO,
+	
+	T_COLON,         // :
+	T_SEMICOLON,     // ;
+	T_COMMA,         // ,
+
+	T_PAREN_OPEN,    // (
+	T_PAREN_CLOSE,   // )
+	T_BLOCK_OPEN,    // {
+	T_BLOCK_CLOSE,   // }
+	T_INDEX_OPEN,    // [
+	T_INDEX_CLOSE,   // ]
+	
 	T_ADD,           // +
 	T_SUB,           // -   binary operator   OR   unary (prefix operator)
 	T_MUL,           // *
@@ -77,6 +111,8 @@ enum TokenType {
 	T_EQUALS,        // ==
 	T_NOT_EQUALS,    // !=
 
+	T_MEMBER,        // .
+
 	T_QUESTIONMARK,  // ?
 	
 	T_BIT_NOT,       // ~
@@ -90,42 +126,40 @@ enum TokenType {
 	T_MULEQ,         // *=
 	T_DIVEQ,         // /=
 	T_MODEQ,         // %=
-
-	T_COLON,         // :
-	T_SEMICOLON,     // ;
-	T_COMMA,         // ,
-
-	T_PAREN_OPEN,    // (
-	T_PAREN_CLOSE,   // )
-	T_BLOCK_OPEN,    // {
-	T_BLOCK_CLOSE,   // }
-	T_INDEX_OPEN,    // [
-	T_INDEX_CLOSE,   // ]
-
-	// literals of differing types
-	T_LITERAL,
-
-	// starts with  '_' or [a-Z]  and then any number of  '_' or [a-Z] or [0-9]
-	T_IDENTIFIER,
-
-	// keywords
-	T_IF,
-	T_ELIF,
-	T_ELSE,
-
-	T_WHILE,
-	T_FOR,
-	T_DO,
-
-	T_FUNC,
-
-	T_RETURN,
-	T_BREAK,
-	T_CONTINUE,
-	T_GOTO,
 };
 inline constexpr const char* TokenType_str[] = {
 	"T_EOF",
+
+	"T_LITERAL",
+
+	"T_IDENTIFIER",
+
+	"T_FUNC",
+	"T_STRUCT",
+
+	"T_IF",
+	"T_ELIF",
+	"T_ELSE",
+
+	"T_WHILE",
+	"T_FOR",
+	"T_DO",
+
+	"T_RETURN",
+	"T_BREAK",
+	"T_CONTINUE",
+	"T_GOTO",
+
+	"T_COLON",
+	"T_SEMICOLON",
+	"T_COMMA",
+
+	"T_PAREN_OPEN",
+	"T_PAREN_CLOSE",
+	"T_BLOCK_OPEN",
+	"T_BLOCK_CLOSE",
+	"T_INDEX_OPEN",
+	"T_INDEX_CLOSE",
 
 	"T_ADD",
 	"T_SUB",
@@ -146,6 +180,8 @@ inline constexpr const char* TokenType_str[] = {
 	"T_EQUALS",
 	"T_NOT_EQUALS",
 
+	"T_MEMBER",
+
 	"T_QUESTIONMARK",
 	
 	"T_BIT_NOT",
@@ -159,40 +195,42 @@ inline constexpr const char* TokenType_str[] = {
 	"T_MULEQ",
 	"T_DIVEQ",
 	"T_MODEQ",
-
-	"T_COLON",
-	"T_SEMICOLON",
-	"T_COMMA",
-
-	"T_PAREN_OPEN",
-	"T_PAREN_CLOSE",
-	"T_BLOCK_OPEN",
-	"T_BLOCK_CLOSE",
-	"T_INDEX_OPEN",
-	"T_INDEX_CLOSE",
 	
-	"T_LITERAL",
-	
-	"T_IDENTIFIER",
-
-	"T_IF",
-	"T_ELIF",
-	"T_ELSE",
-
-	"T_WHILE",
-	"T_FOR",
-	"T_DO",
-
-	"T_FUNC",
-
-	"T_RETURN",
-	"T_BREAK",
-	"T_CONTINUE",
-	"T_GOTO",
 };
 /*
 inline constexpr const char* TokenType_char[] = {
-	"\\0",
+	"<EOF>",
+
+	"literal",
+
+	"identifier",
+
+	"func",
+	"struct",
+
+	"if",
+	"elif",
+	"else",
+
+	"while",
+	"for",
+	"do",
+
+	"return",
+	"break",
+	"continue",
+	"goto",
+
+	":",
+	";",
+	",",
+	
+	"(",
+	")",
+	"{",
+	"}",
+	"[",
+	"]",
 
 	"+",
 	"-",
@@ -213,6 +251,10 @@ inline constexpr const char* TokenType_char[] = {
 	">=",
 	"==",
 	"!=",
+
+	".",
+
+	"?",
 	
 	"~",
 	"!",
@@ -225,35 +267,6 @@ inline constexpr const char* TokenType_char[] = {
 	"*=",
 	"/=",
 	"%=",
-
-	"?",
-	":",
-	";",
-	",",
-	
-	"(",
-	")",
-	"{",
-	"}",
-	"[",
-	"]",
-
-	"literal",
-
-	"identifier",
-
-	"if",
-	"elif",
-	"else",
-
-	"while",
-	"for",
-	"do",
-
-	"return",
-	"break",
-	"continue",
-	"goto",
 };
 */
 
@@ -261,7 +274,7 @@ struct Token {
 	TokenType    type;
 	source_range source;
 
-	Type         lit_type;
+	TypeClass    lit_type;
 	Value        lit_val;
 };
 
@@ -430,6 +443,7 @@ inline std::vector<Token> tokenize (const char* src) {
 			case '~': tok.type = T_BIT_NOT;       break;
 			case '^': tok.type = T_BIT_XOR;       break;
 
+			case '.': tok.type = T_MEMBER;        break;
 			case ':': tok.type = T_COLON;         break;
 			case ';': tok.type = T_SEMICOLON;     break;
 			case ',': tok.type = T_COMMA;         break;
@@ -459,7 +473,7 @@ inline std::vector<Token> tokenize (const char* src) {
 					}
 					tok.type = T_LITERAL;
 					tok.source = { start, cur };
-					tok.lit_type = FLT;
+					tok.lit_type = TY_FLT;
 					tok.lit_val.f = val;
 					continue;
 				}
@@ -473,7 +487,7 @@ inline std::vector<Token> tokenize (const char* src) {
 					
 					tok.type = T_LITERAL;
 					tok.source = { start, cur };
-					tok.lit_type = INT;
+					tok.lit_type = TY_INT;
 					tok.lit_val.i = val;
 					continue;
 				}
@@ -499,7 +513,7 @@ inline std::vector<Token> tokenize (const char* src) {
 
 				tok.type = T_LITERAL;
 				tok.source = { start, cur };
-				tok.lit_type = STR;
+				tok.lit_type = TY_STR;
 				tok.lit_val.str = parse_escaped_string(strstart, strend); // TODO: scanning this string twice, does this need to happen?
 				continue;
 			}
@@ -544,10 +558,11 @@ inline std::vector<Token> tokenize (const char* src) {
 					else if (text == "do"       ) { tok.type = T_DO;                           }
 
 					//else if (text == "null"     ) { tok.type = T_LITERAL; tok.lit_type = BOOL; tok.lit_val.b = {};        }
-					else if (text == "true"     ) { tok.type = T_LITERAL; tok.lit_type = BOOL; tok.lit_val.b = true;  }
-					else if (text == "false"    ) { tok.type = T_LITERAL; tok.lit_type = BOOL; tok.lit_val.b = false; }
+					else if (text == "true"     ) { tok.type = T_LITERAL; tok.lit_type = TY_BOOL; tok.lit_val.b = true;  }
+					else if (text == "false"    ) { tok.type = T_LITERAL; tok.lit_type = TY_BOOL; tok.lit_val.b = false; }
 
 					else if (text == "func"     ) { tok.type = T_FUNC;                         }
+					else if (text == "struct"   ) { tok.type = T_STRUCT;                       }
 
 					else if (text == "return"   ) { tok.type = T_RETURN;                       }
 					else if (text == "break"    ) { tok.type = T_BREAK;                        }
@@ -568,5 +583,10 @@ inline std::vector<Token> tokenize (const char* src) {
 		cur++; // single-char token
 		tok.source = { start, cur };
 	}
+
+#if TRACY_ENABLE
+	auto str = prints("tokens: %llu", tokens.size());
+	ZoneText(str.data(), str.size());
+#endif
 	return tokens;
 }

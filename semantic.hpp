@@ -68,7 +68,7 @@ struct IdentiferStack {
 		ident_stack.emplace_back(ident);
 	}
 
-	AST* resolve_ident (AST* node, strview const& ident, size_t min_scope) {
+	AST* resolve_ident (Token* src_tok, strview const& ident, size_t min_scope) {
 		assert(scope_id > 0);
 
 		for (size_t i=scope_id; ; i--) {
@@ -79,12 +79,12 @@ struct IdentiferStack {
 			if (i == min_scope)
 				break;
 		}
-		throw CompilerExcept{"error: unknown identifer", node->src_tok->source};
+		throw CompilerExcept{"error: unknown identifer", src_tok->source};
 	}
 	void resolve_var (AST_var* var) {
 		// min_scope = func_scope_id, functions can only access their own variables
-		AST* ast = resolve_ident((AST*)var, var->ident, cur_scope.func_scope_id);
-		if (ast->type != A_VARDECL)
+		AST* ast = resolve_ident(var->src_tok, var->ident, cur_scope.func_scope_id);
+		if (ast->kind != A_VARDECL)
 			throw CompilerExcept{"error: identifer was not declared as variable", var->src_tok->source};
 
 		var->decl = (AST_vardecl*)ast;
@@ -92,24 +92,38 @@ struct IdentiferStack {
 
 	void resolve_func_call (AST_call* call) {
 		// min_scope = 0, functions can call all functions visible to them
-		AST* ast = resolve_ident((AST*)call, call->ident, 0);
-		if (ast->type != A_FUNCDEF)
+		AST* ast = resolve_ident(call->src_tok, call->ident, 0);
+		if (ast->kind != A_FUNCDEF)
 			throw CompilerExcept{"error: identifer was not declared as function", call->src_tok->source};
 
 		call->fdef = ast;
+	}
+
+	AST_type* resolve_type (Token* type_ident) {
+		// min_scope = 0, functions can call all types visible to them
+		AST* ast = resolve_ident(type_ident, type_ident->source.text(), 0);
+		if (ast->kind != A_TYPE)
+			throw CompilerExcept{"error: identifer was not declared as type", type_ident->source};
+
+		return (AST_type*)ast;
 	}
 };
 
 struct SemanticAnalysis {
 	IdentiferStack stack;
 
-	std::vector<AST_funcdef*> funcs;
+	// all funcs/structs in entire module
+	std::vector<AST_funcdef*>   funcs;
+	std::vector<AST_structdef*> structs;
 
-	std::vector<AST_funcdef*> funcs_stack;
+	std::vector<AST_funcdef*>   funcs_stack;
 
 	void semantic_analysis (AST* root) {
 		for (auto* f : builtin_funcs)
 			stack.declare_ident(f, f->ident);
+
+		for (auto* t : BASIC_TYPES)
+			stack.declare_ident(t, t->ident);
 
 		{ // add a declaration for a main function (global space of the file itself represents the main function)
 			AST_funcdef* module_main = ast_alloc<AST_funcdef>(A_FUNCDEF, root->src_tok);
@@ -128,34 +142,115 @@ struct SemanticAnalysis {
 		assert(funcs_stack.size() == 1);
 		funcs_stack.pop_back();
 	}
+	
+	// declare struct and func idents and resolve their members/args to enable use of structs/funcs before they are declared
+	void prescan_block (AST_block* block) {
+		// only funcs/structs in this scope
+		smallvec<AST_structdef*, 32> local_structs;
+		smallvec<AST_funcdef*, 32>   local_funcs;
 
-	Type typecheck_unary_op (AST_unop* op, AST* operand) {
+		for (auto* ast : block->statements) {
+			if (ast->kind == A_FUNCDEF) {
+				auto* fdef = (AST_funcdef*)ast;
+
+				stack.declare_ident(fdef, fdef->ident);
+
+				funcs.emplace_back(fdef);
+				local_funcs.push(fdef);
+			}
+			else if (ast->kind == A_STRUCTDEF) {
+				auto* struc = (AST_structdef*)ast;
+
+				auto* type = ast_alloc<AST_type>(A_TYPE, struc->src_tok);
+				type->tclass = TY_STRUCT;
+				type->ident  = struc->ident;
+				type->decl   = struc;
+
+				stack.declare_ident(type, struc->ident);
+
+				structs.emplace_back(struc);
+				local_structs.push(struc);
+			}
+		}
+		
+		// seperate pass for structs to enable:
+		/*
+			a : A;
+			a.b.f = 5.0;
+			struct A {
+				b : B;
+			}
+			struct B {
+				f : flt;
+			}
+		*/
+		for (auto* struc : local_structs) {
+			for (auto* member : struc->members) {
+				auto* type_ident = member->get_type_tok();
+				if (type_ident)
+					member->type = Typeref::LValue( stack.resolve_type(type_ident) );
+			}
+		}
+		// seperate pass for funcs to enable:
+		/*
+			b : B;
+			foo(b);
+			func (b : B) {
+				
+			}
+			struct B {
+				f : flt;
+			}
+		*/
+		for (auto* fdef : local_funcs) {
+			resolve_funcdecl_args(fdef->args, true);
+			resolve_funcdecl_args(fdef->rets, false);
+		}
+	}
+
+	// TODO: Could implement these by dispatching to a set of rules within each AST_type
+	//  that specify how operators behave, since this is likely how I would need to implement
+	//  operator overloading for custom types as well (which I intent to support for vector libs / containers etc.)
+	// Custom types with operator overloading (always structs?) would be found during ident prescan
+	//  after which point we would know which operators were overloaded and what types those operators require/return
+	
+	Typeref typecheck_unary_op (AST_unop* op, AST* operand) {
+		if (operand->type.ty == nullptr)
+			throw CompilerExcept{"error: void is not a valid operand", operand->src_tok->source};
+
+		auto* ty = operand->type.ty;
 
 		if (op->op == OP_LOGICAL_NOT) {
 			// TODO: !<non-bool> should be transformed (in ast?) to !(bool)<non-bool>
-			if (operand->valtype != BOOL)
+			if (ty != pTY_BOOL)
 				throw CompilerExcept{"error: logical not (!x) is not valid for type", op->src_tok->source};
 
-			return BOOL;
+			return Typeref::RValue(pTY_BOOL);
 		}
 
-		switch (operand->valtype) {
-		case INT: {
+		if (op->op == OP_INC || op->op == OP_DEC) {
+			// TODO: allow this for custom types?
+			if (operand->type.rval)
+				throw CompilerExcept{"error: cannot inc/decrement RValue", operand->src_tok->source};
+		}
+
+		switch (ty->tclass) {
+		case TY_INT: {
 			switch (op->op) {
 				case OP_POSITIVE: // no-op
 				case OP_NEGATE: 
 				case OP_BIT_NOT:
 				case OP_INC:    
 				case OP_DEC:    
-					return operand->valtype;
+					return Typeref::RValue(ty);
 
 				INVALID_DEFAULT;
 			}
 		}
-		case BOOL: {
+		case TY_BOOL: {
 			switch (op->op) {
 				case OP_BIT_NOT:
-					return operand->valtype;
+					return Typeref::RValue(ty);
 
 				case OP_POSITIVE: throw CompilerExcept{"error: positive operator is not valid for bool", op->src_tok->source};
 				case OP_NEGATE:   throw CompilerExcept{"error: negate is not valid for bool",            op->src_tok->source};
@@ -165,31 +260,42 @@ struct SemanticAnalysis {
 				INVALID_DEFAULT;
 			}
 		}
-		case FLT: {
+		case TY_FLT: {
 			switch (op->op) {
 				case OP_POSITIVE:
 				case OP_NEGATE:  
-					return operand->valtype;
+					return Typeref::RValue(ty);
 
 				case OP_BIT_NOT: throw CompilerExcept{ "error: bitwise operators not valid for floats", op->src_tok->source };
 
 				// NOTE: Maybe this is a weird decision, but incrementing a float rarely makes sense unlike ints
 				// Furthermore unlike for ints there is no inc/dec instruction in the cpu either, so maybe don't define this operator for floats
-				case OP_INC: throw CompilerExcept{"error: increment is not valid for type (are you sure you want a float?)", op->src_tok->source};
-				case OP_DEC: throw CompilerExcept{"error: decrement is not valid for type (are you sure you want a float?)", op->src_tok->source};
+				case OP_INC: throw CompilerExcept{"error: increment is not valid for floats (are you sure you want a float?)", op->src_tok->source};
+				case OP_DEC: throw CompilerExcept{"error: decrement is not valid for floats (are you sure you want a float?)", op->src_tok->source};
 
 				INVALID_DEFAULT;
 			}
 		}
+		case TY_STR: {
+			throw CompilerExcept{"error: operator valid for strings", op->src_tok->source};
+		}
 		INVALID_DEFAULT;
 		}
 	}
-	Type typecheck_binary_op (AST_binop* op, AST* lhs, AST* rhs) {
+	Typeref typecheck_binary_op (AST_binop* op, AST* lhs, AST* rhs) {
+		if (lhs->type.ty == nullptr)
+			throw CompilerExcept{"error: void is not a valid operand", lhs->src_tok->source};
+		if (rhs->type.ty == nullptr)
+			throw CompilerExcept{"error: void is not a valid operand", rhs->src_tok->source};
+		
+		if (lhs->type.ty->tclass == TY_STRUCT)
+			throw CompilerExcept{"error: operator not valid for struct", op->src_tok->source};
+
 		if (op->op == OP_LOGICAL_AND || op->op == OP_LOGICAL_OR) {
 			// TODO: <non-bool> with and or or should be each transformed (in ast?) to (bool)<non-bool>
-			if (lhs->valtype != BOOL)
+			if (lhs->type.ty != pTY_BOOL)
 				throw CompilerExcept{"error: logical not (!x) is not valid for type", lhs->src_tok->source};
-			if (rhs->valtype != BOOL)
+			if (rhs->type.ty != pTY_BOOL)
 				throw CompilerExcept{"error: logical not (!x) is not valid for type", rhs->src_tok->source};
 
 			// these operators short-ciruit behavior which is currently implemented in codegen
@@ -209,27 +315,27 @@ struct SemanticAnalysis {
 			//   r : bool = eval rhs;
 			//   return r;
 
-			return BOOL;
+			return Typeref::RValue(pTY_BOOL);
 		}
-
+		
 		// TOOD: there might be operators for which this is not true
-		if (lhs->valtype != rhs->valtype)
+		if (lhs->type.ty != rhs->type.ty)
 			throw CompilerExcept{"error: binary operator: types do not match", op->src_tok->source};
 
-		switch (lhs->valtype) {
-		case INT: {
+		switch (lhs->type.ty->tclass) {
+		case TY_INT: {
 			switch (op->op) {
 				case OP_ADD:
 				case OP_SUB:
 				case OP_MUL:
 				case OP_DIV:
 				case OP_MOD:
-					return lhs->valtype;
+					return Typeref::RValue(lhs->type.ty);
 				
 				case OP_BIT_AND:
 				case OP_BIT_OR: 
 				case OP_BIT_XOR:
-					return lhs->valtype;
+					return Typeref::RValue(lhs->type.ty);
 				
 				case OP_LESS:      
 				case OP_LESSEQ:    
@@ -237,12 +343,12 @@ struct SemanticAnalysis {
 				case OP_GREATEREQ: 
 				case OP_EQUALS:    
 				case OP_NOT_EQUALS:
-					return BOOL;
+					return Typeref::RValue(pTY_BOOL);
 
 				INVALID_DEFAULT;
 			}
 		} break;
-		case BOOL: {
+		case TY_BOOL: {
 			switch (op->op) {
 				case OP_ADD:
 				case OP_SUB:
@@ -254,7 +360,7 @@ struct SemanticAnalysis {
 				case OP_BIT_AND:
 				case OP_BIT_OR: 
 				case OP_BIT_XOR:
-					return lhs->valtype;
+					return Typeref::RValue(lhs->type.ty);
 				
 				case OP_LESS:
 				case OP_LESSEQ:
@@ -264,18 +370,18 @@ struct SemanticAnalysis {
 		
 				case OP_EQUALS:    
 				case OP_NOT_EQUALS:
-					return BOOL;
+					return Typeref::RValue(pTY_BOOL);
 
 				INVALID_DEFAULT;
 			}
 		} break;
-		case FLT: {
+		case TY_FLT: {
 			switch (op->op) {
 				case OP_ADD:
 				case OP_SUB:
 				case OP_MUL:
 				case OP_DIV:
-					return lhs->valtype;
+					return Typeref::RValue(lhs->type.ty);
 
 				case OP_MOD:
 					throw CompilerExcept{ "error: remainder operator not valid for floats", op->src_tok->source };
@@ -292,61 +398,60 @@ struct SemanticAnalysis {
 				case OP_GREATEREQ:
 				case OP_EQUALS:
 				case OP_NOT_EQUALS:
-					return BOOL;
+					return Typeref::RValue(pTY_BOOL);
 
 				INVALID_DEFAULT;
 			}
 		} break;
+
 		default:
 			throw CompilerExcept{ "error: math ops not valid for this type", op->src_tok->source };
 		}
 	}
 	
-	void prescan_block_for_funcs (AST_block* block) {
-		for (auto* n : block->statements) {
-			if (n->type == A_FUNCDEF) {
-				auto* fdef = (AST_funcdef*)n;
+	void resolve_vardecl (AST_vardecl* vardecl, bool is_arg=false) {
 
-				stack.declare_ident(fdef, fdef->ident);
-				funcs.emplace_back(fdef);
-			}
+		auto* type_ident = vardecl->get_type_tok();
+		if (type_ident) {
+			vardecl->type.ty = stack.resolve_type(type_ident);
 		}
-	}
-	
-	void resolve_vardecl (AST_vardecl* vardecl) {
 
-		stack.declare_ident(vardecl, vardecl->ident);
-		
 		if (vardecl->init) {
 
 			recurse(vardecl->init);
 
-			// everything on the rhs of assignments except calls with void return should have a non-void type
-			if (vardecl->init->valtype == VOID) {
-				assert(vardecl->init->type == A_CALL);
+			if (vardecl->init->type.ty == nullptr) {
+				// everything on the rhs of assignments except calls with void return should have a non-void type
+				assert(vardecl->init->kind == A_CALL);
+
 				throw CompilerExcept{"error: variable initialization: void is not a valid variable type", vardecl->init->src_tok->source};
 			}
 
 			// variable declaration without explicit type -> infer type
-			if (vardecl->valtype == VOID) {
-				vardecl->valtype = vardecl->init->valtype;
+			if (vardecl->type.ty == nullptr) {
+				vardecl->type.ty = vardecl->init->type.ty;
 			}
 			// variable declaration with explicit type -> check if types match
 			else {
-				if (vardecl->valtype != vardecl->init->valtype)
+				if (vardecl->type.ty != vardecl->init->type.ty)
 					throw CompilerExcept{"error: variable initialization: types do not match", vardecl->init->src_tok->source};
 			}
 		}
+
+		// function arguments are immutable, thus RValues
+		vardecl->type.rval = is_arg;
+
+		assert(vardecl->type.ty);
 	}
 
-	void resolve_funcdecl_args (arrview<AST_vardecl*> args) {
+	void resolve_funcdecl_args (arrview<AST_vardecl*> args, bool is_arg) {
 		
 		bool default_args = false;
 		
 		for (size_t i=0; i<args.count; ++i) {
 			auto& arg = args[i];
 
-			if (arg->type == A_VARARGS) {
+			if (arg->kind == A_VARARGS) {
 				if (i != args.count-1)
 					throw CompilerExcept{"error: variadic argument can only appear on the end of the argument list", arg->src_tok->source};
 				break;
@@ -360,15 +465,16 @@ struct SemanticAnalysis {
 					throw CompilerExcept{"error: default arguments can only appear after all positional arguments", arg->src_tok->source};
 			}
 
-			resolve_vardecl(arg);
+			resolve_vardecl(arg, is_arg);
 		}
 	}
 	
 	void resolve_callarg (AST_callarg* callarg, AST_vardecl* declarg) {
 		recurse(callarg->expr);
-		callarg->valtype = callarg->expr->valtype;
+		
+		callarg->type = callarg->expr->type;
 
-		if (declarg->type != A_VARARGS && callarg->valtype != declarg->valtype)
+		if (declarg->kind != A_VARARGS && callarg->type.ty != declarg->type.ty)
 			throw CompilerExcept{"error: argument type mismatch", callarg->src_tok->source};
 
 		callarg->decl = declarg;
@@ -376,7 +482,7 @@ struct SemanticAnalysis {
 	void resolve_call_args (AST* op, arrview<AST_callarg*> callargs, arrview<AST_vardecl*> declargs) {
 		size_t non_vararg_count = 0;
 		if (declargs.count > 0)
-			non_vararg_count = declargs[declargs.count-1]->type == A_VARARGS ? declargs.count-1 : declargs.count;
+			non_vararg_count = declargs[declargs.count-1]->kind == A_VARARGS ? declargs.count-1 : declargs.count;
 
 		struct Arg {
 			AST_vardecl* decl; // funcdef argdecl this callarg is matched to
@@ -387,10 +493,10 @@ struct SemanticAnalysis {
 		//// collect decl args and start them out not provided
 
 		for (size_t i = 0; i < declargs.count; ++i) {
-			if (op->type == A_RETURN && declargs[i]->type == A_VARARGS)
+			if (op->kind == A_RETURN && declargs[i]->kind == A_VARARGS)
 				throw CompilerExcept{"error: variadic argument no allowed for return values", declargs[i]->src_tok->source};
 
-			if (declargs[i]->type == A_VARARGS)
+			if (declargs[i]->kind == A_VARARGS)
 				break;
 
 			args[i].decl = declargs[i];
@@ -404,7 +510,7 @@ struct SemanticAnalysis {
 			if (i >= declargs.count) // no more args in func
 				throw CompilerExcept{"error: too many arguments", callargs[i]->src_tok->source};
 
-			if (declargs[i]->type == A_VARARGS) {
+			if (declargs[i]->kind == A_VARARGS) {
 				auto* vararg_decl = declargs[i];
 
 				for (; i < callargs.count; ++i) {
@@ -426,7 +532,7 @@ struct SemanticAnalysis {
 			if (i >= declargs.count) // no more args in func
 				throw CompilerExcept{"error: too many arguments", callargs[i]->src_tok->source};
 
-			if (declargs[i]->type == A_VARARGS) {
+			if (declargs[i]->kind == A_VARARGS) {
 				args.push();
 			}
 
@@ -452,7 +558,7 @@ struct SemanticAnalysis {
 
 			size_t argi = find_named_arg(callargs[i]);
 
-			if (args[argi].decl->type == A_VARARGS)
+			if (args[argi].decl->kind == A_VARARGS)
 				throw CompilerExcept{"error: variadic arguments cannot be assigned directly", callargs[i]->src_tok->source};
 
 			if (args[argi].expr)
@@ -463,12 +569,12 @@ struct SemanticAnalysis {
 			args[argi].expr = callargs[i]->expr;
 		}
 
-		if (op->type == A_RETURN) {
+		if (op->kind == A_RETURN) {
 			// return args can be set like variables outside of the return statement
 			// thus we can't check if they are actually provided
 		}
 		else {
-			assert(op->type == A_CALL);
+			assert(op->kind == A_CALL);
 			auto* call = (AST_call*)op;
 
 			auto* resolved_args = g_allocator.alloc_array<AST*>(args.count);
@@ -491,25 +597,30 @@ struct SemanticAnalysis {
 	void condition_expr (AST* ast) {
 		recurse(ast);
 		
-		if (ast->valtype != BOOL)
+		if (ast->type.ty != pTY_BOOL)
 			throw CompilerExcept{"error: condition expression must be a bool", ast->src_tok->source};
 	}
 
 	void recurse (AST* ast) {
-		switch (ast->type) {
+		switch (ast->kind) {
 
 		case A_LITERAL: {
 			auto* lit = (AST_literal*)ast;
 		} break;
 
 		case A_VARDECL: {
-			resolve_vardecl((AST_vardecl*)ast);
+			auto* vardecl = (AST_vardecl*)ast;
+
+			stack.declare_ident(vardecl, vardecl->ident);
+			
+			resolve_vardecl(vardecl);
 		} break;
 
 		case A_VAR: {
 			auto* var = (AST_var*)ast;
 			stack.resolve_var(var);
-			ast->valtype = var->decl->valtype;
+
+			ast->type = var->decl->type;
 		} break;
 
 		case A_ASSIGNOP: {
@@ -517,20 +628,22 @@ struct SemanticAnalysis {
 			recurse(op->lhs);
 			recurse(op->rhs);
 
-			if (op->lhs->type != A_VAR)
-				throw CompilerExcept{"error: can only assign to variables, not arbitrary expressions", op->lhs->src_tok->source};
+			//if (op->lhs->kind != A_VAR)
+			//	throw CompilerExcept{"error: can only assign to variables, not arbitrary expressions", op->lhs->src_tok->source};
+			if (op->lhs->type.rval)
+				throw CompilerExcept{"error: cannot assign to a RValue", op->lhs->src_tok->source};
 
-			// everything on the rhs of assignments except calls with void return should have a non-void type
-			if (op->rhs->valtype == VOID) {
-				assert(op->rhs->type == A_CALL);
-				throw CompilerExcept{"error: variable initialization: void is not a valid variable type", op->rhs->src_tok->source};
+			if (op->rhs->type.ty == nullptr) {
+				// everything on the rhs of assignments except calls with void return should have a non-void type
+				assert(op->rhs->kind == A_CALL);
+
+				throw CompilerExcept{"error: assignment: can't assign void to something", op->rhs->src_tok->source};
 			}
 
 			// check if types match
-			if (op->lhs->valtype != op->rhs->valtype)
+			if (op->lhs->type.ty != op->rhs->type.ty)
 				throw CompilerExcept{"error: assignment: types do not match", op->src_tok->source};
 
-			op->valtype = op->lhs->valtype;
 		} break;
 
 		case A_UNOP: {
@@ -538,16 +651,47 @@ struct SemanticAnalysis {
 
 			recurse(op->operand);
 
-			op->valtype = typecheck_unary_op(op, op->operand);
+			op->type = typecheck_unary_op(op, op->operand);
 		} break;
 
 		case A_BINOP: {
 			auto* op = (AST_binop*)ast;
 
 			recurse(op->lhs);
-			recurse(op->rhs);
+			
+			if (op->op != OP_MEMBER) {
+				recurse(op->rhs);
 
-			op->valtype = typecheck_binary_op(op, op->lhs, op->rhs);
+				op->type = typecheck_binary_op(op, op->lhs, op->rhs);
+			}
+			else {
+				// Don't for recurse(op->rhs);
+				// since for '.' operator the rhs expected to be A_VAR, but identifier is not resolved like a normal var
+
+				if (!op->lhs->type.ty || op->lhs->type.ty->tclass != TY_STRUCT)
+					throw CompilerExcept{"error: member operator '.' expects struct on the left-hand side", op->lhs->src_tok->source};
+				if (op->rhs->kind != A_VAR)
+					throw CompilerExcept{"error: member operator '.' expects member identifier on the right-hand side", op->rhs->src_tok->source};
+			
+				auto find_member = [] (AST_structdef* struc, AST_var* memb) -> AST_vardecl* {
+					for (auto* strucmem : struc->members) {
+						if (strucmem->ident == memb->ident)
+							return strucmem;
+					}
+
+					throw CompilerExcept{"error: struct member not found", memb->src_tok->source};
+				};
+
+				auto* struc = (AST_structdef*)op->lhs->type.ty->decl;
+				auto* memb = (AST_var*)op->rhs;
+
+				memb->decl = find_member(struc, memb);
+				memb->type = Typeref::LValue(memb->decl->type.ty);
+
+				// a.b is a RValue if a is a RValue, b is always just a identifier referring to a member of the a struct refers to
+				op->type.ty   = op->rhs->type.ty;
+				op->type.rval = op->lhs->type.rval;
+			}
 		} break;
 
 		case A_IF:
@@ -558,10 +702,14 @@ struct SemanticAnalysis {
 			recurse(aif->if_body);
 			if (aif->else_body) recurse(aif->else_body);
 
-			if (ast->type == A_SELECT) {
-				if (aif->if_body->valtype != aif->else_body->valtype)
+			if (ast->kind == A_SELECT) {
+				if (aif->if_body->type.ty != aif->else_body->type.ty)
 					throw CompilerExcept{"error: select expression: types do not match", aif->src_tok->source};
-				aif->valtype = aif->if_body->valtype;
+				
+				// result is an LValue if both a and b are LValues, so that we can do
+				// (cond ? a : b) = 5;
+				aif->type.ty = aif->if_body->type.ty;
+				aif->type.rval = aif->if_body->type.rval || aif->else_body->type.rval;
 			}
 		} break;
 
@@ -603,7 +751,7 @@ struct SemanticAnalysis {
 
 			// can call functions before they are declared from anywhere inside the block
 			// _and_ from inside the while condition
-			prescan_block_for_funcs(block);
+			prescan_block(block);
 
 			// handle body block without opening a scope for it, so that vars are visible to cond
 			for (auto* n : block->statements)
@@ -625,12 +773,18 @@ struct SemanticAnalysis {
 
 			auto old_scope = stack.push_scope();
 
-			prescan_block_for_funcs(block); // can call functions before they are declared from anywhere inside the block
+			prescan_block(block); // can call functions before they are declared from anywhere inside the block
 
 			for (auto* n : block->statements)
 				recurse(n);
 
 			stack.reset_scope(old_scope);
+		} break;
+			
+		case A_STRUCTDEF: {
+			auto* struc = (AST_structdef*)ast;
+
+			// skip structdef, since members were already resolved during prescan
 		} break;
 
 		case A_FUNCDEF: {
@@ -639,8 +793,11 @@ struct SemanticAnalysis {
 			funcs_stack.emplace_back(fdef);
 			auto func_scope = stack.push_scope(true);
 
-			resolve_funcdecl_args(fdef->args);
-			resolve_funcdecl_args(fdef->rets);
+			// function args/rets already resolved during prescan, only declare the identifiers for the code body
+			for (auto* arg : fdef->args)
+				stack.declare_ident(arg, arg->ident);
+			for (auto* ret : fdef->rets)
+				stack.declare_ident(ret, ret->ident);
 
 			recurse(fdef->body);
 
@@ -656,7 +813,8 @@ struct SemanticAnalysis {
 
 			resolve_call_args(call, call->args, fdef->args);
 
-			call->valtype = fdef->rets.count > 0 ? fdef->rets[0]->valtype : VOID;
+			// returns are always RValues
+			call->type = Typeref::RValue( fdef->rets.count > 0 ? fdef->rets[0]->type.ty : nullptr );
 		} break;
 
 		case A_RETURN: {

@@ -135,13 +135,10 @@ inline double timer_end (int64_t start) {
 }
 
 ////
-inline AST cAST (ASTType type, Type valtype=VOID) {
-	return { type, nullptr, valtype };
-}
 
 // printf
-inline AST_vardecl bf_printf_val     = { cAST(A_VARDECL, STR), "format" };
-inline AST_vardecl bf_printf_varargs = { cAST(A_VARARGS     ), "args" };
+inline AST_vardecl bf_printf_val     = { cAST(A_VARDECL, pTY_STR), "format" };
+inline AST_vardecl bf_printf_varargs = { cAST(A_VARARGS         ), "args" };
 
 inline AST_vardecl* bf_printf_args[] = { &bf_printf_val, &bf_printf_varargs };
 inline AST_funcdef bf_printf = {
@@ -149,7 +146,7 @@ inline AST_funcdef bf_printf = {
 };
 
 // timer
-inline AST_vardecl bf_timer_ret = { cAST(A_VARDECL, INT), "timestamp" };
+inline AST_vardecl bf_timer_ret = { cAST(A_VARDECL, pTY_INT), "timestamp" };
 
 inline AST_vardecl* bf_timer_rets[] = { &bf_timer_ret };
 inline AST_funcdef bf_timer = {
@@ -157,8 +154,8 @@ inline AST_funcdef bf_timer = {
 };
 
 // timer_end
-inline AST_vardecl bf_timer_end_start = { cAST(A_VARDECL, INT), "start_timestamp" };
-inline AST_vardecl bf_timer_end_ret   = { cAST(A_VARDECL, FLT), "timestamp" };
+inline AST_vardecl bf_timer_end_start = { cAST(A_VARDECL, pTY_INT), "start_timestamp" };
+inline AST_vardecl bf_timer_end_ret   = { cAST(A_VARDECL, pTY_FLT), "timestamp" };
 
 inline AST_vardecl* bf_timer_end_args[] = { &bf_timer_end_start };
 inline AST_vardecl* bf_timer_end_rets[] = { &bf_timer_end_ret };

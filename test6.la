@@ -1,0 +1,58 @@
+
+//test(3);
+//
+//func test (i : int) {
+//	//i = 5; // error: cannot assign to a RValue.
+//	j := i;
+//	j++;
+//	//7++; // error: cannot inc/decrement RValue.
+//	//7 = 5; // error: cannot assign to a RValue.
+//	//(j+1)++; // error: cannot inc/decrement RValue.
+//
+//	l := j++;
+//	printf("{i} {i}\n", j,l);
+//}
+
+a : A;
+
+a.a = 5;
+a.flag = true;
+a.f = 7.4;
+
+a.foo.b0 = false;
+a.foo.b1 = true;
+a.foo.b2 = true;
+
+//a.g = 7.4; // error: struct member not found.
+
+//jjj : JJJ; // error: unknown identifer.
+
+struct A {
+	a    : int;
+	flag : bool;
+	foo  : B;
+	f    : flt;
+}
+
+print(a);
+
+func print (a : A) {
+	printf("a: {i}  flag: {b} f: {f} -- {i}|{i}|{i}\n",
+		a.a, a.flag, a.f,
+		a.foo.b0 ?1:0,
+		a.foo.b1 ?1:0,
+		a.foo.b2 ?1:0);
+}
+
+a.a = -a.a;
+a.flag = !a.flag;
+
+a.foo.b1 = !a.foo.b1;
+
+print(a);
+
+struct B {
+	b0 : bool;
+	b1 : bool;
+	b2 : bool;
+}

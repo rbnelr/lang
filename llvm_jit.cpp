@@ -134,7 +134,7 @@ struct JIT {
 		ZoneScoped;
 
 		optimize.add(llvm::createCFGSimplificationPass()); //Dead code elimination
-		//optimize.add(llvm::createSROAPass());
+		optimize.add(llvm::createSROAPass());
 		optimize.add(llvm::createLoopSimplifyCFGPass());
 		
 		optimize.add(llvm::createSCCPPass()); // createConstantPropagationPass ? 

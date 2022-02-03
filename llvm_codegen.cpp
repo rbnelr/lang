@@ -21,6 +21,7 @@ inline struct _IDFormStrbuf { char str[32]; } format_id (size_t id) {
 
 struct LLVM_gen {
 	std::vector<AST_funcdef*>& funcdefs;
+	std::vector<AST_structdef*>& structdefs;
 	SourceLines const& lines;
 
 	llvm::Module* modl; // owned by caller
@@ -69,16 +70,24 @@ struct LLVM_gen {
 		_is_builtin = false;
 		for (_dupl_func_i=0; _dupl_func_i<1000; ++_dupl_func_i) {
 	#endif
+			
+		// Clear just in case we codegen the same AST twice
+		for (auto* structdef : structdefs) {
+			structdef->llvm_struct = nullptr;
+		}
+		for (auto* structdef : structdefs) {
+			declare_struct(structdef);
+		}
 
 		// declare functions declared in source
-		for (size_t funcid = 0; funcid < funcdefs.size(); ++funcid) {
-			declare_function(funcdefs[funcid]);
+		for (auto* funcdef : funcdefs) {
+			declare_function(funcdef);
 		}
 
 		// now that all callable functions are declared
 		// generate IR for functions defined in source
-		for (size_t funcid = 0; funcid < funcdefs.size(); ++funcid) {
-			codegen_function(funcdefs[funcid]);
+		for (auto* funcdef : funcdefs) {
+			codegen_function(funcdef);
 		}
 
 	#if PROFILE_DUPLICATE_FUNCS
@@ -115,29 +124,53 @@ struct LLVM_gen {
 	size_t loop_count;
 	size_t cont_count;
 
-	void declare_local_var (AST_vardecl* vardecl) {
+	llvm::Value* declare_local_var (AST_vardecl* vardecl) {
 		auto tmp_build = llvm::IRBuilder<llvm::NoFolder>(alloca_block);
 
-		vardecl->llvm_type = map_type(vardecl->valtype);
+		vardecl->llvm_type = map_type(vardecl->type);
 			
 		auto* I = tmp_build.CreateAlloca(vardecl->llvm_type, nullptr, SR(vardecl->ident));
 		vardecl->llvm_value = I;
+
+		return I;
 	}
-	llvm::Value* load_local_var (AST* op, AST_vardecl* vardecl) {
-		if (vardecl->is_arg) {
-			return vardecl->llvm_value;
+
+	struct Value {
+		llvm::Value*     llvm_val = nullptr;
+		bool             rval;
+		llvm::Type*      type;
+
+		static Value RValue (llvm::Value* val) {
+			return { val, true };
 		}
-		else {
-			return build.CreateLoad(vardecl->llvm_type, vardecl->llvm_value, SR(vardecl->ident));
+		static Value LValue (llvm::Value* ptr, llvm::Type* type) {
+			return { ptr, false, type };
 		}
+	};
+
+	llvm::Value* load_value (Value val) {
+		if (val.llvm_val == nullptr)
+			return nullptr;
+		// val is value
+		else if (val.rval)
+			return val.llvm_val;
+		// val is ptr
+		else
+			return build.CreateLoad(val.type, val.llvm_val, val.llvm_val->getName());
 	}
-	void store_local_var (AST* op, AST_vardecl* vardecl, llvm::Value* val) {
-		if (vardecl->is_arg)
-			throw CompilerExcept{"Cannot assign to function arguments, since arguments are immutable", op->src_tok->source};
+	llvm::Value* codegen_rval (AST* ast) {
+		Value val = codegen(ast);
+		llvm::Value* llvm_val = load_value(val);
+		assert(llvm_val);
+		return llvm_val;
+	}
+
+	void store_value (Value val, llvm::Value* rhs) {
+		assert(val.llvm_val != nullptr); // cannot assign to void
+		assert(!val.rval); // cannot assign to RValues
 		
-		build.CreateStore(val, vardecl->llvm_value);
+		build.CreateStore(rhs, val.llvm_val);
 	}
-	
 
 	void begin_basic_block (llvm::BasicBlock* block) {
 		block->insertInto(cur_fdef->llvm_func);
@@ -154,20 +187,54 @@ struct LLVM_gen {
 	}
 	
 ////
-	llvm::Type* map_type (Type type) {
-		switch (type) {
-			case VOID: return llvm::Type::getVoidTy(ctx);
-			case BOOL: return llvm::Type::getInt1Ty(ctx);
-			case INT:  return llvm::Type::getInt64Ty(ctx);
-			case FLT:  return llvm::Type::getDoubleTy(ctx);
-			case STR:  return llvm::Type::getInt8PtrTy(ctx);
+	llvm::Type* map_type (Typeref& type) {
+		switch (type.ty->tclass) {
+			//case TY_VOID: return llvm::Type::getVoidTy(ctx);
+			case TY_BOOL: return llvm::Type::getInt1Ty(ctx);
+			case TY_INT:  return llvm::Type::getInt64Ty(ctx);
+			case TY_FLT:  return llvm::Type::getDoubleTy(ctx);
+			case TY_STR:  return llvm::Type::getInt8PtrTy(ctx);
+
+			case TY_STRUCT: {
+				assert(type.ty->decl && type.ty->decl->kind == A_STRUCTDEF);
+				auto* struc = (AST_structdef*)type.ty->decl;
+
+				// handle out-of order struct dependencies
+				if (struc->llvm_struct == nullptr) {
+					declare_struct(struc);
+				}
+				assert(struc->llvm_struct);
+				return struc->llvm_struct;
+			}
+
 			INVALID_DEFAULT;
 		}
 	}
 	
+	void declare_struct (AST_structdef* struc) {
+		if (struc->llvm_struct)
+			return; // already declared as a dependency of an earlier struct
+
+		llvm::SmallVector<llvm::Type*, 32> elements;
+
+		unsigned idx = 0;
+		for (auto* member : struc->members) {
+			member->llvm_type = map_type(member->type);
+
+			elements.push_back(member->llvm_type);
+
+			// struct members don't have values directly (neither SSA values nor alloca'd values on the stack)
+			// instead ptrs are GEP'd via llvm_GEP_idx
+			member->llvm_value = nullptr;
+			member->llvm_GEP_idx = idx++;
+		}
+
+		struc->llvm_struct = llvm::StructType::create(ctx, elements, SR(struc->ident));
+	}
+
 	llvm::Value* codegen_unary (AST_unop* op, llvm::Value* operand) {
-		switch (op->operand->valtype) {
-		case INT: {
+		switch (op->operand->type.ty->tclass) {
+		case TY_INT: {
 			switch (op->op) {
 				case OP_POSITIVE:    return operand; // no-op
 				case OP_NEGATE:      return build.CreateNeg (operand, "_neg");
@@ -178,14 +245,14 @@ struct LLVM_gen {
 				INVALID_DEFAULT;
 			}
 		}
-		case BOOL: {
+		case TY_BOOL: {
 			switch (op->op) {
 				case OP_BIT_NOT:
 				case OP_LOGICAL_NOT: return build.CreateNot(operand, "_not");
 				INVALID_DEFAULT;
 			}
 		}
-		case FLT: {
+		case TY_FLT: {
 			switch (op->op) {
 				case OP_POSITIVE:    return operand; // no-op
 				case OP_NEGATE:      return build.CreateFNeg(operand, "_neg");
@@ -196,11 +263,10 @@ struct LLVM_gen {
 		}
 	}
 	llvm::Value* codegen_binop (AST_binop* op, llvm::Value* lhs, llvm::Value* rhs) {
-		assert(op->lhs->valtype == op->rhs->valtype);
-		//assert(op->valtype == op->rhs->valtype); // not true for bools
-
-		switch (op->lhs->valtype) {
-		case INT: {
+		assert(op->lhs->type.ty == op->rhs->type.ty);
+		
+		switch (op->lhs->type.ty->tclass) {
+		case TY_INT: {
 			switch (op->op) {
 				case OP_ADD:        return build.CreateAdd (lhs, rhs, "_add");
 				case OP_SUB:        return build.CreateSub (lhs, rhs, "_sub");
@@ -222,7 +288,7 @@ struct LLVM_gen {
 				INVALID_DEFAULT;
 			}
 		} break;
-		case BOOL: {
+		case TY_BOOL: {
 			switch (op->op) {
 				case OP_BIT_AND:    return build.CreateAnd (lhs, rhs, "_and");
 				case OP_BIT_OR:     return build.CreateOr  (lhs, rhs, "_or");
@@ -238,7 +304,7 @@ struct LLVM_gen {
 				INVALID_DEFAULT;
 			}
 		} break;
-		case FLT: {
+		case TY_FLT: {
 			switch (op->op) {
 				case OP_ADD:        return build.CreateFAdd(lhs, rhs, "_add");
 				case OP_SUB:        return build.CreateFSub(lhs, rhs, "_sub");
@@ -256,8 +322,7 @@ struct LLVM_gen {
 				INVALID_DEFAULT;
 			}
 		} break;
-		default:
-			throw CompilerExcept{ "error: math ops not valid for this type", op->src_tok->source };
+		INVALID_DEFAULT;
 		}
 	}
 
@@ -281,14 +346,14 @@ struct LLVM_gen {
 		}
 	}
 	
-	llvm::Function* declare_function (AST_funcdef* fdef) {
+	void declare_function (AST_funcdef* fdef) {
 		// returns
 		llvm::Type* ret_ty = llvm::Type::getVoidTy(ctx);
 		assert(fdef->rets.count <= 1); // TODO: implememt multiple return values
 		
 		for (auto* ret : fdef->rets) {
-			assert(ret->type != A_VARARGS);
-			ret_ty = map_type(ret->valtype);
+			assert(ret->kind != A_VARARGS);
+			ret_ty = map_type(ret->type);
 		}
 
 		// arguments
@@ -296,12 +361,12 @@ struct LLVM_gen {
 		bool vararg = false;
 		
 		for (auto* arg : fdef->args) {
-			if (arg->type == A_VARARGS) {
+			if (arg->kind == A_VARARGS) {
 				vararg = true;
 				break;
 			}
 			else {
-				args_ty.push_back(map_type(arg->valtype));
+				args_ty.push_back(map_type(arg->type));
 			}
 
 			arg->is_arg = true;
@@ -324,7 +389,7 @@ struct LLVM_gen {
 		// set argument names
 		unsigned i = 0;
 		for (auto* arg : fdef->args) {
-			if (arg->type == A_VARARGS)
+			if (arg->kind == A_VARARGS)
 				break;
 			arg->llvm_value = func->getArg(i++);
 			arg->llvm_value->setName(SR(arg->ident));
@@ -352,8 +417,6 @@ struct LLVM_gen {
 			CreateFunctionType(args_ty.size()), ScopeLine);
 		func->setSubprogram(SP);
 		*/
-
-		return func;
 	}
 	
 	void codegen_function (AST_funcdef* fdef) {
@@ -376,13 +439,14 @@ struct LLVM_gen {
 		begin_basic_block(entry_block);
 
 		for (auto* ret : fdef->rets) {
-			assert(ret->type != A_VARARGS);
+			assert(ret->kind != A_VARARGS);
 			
-			declare_local_var(ret);
+			auto* ptr = declare_local_var(ret);
 
 			if (ret->init) {
-				llvm::Value* val = codegen(ret->init);
-				store_local_var(ret->init, ret, val);
+				llvm::Value* val = codegen_rval(ret->init);
+
+				build.CreateStore(val, ptr);
 			}
 		}
 
@@ -408,8 +472,9 @@ struct LLVM_gen {
 
 		llvm::Instruction* I;
 		if (cur_fdef->rets.count == 1) {
-			auto* val = load_local_var(ast, cur_fdef->rets[0]);
-
+			auto* vardecl = cur_fdef->rets[0];
+			auto* val = build.CreateLoad(vardecl->llvm_type, vardecl->llvm_value, SR(vardecl->ident));
+			
 			I = build.CreateRet(val);
 		}
 		else {
@@ -419,43 +484,44 @@ struct LLVM_gen {
 		//dbg_info(I, ast);
 	}
 
-	llvm::Value* codegen (AST* ast) {
-		switch (ast->type) {
+	Value codegen (AST* ast) {
+		switch (ast->kind) {
 		case A_LITERAL: {
 			auto* lit = (AST_literal*)ast;
 				
 			llvm::Value* val;
-			switch (lit->valtype) {
-				case BOOL:
+			switch (lit->type.ty->tclass) {
+				case TY_BOOL:
 					val = llvm::ConstantInt::getBool(ctx, lit->value.b);
 					break;
-				case INT:
+				case TY_INT:
 					val = llvm::ConstantInt::get(llvm::Type::getInt64Ty(ctx),
 						llvm::APInt(64, (uint64_t)lit->value.i, true));
 					break;
-				case FLT:
+				case TY_FLT:
 					val = llvm::ConstantFP::get(llvm::Type::getDoubleTy(ctx),
 						llvm::APFloat(lit->value.f));
 					break;
-				case STR:
+				case TY_STR:
 					val = build.CreateGlobalStringPtr(lit->value.str, llvm::Twine("strlit.") + format_id(strlit_count++).str);
 					break;
 				INVALID_DEFAULT;
 			}
-			assert(val->getType() == map_type(lit->valtype));
-			return val;
+			assert(val->getType() == map_type(lit->type));
+
+			return Value::RValue(val);
 		}
 
 		case A_VARDECL: {
 			auto* vardecl = (AST_vardecl*)ast;
 
-			declare_local_var(vardecl);
+			auto* ptr = declare_local_var(vardecl);
 
 			if (vardecl->init) {
 				// eval rhs
-				auto* val = codegen(vardecl->init);
+				llvm::Value* val = codegen_rval(vardecl->init);
 				// assign to new var
-				store_local_var(vardecl, vardecl, val);
+				build.CreateStore(val, ptr);
 			}
 			return {};
 		}
@@ -463,63 +529,48 @@ struct LLVM_gen {
 		case A_VAR: {
 			auto* var = (AST_var*)ast;
 			auto* vardecl = (AST_vardecl*)var->decl;
+			assert(vardecl);
 			
-			return load_local_var(ast, vardecl);
+			if (vardecl->is_arg)
+				return Value::RValue(vardecl->llvm_value);
+			else
+				return Value::LValue(vardecl->llvm_value, vardecl->llvm_type);
 		}
 
 		case A_ASSIGNOP: {
 			auto* op = (AST_binop*)ast;
 
-			if (op->lhs->type != A_VAR)
-				throw CompilerExcept{"error: expected variable for assignop lhs", ast->src_tok->source};
+			// eval lhs first (it's a lvalue, so a ptr)
+			Value lhs = codegen(op->lhs);
+			// eval rhs
+			llvm::Value* rhs = codegen_rval(op->rhs);
 
-			auto* var = (AST_var*)op->lhs;
-
-			llvm::Value* result;
-
-			if (op->op == OP_ASSIGN) {
-				// simple assignment of rhs to lhs
-				result = codegen(op->rhs);
-			}
-			else {
-				// load lhs first
-				llvm::Value* lhs = load_local_var(op, var->decl);
-				// eval rhs
-				llvm::Value* rhs = codegen(op->rhs);
+			if (op->op != OP_ASSIGN) {
 				// eval binary operator and assign to lhs
-				result = codegen_binop(op, lhs, rhs);
+				rhs = codegen_binop(op, load_value(lhs), rhs);
 			}
 			
-			store_local_var(op, var->decl, result);
+			store_value(lhs, rhs);
 			return {};
 		}
 
 		case A_UNOP: {
 			auto* op = (AST_unop*)ast;
-			assert(op->valtype == op->operand->valtype);
-				
-			llvm::Value* old_val = codegen(op->operand);
+			assert(op->type.ty == op->operand->type.ty);
+			
+			Value operand = codegen(op->operand);
+
+			llvm::Value* old_val = load_value(operand);
 			llvm::Value* result  = codegen_unary(op, old_val);
 				
-			switch (op->op) {
-				case OP_POSITIVE: case OP_NEGATE:
-				case OP_BIT_NOT: case OP_LOGICAL_NOT: {
-					return result;
-				}
-
-				case OP_INC: case OP_DEC: {
-					if (op->operand->type != A_VAR)
-						throw CompilerExcept{"error: expected variable for unary post operator", ast->src_tok->source};
-					auto* var = (AST_var*)op->operand;
-
-					// assign inc/decremented to var
-					store_local_var(op, var->decl, result);
-					// return old value
-					return old_val;
-				}
-
-				INVALID_DEFAULT;
+			if (op->op == OP_INC || op->op == OP_DEC) {
+				// assign inc/decremented to var
+				store_value(operand, result);
+				// return old value
+				result = old_val;
 			}
+
+			return Value::RValue(result);
 		}
 
 		case A_BINOP: {
@@ -535,7 +586,7 @@ struct LLVM_gen {
 				auto* cont_block = llvm::BasicBlock::Create(ctx, llvm::Twine("cont") + cid.str);
 				
 				// eval lhs
-				llvm::Value* cond = codegen(op->lhs);
+				llvm::Value* cond = codegen_rval(op->lhs);
 
 				auto* phi_short_circuit_block = build.GetInsertBlock(); // nested ifs or loops (in codegen) change the current block
 				
@@ -555,7 +606,7 @@ struct LLVM_gen {
 				// eval rhs if did not short-circuit
 				begin_basic_block(else_block);
 					
-				auto* rhs_result = codegen(op->rhs);
+				llvm::Value* rhs_result = codegen_rval(op->rhs);
 				auto* phi_rhs_block = build.GetInsertBlock();
 					
 				build.CreateBr(cont_block);
@@ -567,15 +618,44 @@ struct LLVM_gen {
 				llvm::PHINode* result = build.CreatePHI(llvm::Type::getInt1Ty(ctx), 2,  llvm::Twine("_") + name);
 				result->addIncoming(short_circuit_result, phi_short_circuit_block);
 				result->addIncoming(rhs_result, phi_rhs_block);
-				return result;
+				return Value::RValue(result);
+			}
+
+			if (op->op == OP_MEMBER) {
+				assert(op->rhs->kind == A_VAR);
+
+				auto* struc = (AST_structdef*)op->lhs->type.ty->decl;
+				auto* memb = (AST_var*)op->rhs;
+				assert(memb->decl != nullptr);
+
+				Value lhs = codegen(op->lhs);
+				if (lhs.rval) {
+					unsigned indices[] = {
+						memb->decl->llvm_GEP_idx,
+					};
+					llvm::Value* val = build.CreateExtractValue(lhs.llvm_val, indices, SR(memb->decl->ident));
+
+					return Value::RValue(val);
+				}
+				else {
+					assert(lhs.type->isStructTy());
+				
+					llvm::Value* indices[] = {
+						llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0),
+						llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), memb->decl->llvm_GEP_idx),
+					};
+					llvm::Value* ptr = build.CreateInBoundsGEP(lhs.type, lhs.llvm_val, indices, SR(memb->decl->ident));
+
+					return Value::LValue(ptr, memb->decl->llvm_type);
+				}
 			}
 
 			// eval lhs
-			llvm::Value* lhs = codegen(op->lhs);
+			llvm::Value* lhs = codegen_rval(op->lhs);
 			// eval rhs
-			llvm::Value* rhs = codegen(op->rhs);
+			llvm::Value* rhs = codegen_rval(op->rhs);
 			// eval binary operator
-			return codegen_binop(op, lhs, rhs);
+			return Value::RValue(codegen_binop(op, lhs, rhs));
 		}
 
 		case A_BLOCK: {
@@ -598,11 +678,11 @@ struct LLVM_gen {
 			auto* else_block = aif->else_body ? llvm::BasicBlock::Create(ctx, llvm::Twine("if") + id.str + ".else") : nullptr;
 			auto* cont_block =                  llvm::BasicBlock::Create(ctx, llvm::Twine("cont") + cid.str       );
 				
-			llvm::Value       *true_result,    *false_result;
+			Value              true_result,     false_result;
 			llvm::BasicBlock  *phi_then_block, *phi_else_block;
 
 			{ // condition at end of current block
-				llvm::Value* cond = codegen(aif->cond);
+				llvm::Value* cond = load_value(codegen(aif->cond));
 				
 				build.CreateCondBr(cond, then_block, aif->else_body ? else_block : cont_block);
 			}
@@ -627,18 +707,49 @@ struct LLVM_gen {
 				
 			// following code will be in cont block
 			begin_basic_block(cont_block);
-				
-			if (aif->type == A_SELECT) {
-				assert(else_block);
-				assert(true_result && false_result);
-				assert(true_result->getType() == false_result->getType());
-				
-				llvm::PHINode* result = build.CreatePHI(true_result->getType(), 2, "_sel");
-				result->addIncoming(true_result,  phi_then_block);
-				result->addIncoming(false_result, phi_else_block);
-				return result;
+			
+			bool rval = aif->type.ty && aif->type.rval;
+
+			// normal if-else
+			if (aif->kind != A_SELECT) {
+				return {};
 			}
-			return {};
+			// ternary operator a?b:c
+			else {
+				assert(else_block);
+
+				llvm::Value *T, *F;
+
+				assert(aif->type.ty);
+				if (aif->type.rval) {
+					// at least one value are RValues, load them and return RValue
+					T = load_value(true_result);
+					F = load_value(false_result);
+
+					assert(T && F);
+					assert(T->getType() == F->getType());
+
+					llvm::PHINode* result = build.CreatePHI(T->getType(), 2, "_sel");
+					result->addIncoming(T, phi_then_block);
+					result->addIncoming(F, phi_else_block);
+					return Value::RValue(result);
+				}
+				else {
+					// both values are LValues, select between the ptrs
+					// to allow for  (cond ? a : b) = 5;
+
+					assert(!true_result.rval && !false_result.rval);
+					assert( true_result.type ==  false_result.type);
+					
+					T = true_result .llvm_val; // select between ptr
+					F = false_result.llvm_val;
+
+					llvm::PHINode* result = build.CreatePHI(T->getType(), 2, "_sel");
+					result->addIncoming(T, phi_then_block);
+					result->addIncoming(F, phi_else_block);
+					return Value::LValue(result, T->getType());
+				}
+			}
 		}
 			
 		case A_WHILE:
@@ -673,13 +784,13 @@ struct LLVM_gen {
 						
 				// do-while:     prev block branches to loop body
 				// for & while:  prev block branches to loop cond
-				build.CreateBr(ast->type == A_DO_WHILE ? loop_body_block : loop_cond_block);
+				build.CreateBr(ast->kind == A_DO_WHILE ? loop_body_block : loop_cond_block);
 			}
 
-			if (ast->type != A_DO_WHILE) { // loop cond for (for & while)
+			if (ast->kind != A_DO_WHILE) { // loop cond for (for & while)
 				begin_basic_block(loop_cond_block);
 						
-				llvm::Value* cond = codegen(loop->cond);
+				llvm::Value* cond = codegen_rval(loop->cond);
 
 				build.CreateCondBr(cond, loop_body_block, cont_block);
 			}
@@ -701,10 +812,10 @@ struct LLVM_gen {
 				build.CreateBr(loop_cond_block);
 			}
 				
-			if (ast->type == A_DO_WHILE){ // loop cond (do-while)
+			if (ast->kind == A_DO_WHILE){ // loop cond (do-while)
 				begin_basic_block(loop_cond_block);
 						
-				llvm::Value* cond = codegen(loop->cond);
+				llvm::Value* cond = codegen_rval(loop->cond);
 
 				build.CreateCondBr(cond, loop_body_block, cont_block);
 			}
@@ -742,9 +853,10 @@ struct LLVM_gen {
 			arg_values.resize(call->resolved_args.count, nullptr);
 
 			for (size_t i=0; i<call->resolved_args.count; ++i)
-				arg_values[i] = codegen(call->resolved_args[i]);
+				arg_values[i] = codegen_rval(call->resolved_args[i]);
 
-			return build.CreateCall(fdef->llvm_func, arg_values, fdef->rets.count > 0 ? "_call" : "");
+			llvm::Value* retval = build.CreateCall(fdef->llvm_func, arg_values, fdef->rets.count > 0 ? "_call" : "");
+			return Value::RValue(retval);
 		}
 			
 		case A_RETURN: {
@@ -753,11 +865,10 @@ struct LLVM_gen {
 			// TODO: implement multiple returns
 			assert(ret->args.count <= 1);
 
-			llvm::Value* retval = nullptr;
 			for (size_t i=0; i<ret->args.count; ++i) {
-				llvm::Value* result = codegen(ret->args[i]->expr);
+				llvm::Value* result = codegen_rval(ret->args[i]->expr);
 
-				store_local_var(ret, ret->args[i]->decl, result);
+				build.CreateStore(result, ret->args[i]->decl->llvm_value);
 			}
 			
 			return_ret_vars(ret);
@@ -772,11 +883,14 @@ struct LLVM_gen {
 	}
 };
 
-llvm::Module* llvm_gen_module (strview const& filename, std::vector<AST_funcdef*>& funcdefs, SourceLines const& lines) {
+llvm::Module* llvm_gen_module (strview const& filename,
+		std::vector<AST_funcdef*>& funcdefs,
+		std::vector<AST_structdef*>& structdefs,
+		SourceLines const& lines) {
 	ZoneScoped;
 
 	LLVM_gen llvm_gen = {
-		funcdefs, lines
+		funcdefs, structdefs, lines
 	};
 	llvm_gen.generate(filename);
 

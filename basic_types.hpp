@@ -1,25 +1,14 @@
 #pragma once
 #include "common.hpp"
 
-#undef VOID
-#undef BOOL
-#undef INT
-#undef FLT
-#undef STR
-
-enum Type : uint32_t {
-	VOID=0,
-	BOOL,
-	INT,
-	FLT,
-	STR,
-};
-inline constexpr const char* Type_str[] = {
-	"VOID",
-	"BOOL",
-	"INT",
-	"FLT",
-	"STR",
+enum TypeClass {
+	TY_BOOL,
+	TY_INT,
+	TY_FLT,
+	TY_STR,
+	
+	TY_FUNC,
+	TY_STRUCT,
 };
 
 union Value {
@@ -29,15 +18,15 @@ union Value {
 	const char*   str; // non-owning
 };
 
-inline void dbg_print (Type type, Value const& val) {
-	switch (type) {
-		case BOOL: case INT:
+inline void dbg_print (TypeClass tclass, Value const& val) {
+	switch (tclass) {
+		case TY_BOOL: case TY_INT:
 			printf("%lli", val.i);
 			break;
-		case FLT:
+		case TY_FLT:
 			printf("%f", val.f);
 			break;
-		case STR: {
+		case TY_STR: {
 			auto str = escape_string_capped(val.str);
 			printf("\"%s\"", str.c_str());
 		} break;

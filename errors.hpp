@@ -2,17 +2,33 @@
 #include "common.hpp"
 #include "line_map.hpp"
 
-struct CompilerExcept {
-	const char* errstr;
+inline constexpr char const* CONCOL_ERR      = "\x1b[0;1;31m";
+inline constexpr char const* CONCOL_ERR_SRC  = "\x1b[0;1;37m";
+inline constexpr char const* CONCOL_NOTE     = "\x1b[0m";
+inline constexpr char const* CONCOL_NOTE_SRC = "\x1b[0;1;30m";
 
-	source_range tok;
+struct ErrorSource {
+	std::string  msg;
+	source_range src;
 
+	ErrorSource () {}
+
+	_NOINLINE ErrorSource (source_range src, char const* format, ...): src{src} {
+		va_list vl;
+		va_start(vl, format);
+
+		vprints(&msg, format, vl);
+
+		va_end(vl);
+	}
+
+	
 	static inline int tab_spaces = 4;
 
-	void print (char const* filename, SourceLines const& lines) {
-		assert(tok.end > tok.start);
+	void print (char const* filename, SourceLines const& lines, const char* col1, const char* col2) {
+		assert(src.end > src.start);
 
-		size_t start_lineno = lines.find_lineno(tok.start);
+		size_t start_lineno = lines.find_lineno(src.start);
 		auto line_str = lines.get_line_text(start_lineno);
 
 		auto print_line = [&] () {
@@ -37,25 +53,25 @@ struct CompilerExcept {
 			}
 		};
 
-		size_t charno = tok.start - line_str.data();
+		size_t charno = src.start - line_str.data();
 
-		if (ansi_color_supported) fputs(ANSI_COLOR_RED, stderr);
-		fprintf(stderr, "%s:%" PRIuMAX ":%" PRIuMAX ": %s.\n", filename, start_lineno+1, charno, errstr);
+		if (ansi_color_supported) fputs(col1, stderr);
+		fprintf(stderr, "%s:%" PRIuMAX ":%" PRIuMAX ": %s.\n", filename, start_lineno+1, charno, msg.c_str());
 
-		if (ansi_color_supported) fputs(ANSI_COLOR_RESET, stderr);
+		if (ansi_color_supported) fputs(col2, stderr);
 		
 		print_line();
 		fputc('\n', stderr);
 
-		if (ansi_color_supported) fputs(ANSI_COLOR_RED, stderr);
+		if (ansi_color_supported) fputs(col1, stderr);
 
-		assert(tok.start >= line_str.data());
+		assert(src.start >= line_str.data());
 
 		// source.start and source.end could be in a bit after the line str due to the newline being excluded
 		// this is handled in print_line_range though
 		//assert(source.end   <= line_str.data() + line_str.size());
 
-		print_line_range(tok.start - line_str.data(), tok.end - line_str.data());
+		print_line_range(src.start - line_str.data(), src.end - line_str.data());
 		fputs("\n", stderr);
 
 		if (ansi_color_supported) fputs(ANSI_COLOR_RESET, stderr);
@@ -64,11 +80,26 @@ struct CompilerExcept {
 	}
 };
 
+struct CompilerExcept {
+	ErrorSource              err;
+	smallvec<ErrorSource, 8> notes;
+	
+	CompilerExcept (ErrorSource err): err{err} {}
+	CompilerExcept (ErrorSource err, std::initializer_list<ErrorSource> notes): err{err}, notes{notes} {}
+
+	void print (char const* filename, SourceLines const& lines) {
+		err.print(filename, lines, CONCOL_ERR, CONCOL_ERR_SRC);
+
+		for (auto& note : notes)
+			note.print(filename, lines, CONCOL_NOTE, CONCOL_NOTE_SRC);
+	}
+};
+
 struct RuntimeExcept {
 	const char* errstr;
 
 	void print () {
-		if (ansi_color_supported) fputs(ANSI_COLOR_RED, stderr);
+		if (ansi_color_supported) fputs(CONCOL_ERR, stderr);
 		fprintf(stderr, "%s.\n", errstr);
 		if (ansi_color_supported) fputs(ANSI_COLOR_RESET, stderr);
 

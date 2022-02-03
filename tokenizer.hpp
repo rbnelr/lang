@@ -4,271 +4,96 @@
 #include "basic_types.hpp"
 #include "line_map.hpp"
 
-constexpr inline bool is_decimal_c (char c) {
-	return c >= '0' && c <= '9';
-}
-constexpr inline bool is_hex_c (char c) {
-	return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f');
-}
+#define TOKTYPES \
+	/*end of file*/                    \
+	X( EOF=0,         "<EOF>" )        \
+	/* literals of differing types */  \
+	X( LITERAL,       "literal" )      \
+	/* starts with  '_' or [a-Z]  and then any number of  '_' or [a-Z] or [0-9] */ \
+	X( IDENTIFIER,    "identifier" ) \
+\
+	X( FUNC,          "func"       ) \
+	X( STRUCT,        "struct"     ) \
+	/* keywords */ \
+	X( IF,            "if"         ) \
+	X( ELIF,          "elif"       ) \
+	X( ELSE,          "else"       ) \
+\
+	X( WHILE,         "while"      ) \
+	X( FOR,           "for"        ) \
+	X( DO,            "do"         ) \
+\
+	X( RETURN,        "return"     ) \
+	X( BREAK,         "break"      ) \
+	X( CONTINUE,      "continue"   ) \
+	X( GOTO,          "goto"       ) \
+\
+	X( COLON,         ":"  ) \
+	X( SEMICOLON,     ";"  ) \
+	X( COMMA,         ","  ) \
+\
+	X( PAREN_OPEN,    "("  ) \
+	X( PAREN_CLOSE,   ")"  ) \
+	X( BLOCK_OPEN,    "{"  ) \
+	X( BLOCK_CLOSE,   "}"  ) \
+	X( INDEX_OPEN,    "["  ) \
+	X( INDEX_CLOSE,   "]"  ) \
+\
+	X( ADD,           "+"  ) \
+	X( SUB,           "-"  ) \
+	X( MUL,           "*"  ) \
+	X( DIV,           "/"  ) \
+	X( MOD,           "%"  ) \
+\
+	X( BIT_AND,       "&"  ) \
+	X( BIT_OR,        "|"  ) \
+	X( BIT_XOR,       "^"  ) \
+\
+	X( AND,           "&&" ) \
+	X( OR,            "||" ) \
+\
+	X( LESS,          "<"  ) \
+	X( LESSEQ,        "<=" ) \
+	X( GREATER,       ">"  ) \
+	X( GREATEREQ,     ">=" ) \
+	X( EQUALS,        "==" ) \
+	X( NOT_EQUALS,    "!=" ) \
+\
+	X( MEMBER,        "."  ) \
+\
+	X( QUESTIONMARK,  "?"  ) \
+\
+	X( BIT_NOT,       "~"   ) \
+	X( NOT,           "!"   ) /* unary (prefix) operator */ \
+	X( INC,           "x++" ) /* postincrement */ \
+	X( DEC,           "x--" ) /* postdecrement */ \
+\
+	X( ASSIGN,        "="   ) \
+	X( ADDEQ,         "+="  ) \
+	X( SUBEQ,         "-="  ) \
+	X( MULEQ,         "*="  ) \
+	X( DIVEQ,         "/="  ) \
+	X( MODEQ,         "%="  ) \
 
-constexpr inline bool is_ident_start_c (char c) {
-	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
-}
-constexpr inline bool is_ident_c (char c) {
-	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || (c >= '0' && c <= '9');
-}
-constexpr inline bool is_whitespace_c (char c) {
-	return c == ' ' || c == '\t';
-}
-
-// parse 1_000_000 as 1000000 for better readability
-// (user can put _ anywhere in int after intial digit
-inline bool parse_integer (const char*& c, int64_t* out_int) {
-	const char* cur = c;
-	if (*cur < '0' || *cur > '9')
-		return false;
-
-	int64_t out = 0;
-	while ((*cur >= '0' && *cur <= '9') || *cur == '_') {
-		if (*cur != '_') {
-			out *= 10;
-			out += *cur - '0';
-		}
-		cur++;
-	}
-
-	*out_int = (int)out;
-	c = cur;
-	return true;
-}
-
-inline bool parse_double (const char*& c, double* out) {
-	char const* cur = c;
-	double val = strtod(c, (char**)&cur); // need to cast away const for strtod api
-
-	if (cur > c) {
-		*out = val;
-		c = cur;
-		return true;
-	}
-	return false; // parsing error
-}
-
+#define X(ENUM, SHORTSTR) T_##ENUM,
 enum TokenType {
-	T_EOF=0, // end of file
-
-	// literals of differing types
-	T_LITERAL,
-
-	// starts with  '_' or [a-Z]  and then any number of  '_' or [a-Z] or [0-9]
-	T_IDENTIFIER,
-
-	T_FUNC,
-	T_STRUCT,
-
-	// keywords
-	T_IF,
-	T_ELIF,
-	T_ELSE,
-
-	T_WHILE,
-	T_FOR,
-	T_DO,
-
-	T_RETURN,
-	T_BREAK,
-	T_CONTINUE,
-	T_GOTO,
-	
-	T_COLON,         // :
-	T_SEMICOLON,     // ;
-	T_COMMA,         // ,
-
-	T_PAREN_OPEN,    // (
-	T_PAREN_CLOSE,   // )
-	T_BLOCK_OPEN,    // {
-	T_BLOCK_CLOSE,   // }
-	T_INDEX_OPEN,    // [
-	T_INDEX_CLOSE,   // ]
-	
-	T_ADD,           // +
-	T_SUB,           // -   binary operator   OR   unary (prefix operator)
-	T_MUL,           // *
-	T_DIV,           // /
-	T_MOD,           // %
-
-	T_BIT_AND,       // &
-	T_BIT_OR,        // |
-	T_BIT_XOR,       // ^
-
-	T_AND,           // &&
-	T_OR,            // ||
-
-	T_LESS,          // <
-	T_LESSEQ,        // <=
-	T_GREATER,       // >
-	T_GREATEREQ,     // >=
-	T_EQUALS,        // ==
-	T_NOT_EQUALS,    // !=
-
-	T_MEMBER,        // .
-
-	T_QUESTIONMARK,  // ?
-	
-	T_BIT_NOT,       // ~
-	T_NOT,           // !   unary (prefix) operator
-	T_INC,           // x++  postincrement
-	T_DEC,           // x--  postdecrement
-
-	T_ASSIGN,        // =
-	T_ADDEQ,         // +=
-	T_SUBEQ,         // -=
-	T_MULEQ,         // *=
-	T_DIVEQ,         // /=
-	T_MODEQ,         // %=
+	TOKTYPES
 };
+#undef X
+
+#define X(ENUM, SHORTSTR) STRINGIFY(T_##ENUM),
 inline constexpr const char* TokenType_str[] = {
-	"T_EOF",
-
-	"T_LITERAL",
-
-	"T_IDENTIFIER",
-
-	"T_FUNC",
-	"T_STRUCT",
-
-	"T_IF",
-	"T_ELIF",
-	"T_ELSE",
-
-	"T_WHILE",
-	"T_FOR",
-	"T_DO",
-
-	"T_RETURN",
-	"T_BREAK",
-	"T_CONTINUE",
-	"T_GOTO",
-
-	"T_COLON",
-	"T_SEMICOLON",
-	"T_COMMA",
-
-	"T_PAREN_OPEN",
-	"T_PAREN_CLOSE",
-	"T_BLOCK_OPEN",
-	"T_BLOCK_CLOSE",
-	"T_INDEX_OPEN",
-	"T_INDEX_CLOSE",
-
-	"T_ADD",
-	"T_SUB",
-	"T_MUL",
-	"T_DIV",
-	"T_MOD",
-
-	"T_BIT_AND",
-	"T_BIT_OR",
-	"T_BIT_XOR",
-	
-	"T_AND",            // ||
-
-	"T_LESS",
-	"T_LESSEQ",
-	"T_GREATER",
-	"T_GREATEREQ",
-	"T_EQUALS",
-	"T_NOT_EQUALS",
-
-	"T_MEMBER",
-
-	"T_QUESTIONMARK",
-	
-	"T_BIT_NOT",
-	"T_NOT",
-	"T_INC",
-	"T_DEC",
-
-	"T_ASSIGN",
-	"T_ADDEQ",
-	"T_SUBEQ",
-	"T_MULEQ",
-	"T_DIVEQ",
-	"T_MODEQ",
-	
+	TOKTYPES
 };
-/*
+#undef X
+
+#define X(ENUM, SHORTSTR) SHORTSTR,
 inline constexpr const char* TokenType_char[] = {
-	"<EOF>",
-
-	"literal",
-
-	"identifier",
-
-	"func",
-	"struct",
-
-	"if",
-	"elif",
-	"else",
-
-	"while",
-	"for",
-	"do",
-
-	"return",
-	"break",
-	"continue",
-	"goto",
-
-	":",
-	";",
-	",",
-	
-	"(",
-	")",
-	"{",
-	"}",
-	"[",
-	"]",
-
-	"+",
-	"-",
-	"*",
-	"/",
-	"%",
-
-	"&",
-	"|",
-	"^",
-	
-	"&&",
-	"||",
-
-	"<",
-	"<=",
-	">",
-	">=",
-	"==",
-	"!=",
-
-	".",
-
-	"?",
-	
-	"~",
-	"!",
-	"++",
-	"--",
-
-	"=",
-	"+=",
-	"-=",
-	"*=",
-	"/=",
-	"%=",
+	TOKTYPES
 };
-*/
+#undef X
+#undef TOKTYPES
+
 
 struct Token {
 	TokenType    type;
@@ -277,6 +102,58 @@ struct Token {
 	TypeClass    lit_type;
 	Value        lit_val;
 };
+
+namespace {
+	constexpr inline bool is_decimal_c (char c) {
+		return c >= '0' && c <= '9';
+	}
+	constexpr inline bool is_hex_c (char c) {
+		return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f');
+	}
+
+	constexpr inline bool is_ident_start_c (char c) {
+		return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+	}
+	constexpr inline bool is_ident_c (char c) {
+		return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || (c >= '0' && c <= '9');
+	}
+	constexpr inline bool is_whitespace_c (char c) {
+		return c == ' ' || c == '\t';
+	}
+
+	// parse 1_000_000 as 1000000 for better readability
+	// (user can put _ anywhere in int after intial digit
+	inline bool parse_integer (const char*& c, int64_t* out_int) {
+		const char* cur = c;
+		if (*cur < '0' || *cur > '9')
+			return false;
+
+		int64_t out = 0;
+		while ((*cur >= '0' && *cur <= '9') || *cur == '_') {
+			if (*cur != '_') {
+				out *= 10;
+				out += *cur - '0';
+			}
+			cur++;
+		}
+
+		*out_int = (int)out;
+		c = cur;
+		return true;
+	}
+
+	inline bool parse_double (const char*& c, double* out) {
+		char const* cur = c;
+		double val = strtod(c, (char**)&cur); // need to cast away const for strtod api
+
+		if (cur > c) {
+			*out = val;
+			c = cur;
+			return true;
+		}
+		return false; // parsing error
+	}
+}
 
 inline const char* parse_escaped_string (const char* start, const char* end) {
 	// resulting strings should be shorter than escaped strings
@@ -297,7 +174,7 @@ inline const char* parse_escaped_string (const char* start, const char* end) {
 				case '\\': *out++ = '\\'; break;
 				case '"' : *out++ = '\"'; break;
 				default:
-					throw CompilerExcept{ "syntax error: invalid escape sequence in literal string", {start, in} };
+					throw CompilerExcept({ {start, in}, "syntax error: invalid escape sequence in literal string", });
 			}
 		} else {
 			*out++ = *in++;
@@ -347,7 +224,7 @@ inline std::vector<Token> tokenize (const char* src) {
 					while (depth > 0) {
 						if (*cur == '\0') {
 							// TODO: also add note about block comment open location to error
-							throw CompilerExcept{ "syntax error: end of file in block comment", {cur, cur+1}};
+							throw CompilerExcept({ {cur, cur+1}, "syntax error: end of file in block comment" });
 						}
 						else if (cur[0] == '/' && cur[1] == '*') {
 							cur += 2; // skip "/*"
@@ -366,7 +243,7 @@ inline std::vector<Token> tokenize (const char* src) {
 			} break;
 			case '*': {
 				if (cur[1] == '/') {
-					throw CompilerExcept{"syntax error: unexpected block comment close", {cur, cur+2}};
+					throw CompilerExcept({ {cur, cur+2}, "syntax error: unexpected block comment close" });
 				}
 			} break;
 		}
@@ -469,7 +346,7 @@ inline std::vector<Token> tokenize (const char* src) {
 					cur = start; // reset to begining
 					double val;
 					if (!parse_double(cur, &val)) {
-						throw CompilerExcept{"syntax error: number parse error", {start, start+1}};
+						throw CompilerExcept({ {start, start+1}, "syntax error: number parse error", });
 					}
 					tok.type = T_LITERAL;
 					tok.source = { start, cur };
@@ -483,7 +360,7 @@ inline std::vector<Token> tokenize (const char* src) {
 					cur = start; // reset to begining
 					int64_t val;
 					if (!parse_integer(cur, &val))
-						throw CompilerExcept{"syntax error: number parse error", {start, start+1}};
+						throw CompilerExcept({ {start, start+1}, "syntax error: number parse error" });
 					
 					tok.type = T_LITERAL;
 					tok.source = { start, cur };
@@ -500,7 +377,7 @@ inline std::vector<Token> tokenize (const char* src) {
 
 				for (;;) {
 					if (*cur == '\0')
-						throw CompilerExcept{"syntax error: end of file in string literal", {cur, cur+1}};
+						throw CompilerExcept({ {cur, cur+1}, "syntax error: end of file in string literal" });
 					// escape sequences \\ and \"
 					else if (cur[0] == '\\' && (cur[1] == '"' || cur[1] == '\\'))
 						cur += 2;
@@ -576,7 +453,7 @@ inline std::vector<Token> tokenize (const char* src) {
 				#endif
 				}
 
-				throw CompilerExcept{"syntax error: unknown token", {start, start+1}};
+				throw CompilerExcept({ {start, start+1}, "syntax error: unknown token" });
 			}
 		}
 

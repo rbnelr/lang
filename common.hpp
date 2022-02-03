@@ -28,6 +28,8 @@
 
 using namespace kiss;
 
+#define STRINGIFY(x) #x
+
 //// Preprocessor stuff
 #ifdef __GNUC__ // GCC 4.8+, Clang, Intel and other compilers compatible with GCC (-std=c++0x or above)
 	#define _ASSUME(cond) if (!(cond)) __builtin_unreachable()

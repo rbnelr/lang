@@ -3,6 +3,13 @@
 #include "tokenizer.hpp"
 #include "errors.hpp"
 
+#define ERROR(src, format, ...) throw CompilerExcept(ErrorSource( src, format, __VA_ARGS__ ))
+#define ERROR_AFTER(tok, format, ...) ERROR( _after(tok), format, __VA_ARGS__ )
+
+inline source_range _after (Token const& tok) {
+	return { tok.source.end, tok.source.end+1 };
+}
+
 //typedef void (*builtin_func_t)(Value* vals);
 typedef void* builtin_func_t;
 
@@ -448,7 +455,6 @@ struct AST_return : public AST {
 	arrview<AST_callarg*> args;
 };
 
-// TODO: fix this
 inline void dbg_print (AST* node, int depth=0) {
 	if (!node) return;
 	
@@ -599,21 +605,14 @@ inline void dbg_print (AST* node, int depth=0) {
 struct Parser {
 	Token* tok;
 
-	void throw_error_after (const char* errstr, Token const& after_tok) {
-		throw CompilerExcept{errstr, {after_tok.source.end, after_tok.source.end+1}};
-	}
-	void throw_error (const char* errstr, Token const& tok) {
-		throw CompilerExcept{errstr, tok.source };
-	}
-
 	void eat_semicolon () {
 		if (tok->type != T_SEMICOLON)
-			throw_error_after("syntax error: ';' expected", tok[-1]);
+			ERROR_AFTER(tok[-1], "syntax error: ';' expected");
 		tok++;
 	}
 
 	template <typename T, typename FUNC>
-	arrview<T> comma_seperated_list (FUNC element, TokenType endtok) {
+	arrview<T> comma_seperated_list (TokenType endtok, const char* dbgname, FUNC element) {
 		smallvec<T, 32> tmp;
 
 		while (tok->type != endtok) {
@@ -623,7 +622,7 @@ struct Parser {
 				tok++;
 			}
 			else if (tok->type != endtok) {
-				throw_error_after("syntax error: ',' or ')' expected!", tok[-1]); // TODO: use endtok
+				ERROR_AFTER(tok[-1], "syntax error: expected '%s' after %s!", TokenType_char[endtok], dbgname );
 			}
 		}
 
@@ -645,7 +644,7 @@ struct Parser {
 				AST* result = expression(0);
 
 				if (tok->type != T_PAREN_CLOSE)
-					throw_error_after("syntax error: parenthesis '(' not closed", tok[-1]);
+					ERROR_AFTER(tok[-1], "syntax error: expected ')' after parenthesized expression");
 				tok++;
 
 				return result;
@@ -675,7 +674,7 @@ struct Parser {
 			}
 			
 			default: {
-				throw_error("syntax error: number or variable expected", *tok);
+				ERROR_AFTER(tok[-1], "syntax error: number or variable expected after operator");
 				return nullptr;
 			}
 		}
@@ -738,7 +737,7 @@ struct Parser {
 			// special case: ternary operator
 			else {
 				if (tok->type != T_COLON)
-					throw_error_after("syntax error: ':' expected after true case of select operator", tok[-1]);
+					ERROR_AFTER(tok[-1], "syntax error: ':' expected after true case of select operator");
 				tok++;
 
 				auto* op = ast_alloc<AST_if>(A_SELECT, op_tok);
@@ -759,7 +758,7 @@ struct Parser {
 	// or <varname> : <typename>   -> variable declaration with explicit type
 	AST_vardecl* var_decl (int allow_init=true) {
 		if (!(tok[0].type == T_IDENTIFIER && tok[1].type == T_COLON))
-			throw_error("syntax error: expected variable declaration", *tok);
+			ERROR_AFTER(tok[-1], "syntax error: expected variable declaration");
 
 		auto* var = ast_alloc<AST_vardecl>(A_VARDECL, tok);
 		var->ident = tok[0].source.text();
@@ -779,13 +778,13 @@ struct Parser {
 			// no type identifier, type will have to be inferred from initialization
 
 			if (tok->type != T_ASSIGN)
-				throw_error_after("syntax error: \neither specify type during variable declaration with \"<var> : <type>;\"\n"
-				                                  "or let type be inferred with \"<var> := <expr>;\"", tok[-1]);
+				ERROR_AFTER(tok[-1], "syntax error: \neither specify type during variable declaration with \"<var> : <type>;\"\n"
+				                     "or let type be inferred with \"<var> := <expr>;\"");
 		}
 
 		if (tok->type == T_ASSIGN) {
 			if (!allow_init)
-				throw_error("syntax error: vardecl initialization not allowed in struct (yet)", *tok);
+				ERROR(tok->source, "syntax error: vardecl initialization not allowed in struct (yet)");
 
 			tok++;
 			var->init = expression(0);
@@ -845,9 +844,9 @@ struct Parser {
 		assert(tok->type == T_PAREN_OPEN);
 		tok++;
 
-		auto arr = comma_seperated_list<AST_callarg*>([this] () {
+		auto arr = comma_seperated_list<AST_callarg*>(T_PAREN_CLOSE, "call argument list", [this] () {
 			return call_arg(T_PAREN_CLOSE);
-		}, T_PAREN_CLOSE);
+		});
 
 		tok++; // T_PAREN_CLOSE
 		return arr;
@@ -855,9 +854,9 @@ struct Parser {
 	// <call_arg>, <call_arg> etc.
 	arrview<AST_callarg*> return_args () {
 
-		auto arr = comma_seperated_list<AST_callarg*>([this] () {
+		auto arr = comma_seperated_list<AST_callarg*>(T_SEMICOLON, "return argument list", [this] () {
 			return call_arg(T_SEMICOLON);
-		}, T_SEMICOLON);
+		});
 
 		return arr;
 	}
@@ -926,7 +925,7 @@ struct Parser {
 		loop->body = block();
 
 		if (tok->type != T_WHILE)
-			throw_error_after("syntax error: while expected after do block!", tok[-1]);
+			ERROR_AFTER(tok[-1], "syntax error: while expected after do block!", tok[-1]);
 		tok++;
 
 		loop->cond = expression(0);
@@ -957,14 +956,14 @@ struct Parser {
 		tok++;
 
 		if (tok->type != T_IDENTIFIER)
-			throw_error_after("syntax error: function identifer expected!", tok[-1]);
+			ERROR_AFTER(tok[-1], "syntax error: struct identifer expected after struct keyword!");
 		struc->ident = tok->source.text();
 		tok++;
 
 		smallvec<AST_vardecl*, 16> members;
 
 		if (tok->type != T_BLOCK_OPEN)
-			throw_error("syntax error: '{' expected", *tok);
+			ERROR_AFTER(tok[-1], "syntax error: '{' expected after struct identifier", *tok);
 		tok++;
 
 		while (tok->type != T_BLOCK_CLOSE) {
@@ -979,7 +978,7 @@ struct Parser {
 		struc->members = { arr, members.count };
 
 		if (tok->type != T_BLOCK_CLOSE)
-			throw_error("syntax error, '}' expected", *tok);
+			ERROR_AFTER(tok[-1], "syntax error, '}' expected");
 		tok++;
 
 		return struc;
@@ -994,7 +993,7 @@ struct Parser {
 			// or just const values in general (const globals or const locally captured vars)
 			// the question is where the const folding happens -> wait until I get to actually implementing compile-time execution
 			if (decl->init->kind != A_LITERAL)
-				throw_error("syntax error: only literals allowed as default argument values (for now)", *decl->init->src_tok);
+				ERROR(decl->init->src_tok->source, "syntax error: only literals allowed as default argument values (for now)");
 			
 			assert(decl->init->type.ty && decl->init->type.rval);
 		}
@@ -1006,9 +1005,9 @@ struct Parser {
 		assert(tok->type == T_PAREN_OPEN);
 		tok++;
 
-		auto arr = comma_seperated_list<AST_vardecl*>([this] () {
+		auto arr = comma_seperated_list<AST_vardecl*>(T_PAREN_CLOSE, "function declaration argument list", [this] () {
 			return funcdecl_arg();
-		}, T_PAREN_CLOSE);
+		});
 
 		tok++; // T_PAREN_CLOSE
 		return arr;
@@ -1021,12 +1020,12 @@ struct Parser {
 		tok++;
 
 		if (tok->type != T_IDENTIFIER)
-			throw_error_after("syntax error: function identifer expected!", tok[-1]);
+			ERROR_AFTER(tok[-1], "syntax error: function identifer expected after func keyword!");
 		func->ident = tok->source.text();
 		tok++;
 
 		if (tok->type != T_PAREN_OPEN)
-			throw_error_after("syntax error: '(' expected after function identifer!", tok[-1]);
+			ERROR_AFTER(tok[-1], "syntax error: '(' expected after function identifer!");
 
 		func->args = funcdecl_arglist();
 
@@ -1059,7 +1058,7 @@ struct Parser {
 
 		auto eat_semicolon = [this] () {
 			if (tok->type != T_SEMICOLON)
-				throw_error_after("syntax error: ';' expected", tok[-1]);
+				ERROR_AFTER(tok[-1], "syntax error: ';' expected");
 			tok++;
 		};
 
@@ -1138,12 +1137,12 @@ struct Parser {
 	// }
 	AST* block () {
 		if (tok->type != T_BLOCK_OPEN)
-			throw_error("syntax error: '{' expected", *tok);
+			ERROR_AFTER(tok[-1], "syntax error: '{' expected");
 
 		auto* block = _block(tok++, T_BLOCK_CLOSE);
 
 		if (tok->type != T_BLOCK_CLOSE)
-			throw_error("syntax error, '}' expected", *tok);
+			ERROR_AFTER(tok[-1], "syntax error, '}' expected");
 
 		tok++;
 		return block;
@@ -1156,8 +1155,11 @@ struct Parser {
 		auto* block = _block(tok, T_EOF);
 
 		if (tok->type != T_EOF)
-			throw_error("syntax error: end of file expected", *tok);
+			ERROR_AFTER(tok[-1], "syntax error: end of file expected");
 
 		return block;
 	}
 };
+
+#undef ERROR
+#undef ERROR_AFTER

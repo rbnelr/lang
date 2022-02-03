@@ -9,12 +9,11 @@
 #define _DBG_MAGIC_UNINIT   0xcd
 #define _DBG_MAGIC_FREED    0xdd
 
-template <typename T>
-void _DBG_CLEAR (T* ptr, int val, size_t count) {
-#ifndef NDEBUG
-	memset(ptr, val, count*sizeof(T));
+#ifdef NDEBUG
+	#define _DBG_CLEAR(ptr, val, size)
+#else
+	#define _DBG_CLEAR(ptr, val, size) memset(ptr, val, size);
 #endif
-}
 
 template <typename T, size_t N>
 struct smallvec {
@@ -22,14 +21,23 @@ struct smallvec {
 	size_t count;
 	size_t capacity;
 	
-	T      storage[N];
+	// Can't use T array or the compiler will call ctor & dtor where it is not supposed to
+	// (We placement contruct and destruct manually on resize)
+	//T storage[N];
+	alignas(T) char storage[N * sizeof(T)];
 	
-	smallvec (): data{storage}, count{0}, capacity{N} {
-		_DBG_CLEAR(storage, _DBG_MAGIC_NONALLOC, N);
+	smallvec (): data{(T*)storage}, count{0}, capacity{N} {
+		_DBG_CLEAR(storage, _DBG_MAGIC_NONALLOC, N * sizeof(T));
 	}
 
 	smallvec (size_t count): smallvec{} {
 		grow_to(count);
+	}
+
+	smallvec (std::initializer_list<T> list): smallvec{list.size()} {
+		for (size_t i=0; i<list.size(); ++i) {
+			data[i] = *(list.begin() + i);
+		}
 	}
 
 	// no implicit copy
@@ -80,7 +88,7 @@ struct smallvec {
 		if (new_count > capacity)
 			_realloc();
 
-		_DBG_CLEAR(data + count, _DBG_MAGIC_UNINIT, new_count - count);
+		_DBG_CLEAR(data + count, _DBG_MAGIC_UNINIT, (new_count - count) * sizeof(T));
 		
 		for (size_t i=count; i<new_count; ++i) {
 			// default-construct new elements
@@ -98,7 +106,7 @@ struct smallvec {
 			data[count].~T();
 		}
 
-		_DBG_CLEAR(data + new_count, _DBG_MAGIC_FREED, count - new_count);
+		_DBG_CLEAR(data + new_count, _DBG_MAGIC_FREED, (count - new_count) * sizeof(T));
 
 		count = new_count;
 	}
@@ -110,10 +118,10 @@ struct smallvec {
 		ZoneScoped;
 		
 		size_t new_capacity = _growfac(capacity);
-		T* new_data = new T[new_capacity];
+		T* new_data = (T*)aligned_memalloc(new_capacity * sizeof(T), alignof(T));
 		
-		_DBG_CLEAR(new_data, _DBG_MAGIC_NONALLOC, new_capacity);
-		_DBG_CLEAR(new_data, _DBG_MAGIC_UNINIT, count);
+		_DBG_CLEAR(new_data, _DBG_MAGIC_NONALLOC, new_capacity * sizeof(T));
+		_DBG_CLEAR(new_data, _DBG_MAGIC_UNINIT  , count        * sizeof(T));
 
 		for (size_t i=0; i<count; ++i) {
 			// placement move construct new elements
@@ -128,13 +136,18 @@ struct smallvec {
 		capacity = new_capacity;
 	}
 	void _free () {
-		if (data == storage) {
+		for (size_t i=0; i<count; ++i) {
+			// destruct elements
+			data[i].~T();
+		}
+
+		if (data == (T*)storage) {
 			assert(capacity == N);
-			_DBG_CLEAR(data, _DBG_MAGIC_FREED, N);
+			_DBG_CLEAR(data, _DBG_MAGIC_FREED, N * sizeof(T));
 		}
 		else {
 			ZoneScoped;
-			delete[] data;
+			aligned_free(data);
 		}
 	}
 

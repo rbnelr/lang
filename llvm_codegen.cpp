@@ -747,7 +747,7 @@ struct LLVM_gen {
 					llvm::PHINode* result = build.CreatePHI(T->getType(), 2, "_sel");
 					result->addIncoming(T, phi_then_block);
 					result->addIncoming(F, phi_else_block);
-					return Value::LValue(result, T->getType());
+					return Value::LValue(result, true_result.type);
 				}
 			}
 		}

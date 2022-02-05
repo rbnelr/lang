@@ -830,7 +830,7 @@ struct LLVM_gen {
 
 		case A_BREAK: {
 			if (loop_blocks.empty())
-				throw CompilerExcept({ast->src_tok->source, "error: break not inside of any loop"});
+				ERROR(ast->src_tok->source, "break not inside of any loop");
 				
 			build.CreateBr(loop_blocks.back().break_block);
 			unreachable();
@@ -838,7 +838,7 @@ struct LLVM_gen {
 		}
 		case A_CONTINUE: {
 			if (loop_blocks.empty())
-				throw CompilerExcept({ast->src_tok->source, "error: continue not inside of any loop"});
+				ERROR(ast->src_tok->source, "continue not inside of any loop");
 			
 			build.CreateBr(loop_blocks.back().continue_block);
 			unreachable();

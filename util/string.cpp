@@ -8,9 +8,11 @@
 //#endif
 
 namespace kiss {
+	/* Try to use std::format
+
 	// Printf that appends to a std::string
 	void vprints (std::string* s, char const* format, va_list vl) { // print 
-		size_t old_size = s->size();
+		size_t old_size = s->capacity();
 		for (;;) {
 			auto ret = vsnprintf(&(*s)[old_size], s->size() -old_size +1, format, vl); // i think i'm technically not allowed to overwrite the null terminator
 			ret = ret >= 0 ? ret : 0;
@@ -43,7 +45,7 @@ namespace kiss {
 		va_end(vl);
 
 		return ret;
-	}
+	}*/
 
 	bool starts_with (std::string_view const& str, std::string_view const& substr) {
 		return str.size() >= substr.size() && memcmp(str.data(), substr.data(), substr.size()) == 0;

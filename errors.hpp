@@ -8,20 +8,9 @@ inline constexpr char const* CONCOL_NOTE     = "\x1b[0m";
 inline constexpr char const* CONCOL_NOTE_SRC = "\x1b[0;1;30m";
 
 struct ErrorSource {
-	std::string  msg;
+	const char*  errtype;
 	source_range src;
-
-	ErrorSource () {}
-
-	_NOINLINE ErrorSource (source_range src, char const* format, ...): src{src} {
-		va_list vl;
-		va_start(vl, format);
-
-		vprints(&msg, format, vl);
-
-		va_end(vl);
-	}
-
+	std::string  msg;
 	
 	static inline int tab_spaces = 4;
 
@@ -56,7 +45,7 @@ struct ErrorSource {
 		size_t charno = src.start - line_str.data();
 
 		if (ansi_color_supported) fputs(col1, stderr);
-		fprintf(stderr, "%s:%" PRIuMAX ":%" PRIuMAX ": %s.\n", filename, start_lineno+1, charno, msg.c_str());
+		fprintf(stderr, "%s:%" PRIuMAX ":%" PRIuMAX ": %s: %s.\n", filename, start_lineno+1, charno, errtype, msg.c_str());
 
 		if (ansi_color_supported) fputs(col2, stderr);
 		
@@ -83,9 +72,6 @@ struct ErrorSource {
 struct CompilerExcept {
 	ErrorSource              err;
 	smallvec<ErrorSource, 8> notes;
-	
-	CompilerExcept (ErrorSource err): err{err} {}
-	CompilerExcept (ErrorSource err, std::initializer_list<ErrorSource> notes): err{err}, notes{notes} {}
 
 	void print (char const* filename, SourceLines const& lines) {
 		err.print(filename, lines, CONCOL_ERR, CONCOL_ERR_SRC);
@@ -94,6 +80,19 @@ struct CompilerExcept {
 			note.print(filename, lines, CONCOL_NOTE, CONCOL_NOTE_SRC);
 	}
 };
+
+[[noreturn]] inline void _ERROR (const char* errtype, source_range const& src, const char* format, const std::format_args _Args) {
+	throw CompilerExcept{{ errtype, src, std::vformat(format, _Args) }};
+}
+
+template <typename... Args>
+[[noreturn]] inline void SYNTAX_ERROR (source_range const& src, const char* format, Args... args) {
+	_ERROR("syntax error", src, format, std::make_format_args(args...));
+}
+template <typename... Args>
+[[noreturn]] inline void ERROR (source_range const& src, const char* format, Args... args) {
+	_ERROR("error", src, format, std::make_format_args(args...));
+}
 
 struct RuntimeExcept {
 	const char* errstr;

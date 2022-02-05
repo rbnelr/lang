@@ -174,7 +174,7 @@ inline const char* parse_escaped_string (const char* start, const char* end) {
 				case '\\': *out++ = '\\'; break;
 				case '"' : *out++ = '\"'; break;
 				default:
-					throw CompilerExcept({ {start, in}, "syntax error: invalid escape sequence in literal string", });
+					SYNTAX_ERROR(source_range(start, in), "invalid escape sequence in literal string");
 			}
 		} else {
 			*out++ = *in++;
@@ -224,7 +224,7 @@ inline std::vector<Token> tokenize (const char* src) {
 					while (depth > 0) {
 						if (*cur == '\0') {
 							// TODO: also add note about block comment open location to error
-							throw CompilerExcept({ {cur, cur+1}, "syntax error: end of file in block comment" });
+							SYNTAX_ERROR(source_range(cur, cur+1), "end of file in block comment");
 						}
 						else if (cur[0] == '/' && cur[1] == '*') {
 							cur += 2; // skip "/*"
@@ -243,7 +243,7 @@ inline std::vector<Token> tokenize (const char* src) {
 			} break;
 			case '*': {
 				if (cur[1] == '/') {
-					throw CompilerExcept({ {cur, cur+2}, "syntax error: unexpected block comment close" });
+					SYNTAX_ERROR(source_range(cur, cur+2), "unexpected block comment close");
 				}
 			} break;
 		}
@@ -346,7 +346,7 @@ inline std::vector<Token> tokenize (const char* src) {
 					cur = start; // reset to begining
 					double val;
 					if (!parse_double(cur, &val)) {
-						throw CompilerExcept({ {start, start+1}, "syntax error: number parse error", });
+						SYNTAX_ERROR(source_range(start, start+1), "number parse error");
 					}
 					tok.type = T_LITERAL;
 					tok.source = { start, cur };
@@ -360,7 +360,7 @@ inline std::vector<Token> tokenize (const char* src) {
 					cur = start; // reset to begining
 					int64_t val;
 					if (!parse_integer(cur, &val))
-						throw CompilerExcept({ {start, start+1}, "syntax error: number parse error" });
+						SYNTAX_ERROR(source_range(start, start+1), "number parse error");
 					
 					tok.type = T_LITERAL;
 					tok.source = { start, cur };
@@ -377,7 +377,7 @@ inline std::vector<Token> tokenize (const char* src) {
 
 				for (;;) {
 					if (*cur == '\0')
-						throw CompilerExcept({ {cur, cur+1}, "syntax error: end of file in string literal" });
+						SYNTAX_ERROR(source_range(cur, cur+1), "end of file in string literal");
 					// escape sequences \\ and \"
 					else if (cur[0] == '\\' && (cur[1] == '"' || cur[1] == '\\'))
 						cur += 2;
@@ -453,7 +453,7 @@ inline std::vector<Token> tokenize (const char* src) {
 				#endif
 				}
 
-				throw CompilerExcept({ {start, start+1}, "syntax error: unknown token" });
+				SYNTAX_ERROR(source_range(start, start+1), "unknown token");
 			}
 		}
 

@@ -26,7 +26,7 @@ struct smallvec {
 	//T storage[N];
 	alignas(T) char storage[N * sizeof(T)];
 	
-	smallvec (): data{(T*)storage}, count{0}, capacity{N} {
+	_FORCEINLINE smallvec (): data{(T*)storage}, count{0}, capacity{N} {
 		_DBG_CLEAR(storage, _DBG_MAGIC_NONALLOC, N * sizeof(T));
 	}
 
@@ -85,7 +85,7 @@ struct smallvec {
 		if (new_count <= count)
 			return;
 
-		if (new_count > capacity)
+		if (new_count > capacity) [[unlikely]]
 			_realloc();
 
 		_DBG_CLEAR(data + count, _DBG_MAGIC_UNINIT, (new_count - count) * sizeof(T));
@@ -114,7 +114,7 @@ struct smallvec {
 	static size_t _growfac (size_t old_count) {
 		return old_count * 2;
 	}
-	void _realloc () {
+	_NOINLINE void _realloc () {
 		ZoneScoped;
 		
 		size_t new_capacity = _growfac(capacity);
@@ -141,11 +141,11 @@ struct smallvec {
 			data[i].~T();
 		}
 
-		if (data == (T*)storage) {
+		if (data == (T*)storage) { [[likely]]
 			assert(capacity == N);
 			_DBG_CLEAR(data, _DBG_MAGIC_FREED, N * sizeof(T));
 		}
-		else {
+		else {                     [[unlikely]]
 			ZoneScoped;
 			aligned_free(data);
 		}
@@ -330,7 +330,7 @@ struct BumpAllocator {
 		// since allocs larger than BLOCK_SZ are impossible
 		// and allocs close to the size of a page already waste space at the end of a page
 		// have large allocs be normal malloc calls that are tracked seperately
-		if (size >= LARGE_ALLOC_SZ)
+		if (size >= LARGE_ALLOC_SZ) [[unlikely]]
 			return large_alloc(size, align);
 
 		cur = (char*)align_ptr(cur, align);
@@ -338,10 +338,10 @@ struct BumpAllocator {
 		char* ptr = cur;
 		cur += size;
 
-		if (cur <= end)
+		if (cur <= end) [[likely]]
 			return ptr;
-
-		return alloc_from_new_block(size, align);
+		else            [[unlikely]]
+			return alloc_from_new_block(size, align);
 	}
 
 	// new block is needed, slow path so use _NOINLINE to help the compiler pick the fast path for inlining
@@ -355,11 +355,12 @@ struct BumpAllocator {
 		char* ptr = cur;
 		cur += size;
 
-		if (cur <= end)
+		if (cur <= end) { [[likely]]
 			return ptr;
-
-		assert(false);
-		return nullptr;
+		} else {          [[unlikely]]
+			assert(false);
+			return nullptr;
+		}
 	}
 
 	char* large_alloc (size_t size, size_t align) {
@@ -379,6 +380,9 @@ struct BumpAllocator {
 	}
 	void reset () {
 	#ifndef NDEBUG
+		for (int i=0; i<80; ++i) putchar('-');
+		putchar('\n');
+
 		printf("g_allocator: used bytes: %llu\n", used_bytes());
 	#endif
 

@@ -105,7 +105,6 @@ bool compile () {
 			return false;
 		}
 		
-		print_seperator("");
 		g_allocator.reset();
 
 	#if TRACY_ENABLE

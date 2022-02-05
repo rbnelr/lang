@@ -9,14 +9,13 @@ struct source_range {
 	source_loc_t start; // first char
 	source_loc_t end;   // one past last char
 
-	source_range () {}
-	constexpr source_range (source_loc_t start, source_loc_t end): start{start}, end{end} {}
-	constexpr explicit source_range (std::string_view sv): start{sv.data()}, end{sv.data() + sv.size()} {}
-
-	constexpr std::string_view text () const {
+	std::string_view text () const {
 		return std::string_view(start, (size_t)(end - start));
 	}
 };
+inline source_range to_source_range (std::string_view sv) {
+	return { sv.data(), sv.data() + sv.size() };
+}
 
 struct SourceLines {
 	std::vector<source_loc_t> lines; // each line with the newline character sequence excluded

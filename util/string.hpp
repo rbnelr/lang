@@ -3,6 +3,7 @@
 #include <string>
 #include <string_view>
 //#include <regex>
+#include <format>
 
 namespace kiss {
 	// Printf that appends to a std::string

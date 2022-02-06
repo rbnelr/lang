@@ -5,11 +5,13 @@
 #include "assert.h"
 #include "string.h"
 #include "stdlib.h"
+#include "inttypes.h" // for PRIuMAX for size_t printf'ing
 
 #include <string>
 #include <string_view>
 #include <vector>
 #include <unordered_map>
+#include <exception>
 
 #include "util/macros.hpp"
 #include "util/string.hpp"
@@ -17,10 +19,8 @@
 #include "util/console_colors.hpp"
 #include "util/timer.hpp"
 #include "util/smhasher/MurmurHash2.h"
-
-#include <exception>
-
-#include "inttypes.h" // for PRIuMAX for size_t printf'ing
+#include "util/macro_stuff.hpp"
+#include "util/allocators.hpp"
 
 #include "Tracy.hpp"
 
@@ -28,59 +28,11 @@
 
 using namespace kiss;
 
-#define STRINGIFY(x) #x
-
-//// Preprocessor stuff
-#ifdef __GNUC__ // GCC 4.8+, Clang, Intel and other compilers compatible with GCC (-std=c++0x or above)
-	#define _ASSUME(cond) if (!(cond)) __builtin_unreachable()
-	#define _UNREACHABLE __builtin_unreachable()
-	#define _FORCEINLINE __attribute__((always_inline)) inline
-	#define _NOINLINE    __attribute__((noinline))
-
-#elif defined(_MSC_VER) // MSVC
-	#define _ASSUME(cond) __assume(cond)
-	#define _UNREACHABLE  __assume(false)
-	#define _FORCEINLINE  __forceinline
-	#define _NOINLINE     __declspec(noinline)
-#else
-	#define _ASSUME(cond)
-	#define _UNREACHABLE  
-	#define _FORCEINLINE  
-	#define _NOINLINE     
-#endif
-
-template <typename Func> struct _Defer {
-	Func func;
-	_Defer(Func func) : func(func) {}
-	~_Defer() { func(); }
-};
-
-template <typename Func>
-_Defer<Func> _defer (Func func) {
-	return _Defer<Func>(func);
-}
-
-#define DEFER_1(A, B) A ## B
-#define DEFER_2(A, B) DEFER_1(A, B)
-#define DEFER_3(A)    DEFER_2(A, __COUNTER__)
-
-// use like:
-//  defer( statement; );
-// or
-//  defer(
-//      statement;
-//      statement;
-//      ...
-//  );
-#define defer(code)   auto DEFER_3(_defer_) = _defer([&] () { code })
-
-
-#define INVALID_DEFAULT default: { assert(false); _UNREACHABLE; } break
-
-#include "allocators.hpp"
 
 ////
 typedef std::string_view strview;
+
+inline BumpAllocator g_allocator;
 
 // g_allocator-backed buffer printf
 inline char const* format (char const* format, ...) {
@@ -156,5 +108,3 @@ inline void grow (std::vector<T>& vec, size_t min_sz) {
 		vec.resize(min_sz);
 	}
 }
-
-#define TRACY_REPEAT 1000

@@ -2,6 +2,7 @@
 #include "common.hpp"
 #include "basic_types.hpp"
 #include "parser.hpp"
+#include "types.hpp"
 
 #include "stdarg.h"
 
@@ -18,62 +19,6 @@ inline void print (const char* str) {
 	printf("%s", str);
 }
 
-#if 0
-inline void my_printf (Value* vals) {
-#ifdef TRACY_ENABLE  // disable prints for profiling
-	return;
-#endif
-
-	auto& format = vals[0];
-
-	auto* varargs = &vals[-1];
-	auto get_arg = [&] (size_t idx) -> Value& {
-		return varargs[-(intptr_t)idx];
-	};
-
-	const char* cur = format.str;
-
-	size_t i = 0;
-	while (*cur != '\0') {
-		if (*cur == '{') {
-			const char* start = ++cur;
-
-			while (*cur != '}')
-				cur++;
-			const char* end = cur++;
-
-			strview params = strview(start, end - start);
-
-			//if (i >= varargc) {
-			//	// print null for % that access outside of the varargs
-			//	printf("null"); // cast away const, since unified args/rets force me to not use const in print_val
-			//}
-			//else {
-				if (params.size() != 1)
-					throw RuntimeExcept{"runtime error: printf: expected type specifier"};
-				
-				auto& val = get_arg(i++);
-
-				switch (params[0]) {
-					case 'b': print(val.b);   break;
-					case 'i': print(val.i);   break;
-					case 'f': print(val.f);   break;
-					case 's': print(val.str); break;
-					default:
-						throw RuntimeExcept{"runtime error: printf: unknown type specifier"};
-				}
-			//}
-			continue;
-		} else {
-			if (cur[0] == '^' && cur[1] == '{') {
-				cur++; // ^{ escape sequence
-			}
-			putc(*cur++, stdout);
-		}
-	}
-	// ignore varargs that are not printed (no error)
-}
-#else
 inline void my_printf (const char* format, ...) {
 #ifdef TRACY_ENABLE  // disable prints for profiling
 	return;
@@ -124,7 +69,6 @@ inline void my_printf (const char* format, ...) {
 
 	va_end(varargs);
 }
-#endif
 
 inline int64_t timer () {
 	return get_timestamp();

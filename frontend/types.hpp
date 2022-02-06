@@ -1,4 +1,6 @@
 #pragma once
+#include "common.hpp"
+#include "parser.hpp"
 #include "basic_types.hpp"
 
 struct AST_type : public AST {

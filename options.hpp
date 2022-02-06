@@ -1,21 +1,16 @@
 #pragma once
+#include "common.hpp"
 
 struct Options {
-	std::string  filename  = "test5.la";
+	std::string  filename;
 
-	bool         optimized = 1;
+	bool         optimized;
 
-#ifdef TRACY_ENABLE
-	bool         print_ast  = 0;
-	bool         print_ir   = 0;
-	bool         print_code = 0;
-#else
-	bool         print_ast  = 0;
-	bool         print_ir   = 1;
-	bool         print_code = 1;
-#endif
+	bool         print_ast;
+	bool         print_ir;
+	bool         print_code;
 	
-	bool         disasm_print_symbols = true;
+	bool         disasm_print_symbols;
 };
 
 inline Options options;

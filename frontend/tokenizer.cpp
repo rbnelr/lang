@@ -1,161 +1,58 @@
-#pragma once
 #include "common.hpp"
+#include "tokenizer.hpp"
 #include "errors.hpp"
-#include "basic_types.hpp"
-#include "line_map.hpp"
 
-#define TOKTYPES \
-	/*end of file*/                    \
-	X( EOF=0,         "<EOF>" )        \
-	/* literals of differing types */  \
-	X( LITERAL,       "literal" )      \
-	/* starts with  '_' or [a-Z]  and then any number of  '_' or [a-Z] or [0-9] */ \
-	X( IDENTIFIER,    "identifier" ) \
-\
-	X( FUNC,          "func"       ) \
-	X( STRUCT,        "struct"     ) \
-	/* keywords */ \
-	X( IF,            "if"         ) \
-	X( ELIF,          "elif"       ) \
-	X( ELSE,          "else"       ) \
-\
-	X( WHILE,         "while"      ) \
-	X( FOR,           "for"        ) \
-	X( DO,            "do"         ) \
-\
-	X( RETURN,        "return"     ) \
-	X( BREAK,         "break"      ) \
-	X( CONTINUE,      "continue"   ) \
-	X( GOTO,          "goto"       ) \
-\
-	X( COLON,         ":"  ) \
-	X( SEMICOLON,     ";"  ) \
-	X( COMMA,         ","  ) \
-\
-	X( PAREN_OPEN,    "("  ) \
-	X( PAREN_CLOSE,   ")"  ) \
-	X( BLOCK_OPEN,    "{"  ) \
-	X( BLOCK_CLOSE,   "}"  ) \
-	X( INDEX_OPEN,    "["  ) \
-	X( INDEX_CLOSE,   "]"  ) \
-\
-	X( ADD,           "+"  ) \
-	X( SUB,           "-"  ) \
-	X( MUL,           "*"  ) \
-	X( DIV,           "/"  ) \
-	X( MOD,           "%"  ) \
-\
-	X( BIT_AND,       "&"  ) \
-	X( BIT_OR,        "|"  ) \
-	X( BIT_XOR,       "^"  ) \
-\
-	X( AND,           "&&" ) \
-	X( OR,            "||" ) \
-\
-	X( LESS,          "<"  ) \
-	X( LESSEQ,        "<=" ) \
-	X( GREATER,       ">"  ) \
-	X( GREATEREQ,     ">=" ) \
-	X( EQUALS,        "==" ) \
-	X( NOT_EQUALS,    "!=" ) \
-\
-	X( MEMBER,        "."  ) \
-\
-	X( QUESTIONMARK,  "?"  ) \
-\
-	X( BIT_NOT,       "~"   ) \
-	X( NOT,           "!"   ) /* unary (prefix) operator */ \
-	X( INC,           "x++" ) /* postincrement */ \
-	X( DEC,           "x--" ) /* postdecrement */ \
-\
-	X( ASSIGN,        "="   ) \
-	X( ADDEQ,         "+="  ) \
-	X( SUBEQ,         "-="  ) \
-	X( MULEQ,         "*="  ) \
-	X( DIVEQ,         "/="  ) \
-	X( MODEQ,         "%="  ) \
+constexpr inline bool is_decimal_c (char c) {
+	return c >= '0' && c <= '9';
+}
+constexpr inline bool is_hex_c (char c) {
+	return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f');
+}
 
-#define X(ENUM, SHORTSTR) T_##ENUM,
-enum TokenType {
-	TOKTYPES
-};
-#undef X
+constexpr inline bool is_ident_start_c (char c) {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+}
+constexpr inline bool is_ident_c (char c) {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || (c >= '0' && c <= '9');
+}
+constexpr inline bool is_whitespace_c (char c) {
+	return c == ' ' || c == '\t';
+}
 
-#define X(ENUM, SHORTSTR) STRINGIFY(T_##ENUM),
-inline constexpr const char* TokenType_str[] = {
-	TOKTYPES
-};
-#undef X
+// parse 1_000_000 as 1000000 for better readability
+// (user can put _ anywhere in int after intial digit
+inline bool parse_integer (const char*& c, int64_t* out_int) {
+	const char* cur = c;
+	if (*cur < '0' || *cur > '9')
+		return false;
 
-#define X(ENUM, SHORTSTR) SHORTSTR,
-inline constexpr const char* TokenType_char[] = {
-	TOKTYPES
-};
-#undef X
-#undef TOKTYPES
-
-
-struct Token {
-	TokenType    type;
-	source_range source;
-
-	TypeClass    lit_type;
-	Value        lit_val;
-};
-
-namespace {
-	constexpr inline bool is_decimal_c (char c) {
-		return c >= '0' && c <= '9';
-	}
-	constexpr inline bool is_hex_c (char c) {
-		return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f');
-	}
-
-	constexpr inline bool is_ident_start_c (char c) {
-		return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
-	}
-	constexpr inline bool is_ident_c (char c) {
-		return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || (c >= '0' && c <= '9');
-	}
-	constexpr inline bool is_whitespace_c (char c) {
-		return c == ' ' || c == '\t';
-	}
-
-	// parse 1_000_000 as 1000000 for better readability
-	// (user can put _ anywhere in int after intial digit
-	inline bool parse_integer (const char*& c, int64_t* out_int) {
-		const char* cur = c;
-		if (*cur < '0' || *cur > '9')
-			return false;
-
-		int64_t out = 0;
-		while ((*cur >= '0' && *cur <= '9') || *cur == '_') {
-			if (*cur != '_') {
-				out *= 10;
-				out += *cur - '0';
-			}
-			cur++;
+	int64_t out = 0;
+	while ((*cur >= '0' && *cur <= '9') || *cur == '_') {
+		if (*cur != '_') {
+			out *= 10;
+			out += *cur - '0';
 		}
+		cur++;
+	}
 
-		*out_int = (int)out;
+	*out_int = (int)out;
+	c = cur;
+	return true;
+}
+
+inline bool parse_double (const char*& c, double* out) {
+	char const* cur = c;
+	double val = strtod(c, (char**)&cur); // need to cast away const for strtod api
+
+	if (cur > c) {
+		*out = val;
 		c = cur;
 		return true;
 	}
-
-	inline bool parse_double (const char*& c, double* out) {
-		char const* cur = c;
-		double val = strtod(c, (char**)&cur); // need to cast away const for strtod api
-
-		if (cur > c) {
-			*out = val;
-			c = cur;
-			return true;
-		}
-		return false; // parsing error
-	}
+	return false; // parsing error
 }
 
-inline const char* parse_escaped_string (const char* start, const char* end) {
+const char* parse_escaped_string (const char* start, const char* end) {
 	// resulting strings should be shorter than escaped strings
 	size_t max_len = end - start + 1;
 
@@ -189,7 +86,7 @@ inline const char* parse_escaped_string (const char* start, const char* end) {
 	return result;
 }
 
-inline std::vector<Token> tokenize (const char* src) {
+std::vector<Token> tokenize (const char* src) {
 	ZoneScoped;
 	std::vector<Token> tokens;
 	tokens.reserve(1024*8);
@@ -462,7 +359,7 @@ inline std::vector<Token> tokenize (const char* src) {
 	}
 
 #if TRACY_ENABLE
-	auto str = prints("tokens: %llu", tokens.size());
+	auto str = std::format("tokens: {}", tokens.size());
 	ZoneText(str.data(), str.size());
 #endif
 	return tokens;

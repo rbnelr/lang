@@ -1,6 +1,9 @@
 #pragma once
 #include <vector>
 #include <stdlib.h>
+#include "macro_stuff.hpp"
+
+#include "Tracy.hpp"
 
 #define aligned_memalloc(size, align) _aligned_malloc(size, align)
 #define aligned_free(ptr)             _aligned_free(ptr)
@@ -115,7 +118,7 @@ struct smallvec {
 		return old_count * 2;
 	}
 	_NOINLINE void _realloc () {
-		ZoneScoped;
+		//ZoneScoped;
 		
 		size_t new_capacity = _growfac(capacity);
 		T* new_data = (T*)aligned_memalloc(new_capacity * sizeof(T), alignof(T));
@@ -141,12 +144,11 @@ struct smallvec {
 			data[i].~T();
 		}
 
-		if (data == (T*)storage) { [[likely]]
+		if (data == (T*)storage) [[likely]] { 
 			assert(capacity == N);
 			_DBG_CLEAR(data, _DBG_MAGIC_FREED, N * sizeof(T));
-		}
-		else {                     [[unlikely]]
-			ZoneScoped;
+		} else                   [[unlikely]] { 
+			//ZoneScoped;
 			aligned_free(data);
 		}
 	}
@@ -364,6 +366,8 @@ struct BumpAllocator {
 	}
 
 	char* large_alloc (size_t size, size_t align) {
+		ZoneScoped;
+
 		char* ptr = (char*)aligned_memalloc(size, align);
 		
 		assert((char*)align_ptr(ptr, align) == ptr);
@@ -379,6 +383,7 @@ struct BumpAllocator {
 		allocations.push_back({ cur, BLOCK_SZ });
 	}
 	void reset () {
+		ZoneScoped;
 	#ifndef NDEBUG
 		for (int i=0; i<80; ++i) putchar('-');
 		putchar('\n');
@@ -396,5 +401,3 @@ struct BumpAllocator {
 		end = nullptr;
 	}
 };
-
-inline BumpAllocator g_allocator;

@@ -1,7 +1,7 @@
-#pragma once
 #include "llvm_pch.hpp"
-#include "llvm_backend.hpp"
+#include "llvm_disasm.hpp"
 #include "llvm_sec_mem_manager.hpp"
+
 
 struct DisasmPrinter {
 	LLVMDisasmContextRef DCR;
@@ -28,7 +28,10 @@ struct DisasmPrinter {
 		print_seperator("Symbols", '-');
 
 		for (auto& sym : obj.symbols()) {
-			auto name = ExitOnErr(sym.getName());
+			auto getname = sym.getName();
+			if (!getname) continue; // skip on error
+
+			auto name = getname.get();
 			auto eval_sym = dyld.getSymbol(name);
 			auto addr = (const uint8_t*)eval_sym.getAddress();
 
@@ -71,7 +74,7 @@ struct DisasmPrinter {
 				auto& ObjSectionToID = *(Map*)((char*)&loadedObj + sizeof(loadedObj) - sizeof(Map));
 
 				for (auto& sec2ID : ObjSectionToID) {
-					auto sec_name = ExitOnErr(sec2ID.first.getName());
+					//auto sec_getname = sec2ID.first.getName();
 					auto sec_id = sec2ID.second;
 
 					auto loadAddr = dyld.getSectionLoadAddress(sec_id);
@@ -88,7 +91,10 @@ struct DisasmPrinter {
 
 			llvm::object::SectionRef secref = find_section();
 
-			auto name = ExitOnErr(secref.getName());
+			auto getname = secref.getName();
+			if (!getname) continue; // skip on error
+
+			auto name = getname.get();
 
 			print_seperator(strview{ name.data(), name.size() }, '-');
 			printf(";; OS alloc size       : %8llu\n"
@@ -208,3 +214,14 @@ struct DisasmPrinter {
 		}
 	}
 };
+
+void print_llvm_disasm (
+		llvm::Triple const& TT,
+		llvm::RuntimeDyld& dyld,
+		llvm::object::ObjectFile& obj,
+		llvm::RuntimeDyld::LoadedObjectInfo& loadedObj,
+		SectionMemoryManager& sec_mem) {
+
+	DisasmPrinter printer { TT };
+	printer.print_disasm(dyld, obj, loadedObj, sec_mem);
+}

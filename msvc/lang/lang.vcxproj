@@ -149,76 +149,60 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="..\..\..\common\tracy\TracyClient.cpp" />
-    <ClCompile Include="..\..\llvm_codegen.cpp">
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Use</PrecompiledHeader>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">llvm_pch.hpp</PrecompiledHeaderFile>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Tracy|x64'">Use</PrecompiledHeader>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Tracy|x64'">llvm_pch.hpp</PrecompiledHeaderFile>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Use</PrecompiledHeader>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|x64'">llvm_pch.hpp</PrecompiledHeaderFile>
-    </ClCompile>
-    <ClCompile Include="..\..\llvm_pch.cpp">
+    <ClCompile Include="..\..\backend_llvm\llvm_codegen.cpp" />
+    <ClCompile Include="..\..\backend_llvm\llvm_disasm.cpp" />
+    <ClCompile Include="..\..\backend_llvm\llvm_jit.cpp" />
+    <ClCompile Include="..\..\backend_llvm\llvm_pch.cpp" />
+    <ClCompile Include="..\..\backend_llvm\win32_mmap.cpp" />
+    <ClCompile Include="..\..\common.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">llvm_pch.hpp</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">common.hpp</PrecompiledHeaderFile>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Tracy|x64'">Create</PrecompiledHeader>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Tracy|x64'">llvm_pch.hpp</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Tracy|x64'">common.hpp</PrecompiledHeaderFile>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|x64'">llvm_pch.hpp</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|x64'">common.hpp</PrecompiledHeaderFile>
     </ClCompile>
-    <ClCompile Include="..\..\main.cpp" />
+    <ClCompile Include="..\..\frontend\parser.cpp" />
+    <ClCompile Include="..\..\frontend\semantic.cpp" />
+    <ClCompile Include="..\..\frontend\tokenizer.cpp" />
+    <ClCompile Include="..\..\main.cpp">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Use</PrecompiledHeader>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">common.hpp</PrecompiledHeaderFile>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Tracy|x64'">Use</PrecompiledHeader>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Tracy|x64'">common.hpp</PrecompiledHeaderFile>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Use</PrecompiledHeader>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|x64'">common.hpp</PrecompiledHeaderFile>
+    </ClCompile>
     <ClCompile Include="..\..\util\console_colors.cpp" />
     <ClCompile Include="..\..\util\file_io.cpp" />
-    <ClCompile Include="..\..\util\smhasher\MurmurHash1.cpp" />
     <ClCompile Include="..\..\util\smhasher\MurmurHash2.cpp" />
-    <ClCompile Include="..\..\util\smhasher\MurmurHash3.cpp" />
     <ClCompile Include="..\..\util\string.cpp" />
     <ClCompile Include="..\..\util\timer.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\..\common\tracy\Tracy.hpp" />
-    <ClInclude Include="..\..\allocators.hpp" />
-    <ClInclude Include="..\..\basic_types.hpp" />
-    <ClInclude Include="..\..\builtins.hpp" />
+    <ClInclude Include="..\..\backend_llvm\llvm_backend.hpp" />
+    <ClInclude Include="..\..\backend_llvm\llvm_disasm.hpp" />
+    <ClInclude Include="..\..\backend_llvm\llvm_pch.hpp" />
+    <ClInclude Include="..\..\backend_llvm\llvm_sec_mem_manager.hpp" />
     <ClInclude Include="..\..\common.hpp" />
-    <ClInclude Include="..\..\llvm_disasm.hpp" />
-    <ClInclude Include="..\..\errors.hpp" />
-    <ClInclude Include="..\..\line_map.hpp" />
-    <ClInclude Include="..\..\llvm_backend.hpp" />
-    <ClCompile Include="..\..\llvm_jit.cpp">
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Use</PrecompiledHeader>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">llvm_pch.hpp</PrecompiledHeaderFile>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Tracy|x64'">Use</PrecompiledHeader>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Tracy|x64'">llvm_pch.hpp</PrecompiledHeaderFile>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Use</PrecompiledHeader>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|x64'">llvm_pch.hpp</PrecompiledHeaderFile>
-    </ClCompile>
-    <ClInclude Include="..\..\llvm_pch.hpp" />
-    <ClInclude Include="..\..\llvm_sec_mem_manager.hpp" />
+    <ClInclude Include="..\..\frontend\basic_types.hpp" />
+    <ClInclude Include="..\..\frontend\builtins.hpp" />
+    <ClInclude Include="..\..\frontend\errors.hpp" />
+    <ClInclude Include="..\..\frontend\line_map.hpp" />
+    <ClInclude Include="..\..\frontend\parser.hpp" />
+    <ClInclude Include="..\..\frontend\semantic.hpp" />
+    <ClInclude Include="..\..\frontend\tokenizer.hpp" />
+    <ClInclude Include="..\..\frontend\types.hpp" />
     <ClInclude Include="..\..\options.hpp" />
-    <ClInclude Include="..\..\parser.hpp" />
-    <ClInclude Include="..\..\semantic.hpp" />
-    <ClInclude Include="..\..\tokenizer.hpp" />
-    <ClInclude Include="..\..\types.hpp" />
+    <ClInclude Include="..\..\util\allocators.hpp" />
     <ClInclude Include="..\..\util\console_colors.hpp" />
     <ClInclude Include="..\..\util\file_io.hpp" />
-    <ClInclude Include="..\..\util\smhasher\MurmurHash1.h" />
+    <ClInclude Include="..\..\util\macros.hpp" />
+    <ClInclude Include="..\..\util\macro_stuff.hpp" />
     <ClInclude Include="..\..\util\smhasher\MurmurHash2.h" />
-    <ClInclude Include="..\..\util\smhasher\MurmurHash3.h" />
     <ClInclude Include="..\..\util\string.hpp" />
     <ClInclude Include="..\..\util\timer.hpp" />
-    <ClCompile Include="win32_mmap.cpp">
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">llvm_pch.hpp</PrecompiledHeaderFile>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Tracy|x64'">Create</PrecompiledHeader>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Tracy|x64'">llvm_pch.hpp</PrecompiledHeaderFile>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
-      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|x64'">llvm_pch.hpp</PrecompiledHeaderFile>
-    </ClCompile>
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="..\..\test.la" />
-    <None Include="..\..\test2.la" />
-    <None Include="..\..\test3.la" />
   </ItemGroup>
   <ItemGroup>
     <Natvis Include="..\..\..\libLLVM\llvm-project\llvm\utils\LLVMVisualizers\llvm.natvis" />

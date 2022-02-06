@@ -4,7 +4,7 @@
 #include "llvm_disasm.hpp"
 
 #include "common.hpp"
-#include "builtins.hpp"
+#include "frontend/builtins.hpp"
 
 struct JIT {
 
@@ -73,6 +73,8 @@ struct JIT {
 	}
 
 ////
+	llvm::ExitOnError ExitOnErr;
+
 	Resolver                             resolver;
 	SectionMemoryManager                 MM;
 	
@@ -126,7 +128,7 @@ struct JIT {
 	
 	void setup_mem2reg () {
 		ZoneScoped;
-
+		
 		// mem2reg pass for alloca'd local vars
 		mem2reg.add(llvm::createPromoteMemoryToRegisterPass());
 	}
@@ -213,8 +215,7 @@ struct JIT {
 		}
 
 		if (options.print_code) {
-			DisasmPrinter disasm(TT);
-			disasm.print_disasm(dyld, *Obj, *loadedObj, MM);
+			print_llvm_disasm(TT, dyld, *Obj, *loadedObj, MM);
 		}
 	}
 

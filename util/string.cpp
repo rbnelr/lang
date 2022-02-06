@@ -8,45 +8,6 @@
 //#endif
 
 namespace kiss {
-	/* Try to use std::format
-
-	// Printf that appends to a std::string
-	void vprints (std::string* s, char const* format, va_list vl) { // print 
-		size_t old_size = s->capacity();
-		for (;;) {
-			auto ret = vsnprintf(&(*s)[old_size], s->size() -old_size +1, format, vl); // i think i'm technically not allowed to overwrite the null terminator
-			ret = ret >= 0 ? ret : 0;
-			bool was_bienough = (size_t)ret < (s->size() -old_size +1);
-			s->resize(old_size +ret);
-			if (was_bienough) break;
-			// buffer was to small, buffer size was increased
-			// now snprintf has to succeed, so call it again
-		}
-	}
-
-	// Printf that appends to a std::string
-	void prints (std::string* s, char const* format, ...) {
-		va_list vl;
-		va_start(vl, format);
-
-		vprints(s, format, vl);
-
-		va_end(vl);
-	}
-
-	// Printf that outputs to a std::string
-	std::string prints (char const* format, ...) {
-		va_list vl;
-		va_start(vl, format);
-
-		std::string ret;
-		vprints(&ret, format, vl);
-
-		va_end(vl);
-
-		return ret;
-	}*/
-
 	bool starts_with (std::string_view const& str, std::string_view const& substr) {
 		return str.size() >= substr.size() && memcmp(str.data(), substr.data(), substr.size()) == 0;
 	}

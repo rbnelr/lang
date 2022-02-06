@@ -2,9 +2,7 @@
 #include "llvm_backend.hpp"
 
 #include "common.hpp"
-#include "builtins.hpp"
-
-llvm::LLVMContext ctx;
+#include "frontend/builtins.hpp"
 
 inline struct _IDFormStrbuf { char str[32]; } format_id (size_t id) {
 	_IDFormStrbuf buf; // fits any 64-bit int
@@ -20,12 +18,13 @@ inline struct _IDFormStrbuf { char str[32]; } format_id (size_t id) {
 #define PROFILE_DUPLICATE_FUNCS 0
 
 struct LLVM_gen {
-	std::vector<AST_funcdef*>& funcdefs;
-	std::vector<AST_structdef*>& structdefs;
+	arrview<AST_funcdef*>   funcdefs;
+	arrview<AST_structdef*> structdefs;
 	SourceLines const& lines;
 
 	llvm::Module* modl; // owned by caller
-
+	
+	llvm::LLVMContext ctx;
 	llvm::IRBuilder<llvm::NoFolder> build{ctx};
 	
 	//std::unique_ptr<llvm::DIBuilder> di_build;
@@ -381,7 +380,7 @@ struct LLVM_gen {
 		if (_is_builtin)
 			func = llvm::Function::Create(func_ty, llvm::Function::InternalLinkage, SR(fdef->ident), *modl);
 		else
-			func = llvm::Function::Create(func_ty, llvm::Function::InternalLinkage, llvm::Twine(prints("_%d_", _dupl_func_i)) + SR(fdef->ident), *modl);
+			func = llvm::Function::Create(func_ty, llvm::Function::InternalLinkage, llvm::Twine(std::format("_{}_", _dupl_func_i)) + SR(fdef->ident), *modl);
 	#else
 		auto* func = llvm::Function::Create(func_ty, llvm::Function::InternalLinkage, SR(fdef->ident), *modl);
 	#endif
@@ -883,16 +882,13 @@ struct LLVM_gen {
 	}
 };
 
-llvm::Module* llvm_gen_module (strview const& filename,
-		std::vector<AST_funcdef*>& funcdefs,
-		std::vector<AST_structdef*>& structdefs,
-		SourceLines const& lines) {
+llvm::Module* llvm_gen_module (AST_Module& modl, SourceLines const& lines) {
 	ZoneScoped;
 
 	LLVM_gen llvm_gen = {
-		funcdefs, structdefs, lines
+		modl.funcs, modl.structs, lines
 	};
-	llvm_gen.generate(filename);
+	llvm_gen.generate(modl.filename);
 
 	return llvm_gen.modl; // pass ownership to caller
 }

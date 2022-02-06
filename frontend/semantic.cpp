@@ -1,6 +1,6 @@
-#pragma once
 #include "common.hpp"
-#include "parser.hpp"
+#include "semantic.hpp"
+#include "types.hpp"
 #include "builtins.hpp"
 
 struct ScopedIdentifer {
@@ -114,11 +114,9 @@ struct IdentiferStack {
 };
 
 struct SemanticAnalysis {
-	IdentiferStack stack;
+	AST_Module& modl;
 
-	// all funcs/structs in entire module
-	std::vector<AST_funcdef*>   funcs;
-	std::vector<AST_structdef*> structs;
+	IdentiferStack stack;
 
 	std::vector<AST_funcdef*>   funcs_stack;
 
@@ -136,7 +134,7 @@ struct SemanticAnalysis {
 			module_main->args = {};
 			module_main->body = root;
 
-			funcs.emplace_back(module_main);
+			modl.funcs.emplace_back(module_main);
 
 			funcs_stack.emplace_back(module_main);
 		}
@@ -159,7 +157,7 @@ struct SemanticAnalysis {
 
 				stack.declare_ident(fdef, fdef->ident);
 
-				funcs.emplace_back(fdef);
+				modl.funcs.emplace_back(fdef);
 				local_funcs.push(fdef);
 			}
 			else if (ast->kind == A_STRUCTDEF) {
@@ -172,7 +170,7 @@ struct SemanticAnalysis {
 
 				stack.declare_ident(type, struc->ident);
 
-				structs.emplace_back(struc);
+				modl.structs.emplace_back(struc);
 				local_structs.push(struc);
 			}
 		}
@@ -835,3 +833,10 @@ struct SemanticAnalysis {
 		}
 	}
 };
+					
+void semantic_analysis (AST_Module& modl) {
+	ZoneScoped;
+
+	SemanticAnalysis sem { modl };
+	sem.semantic_analysis(modl.ast);
+}

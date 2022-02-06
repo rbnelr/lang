@@ -1,13 +1,37 @@
 #include "common.hpp"
-#include "errors.hpp"
-#include "tokenizer.hpp"
-#include "parser.hpp"
-#include "semantic.hpp"
 
-#include "llvm_backend.hpp"
+#include "options.hpp"
 
+#include "frontend/errors.hpp"
+#include "frontend/tokenizer.hpp"
+#include "frontend/parser.hpp"
+#include "frontend/semantic.hpp"
+
+#include "backend_llvm/llvm_backend.hpp"
+
+#define TRACY_REPEAT 1000
+
+void set_options () {
+	options.filename  = "test_100x.la";
+
+	options.optimized = 1;
+
+#ifdef TRACY_ENABLE
+	options.print_ast  = 0;
+	options.print_ir   = 0;
+	options.print_code = 0;
+#else
+	options.print_ast  = 0;
+	options.print_ir   = 1;
+	options.print_code = 1;
+#endif
+	
+	options.disasm_print_symbols = true;
+}
 
 bool compile () {
+
+	set_options();
 
 	std::string tok;
 	{
@@ -33,64 +57,34 @@ bool compile () {
 			ZoneScopedN("compile");
 			
 			std::vector<Token> tokens;
-			AST* ast;
-			std::vector<AST_funcdef*>   funcdefs;
-			std::vector<AST_structdef*> structdefs;
+			AST_Module modl;
+			modl.filename = options.filename;
+
 			{
 				ZoneScopedNC("frontend", tracy::Color::CadetBlue);
-				{
-					lines.parse_lines(tok.c_str());
-				}
+				
+				lines.parse_lines(tok.c_str());
 
-				{
-					tokens = tokenize(tok.c_str());
-				}
+				tokens = tokenize(tok.c_str());
 
-				{
-					ZoneScopedN("parse");
+				modl.ast = parse(tokens.data());
 
-				#if TRACY_ENABLE
-					ast_nodes = 0;
-				#endif
-
-					Parser parser;
-					parser.tok = &tokens[0];
-					ast = parser.file();
-
-				#if TRACY_ENABLE
-					auto str = prints("AST nodes: %llu", ast_nodes);
-					ZoneText(str.data(), str.size());
-				#endif
-
-					if (options.print_ast) { // print AST
-						print_seperator("AST:");
-						dbg_print(ast);
-					}
-				}
-
-				{
-					ZoneScopedN("semantic_analysis");
-					SemanticAnalysis semantic;
-					semantic.semantic_analysis(ast);
-
-					funcdefs   = std::move(semantic.funcs);
-					structdefs = std::move(semantic.structs);
-				}
+				semantic_analysis(modl);
 			}
 
-			{
-				ZoneScopedNC("backend", tracy::Color::Burlywood);
-
-				llvm::Module* llvm_modl = llvm_gen_module(options.filename, funcdefs, structdefs, lines);
-				defer( llvm_free_module(llvm_modl); );
-			
-				//#ifndef TRACY_ENABLE
-				{
-					ZoneScopedN("llvm_jit_and_exec");
-					llvm_jit_and_exec(llvm_modl);
-				}
-				//#endif
-			}
+			//{
+			//	ZoneScopedNC("backend", tracy::Color::Burlywood);
+			//
+			//	llvm::Module* llvm_modl = llvm_gen_module(modl, lines);
+			//	defer( llvm_free_module(llvm_modl); );
+			//
+			//	//#ifndef TRACY_ENABLE
+			//	{
+			//		ZoneScopedN("llvm_jit_and_exec");
+			//		llvm_jit_and_exec(llvm_modl);
+			//	}
+			//	//#endif
+			//}
 		}
 		catch (CompilerExcept& ex) {
 			ex.print(options.filename.c_str(), lines);

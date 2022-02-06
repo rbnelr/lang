@@ -1,116 +1,142 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
+    <ClCompile Include="..\..\..\common\tracy\TracyClient.cpp">
+      <Filter>util\tracy</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\util\smhasher\MurmurHash2.cpp">
+      <Filter>util\smhasher</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\common.cpp" />
     <ClCompile Include="..\..\main.cpp" />
-    <ClCompile Include="..\..\util\string.cpp">
+    <ClCompile Include="..\..\backend_llvm\llvm_codegen.cpp">
+      <Filter>backend\llvm</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\backend_llvm\llvm_disasm.cpp">
+      <Filter>backend\llvm</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\backend_llvm\llvm_jit.cpp">
+      <Filter>backend\llvm</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\backend_llvm\llvm_pch.cpp">
+      <Filter>backend\llvm</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\backend_llvm\win32_mmap.cpp">
+      <Filter>backend\llvm</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\frontend\parser.cpp">
+      <Filter>frontend</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\frontend\semantic.cpp">
+      <Filter>frontend</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\frontend\tokenizer.cpp">
+      <Filter>frontend</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\util\console_colors.cpp">
       <Filter>util</Filter>
     </ClCompile>
     <ClCompile Include="..\..\util\file_io.cpp">
       <Filter>util</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\util\console_colors.cpp">
+    <ClCompile Include="..\..\util\string.cpp">
       <Filter>util</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\..\common\tracy\TracyClient.cpp">
-      <Filter>tracy</Filter>
     </ClCompile>
     <ClCompile Include="..\..\util\timer.cpp">
       <Filter>util</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\util\smhasher\MurmurHash1.cpp">
-      <Filter>util\smhasher</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\util\smhasher\MurmurHash2.cpp">
-      <Filter>util\smhasher</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\util\smhasher\MurmurHash3.cpp">
-      <Filter>util\smhasher</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\llvm_pch.cpp">
-      <Filter>llvm</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\llvm_codegen.cpp">
-      <Filter>llvm</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\llvm_jit.cpp">
-      <Filter>llvm</Filter>
-    </ClCompile>
-    <ClCompile Include="win32_mmap.cpp">
-      <Filter>llvm</Filter>
-    </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\..\util\string.hpp">
+    <ClInclude Include="..\..\..\common\tracy\Tracy.hpp">
+      <Filter>util\tracy</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\util\smhasher\MurmurHash2.h">
+      <Filter>util\smhasher</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\common.hpp" />
+    <ClInclude Include="..\..\options.hpp" />
+    <ClInclude Include="..\..\backend_llvm\llvm_backend.hpp">
+      <Filter>backend\llvm</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\backend_llvm\llvm_disasm.hpp">
+      <Filter>backend\llvm</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\backend_llvm\llvm_pch.hpp">
+      <Filter>backend\llvm</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\backend_llvm\llvm_sec_mem_manager.hpp">
+      <Filter>backend\llvm</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\frontend\basic_types.hpp">
+      <Filter>frontend</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\frontend\builtins.hpp">
+      <Filter>frontend</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\frontend\errors.hpp">
+      <Filter>frontend</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\frontend\line_map.hpp">
+      <Filter>frontend</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\frontend\parser.hpp">
+      <Filter>frontend</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\frontend\semantic.hpp">
+      <Filter>frontend</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\frontend\tokenizer.hpp">
+      <Filter>frontend</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\frontend\types.hpp">
+      <Filter>frontend</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\util\allocators.hpp">
+      <Filter>util</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\util\console_colors.hpp">
       <Filter>util</Filter>
     </ClInclude>
     <ClInclude Include="..\..\util\file_io.hpp">
       <Filter>util</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\tokenizer.hpp" />
-    <ClInclude Include="..\..\common.hpp" />
-    <ClInclude Include="..\..\util\console_colors.hpp">
+    <ClInclude Include="..\..\util\macro_stuff.hpp">
       <Filter>util</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\..\common\tracy\Tracy.hpp">
-      <Filter>tracy</Filter>
+    <ClInclude Include="..\..\util\macros.hpp">
+      <Filter>util</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\errors.hpp" />
-    <ClInclude Include="..\..\parser.hpp" />
-    <ClInclude Include="..\..\line_map.hpp" />
+    <ClInclude Include="..\..\util\string.hpp">
+      <Filter>util</Filter>
+    </ClInclude>
     <ClInclude Include="..\..\util\timer.hpp">
       <Filter>util</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\util\smhasher\MurmurHash1.h">
-      <Filter>util\smhasher</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\util\smhasher\MurmurHash2.h">
-      <Filter>util\smhasher</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\util\smhasher\MurmurHash3.h">
-      <Filter>util\smhasher</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\builtins.hpp" />
-    <ClInclude Include="..\..\types.hpp" />
-    <ClInclude Include="..\..\options.hpp" />
-    <ClInclude Include="..\..\semantic.hpp" />
-    <ClInclude Include="..\..\llvm_pch.hpp">
-      <Filter>llvm</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\llvm_backend.hpp">
-      <Filter>llvm</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\llvm_disasm.hpp">
-      <Filter>llvm</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\llvm_sec_mem_manager.hpp">
-      <Filter>llvm</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\allocators.hpp" />
-    <ClInclude Include="..\..\basic_types.hpp" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="util">
       <UniqueIdentifier>{79648662-5451-49e3-809e-67d874b33fb4}</UniqueIdentifier>
     </Filter>
-    <Filter Include="tracy">
-      <UniqueIdentifier>{03b26709-89a4-4de1-a908-4a65cd98dc18}</UniqueIdentifier>
-    </Filter>
     <Filter Include="util\smhasher">
       <UniqueIdentifier>{4486f546-c03b-46ca-b21b-32e11ccab3c2}</UniqueIdentifier>
     </Filter>
-    <Filter Include="llvm">
+    <Filter Include="frontend">
+      <UniqueIdentifier>{3a062240-7e77-4a3e-a7b9-888dfbdc8b80}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="backend">
+      <UniqueIdentifier>{140a5cec-196f-4320-ab76-65c3868bf198}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="backend\llvm">
       <UniqueIdentifier>{f1141f09-8f65-4e7a-a490-0a75774b5be3}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="util\tracy">
+      <UniqueIdentifier>{03b26709-89a4-4de1-a908-4a65cd98dc18}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <None Include="..\..\test.la" />
-    <None Include="..\..\test2.la" />
-    <None Include="..\..\test3.la" />
-  </ItemGroup>
-  <ItemGroup>
-    <Natvis Include="compiler.natvis" />
     <Natvis Include="..\..\..\libLLVM\llvm-project\llvm\utils\LLVMVisualizers\llvm.natvis">
-      <Filter>llvm</Filter>
+      <Filter>backend\llvm</Filter>
     </Natvis>
+    <Natvis Include="compiler.natvis" />
   </ItemGroup>
 </Project>

@@ -1,4 +1,3 @@
-#pragma once
 #include "llvm_pch.hpp"
 
 #include "windows.h"

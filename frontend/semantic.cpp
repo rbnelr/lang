@@ -63,13 +63,13 @@ struct IdentiferStack {
 	void declare_ident (AST* ast, strview const& ident) {
 		auto res = ident_map.try_emplace(ScopedIdentifer{ scope_id, ident }, ast);
 		if (!res.second)
-			throw CompilerExcept({ "error", ast->src_tok->source, "identifer already declared in this scope" },
-			                    {{ "note", res.first->second->src_tok->source, "declared here" }});
+			throw CompilerExcept({ "error", ast->src, "identifer already declared in this scope" },
+			                    {{ "note", res.first->second->src, "declared here" }});
 		
 		ident_stack.emplace_back(ident);
 	}
 
-	AST* resolve_ident (Token* src_tok, strview const& ident, size_t min_scope) {
+	AST* resolve_ident (source_range src, strview ident, size_t min_scope) {
 		assert(scope_id > 0);
 
 		for (size_t i=scope_id; ; i--) {
@@ -80,34 +80,34 @@ struct IdentiferStack {
 			if (i == min_scope)
 				break;
 		}
-		ERROR(src_tok->source, "unknown identifer");
+		ERROR(src, "unknown identifer");
 	}
 	void resolve_var (AST_var* var) {
 		// min_scope = func_scope_id, functions can only access their own variables
-		AST* ast = resolve_ident(var->src_tok, var->ident, cur_scope.func_scope_id);
+		AST* ast = resolve_ident(var->src, var->ident, cur_scope.func_scope_id);
 		if (ast->kind != A_VARDECL)
-			throw CompilerExcept({ "error", var->src_tok->source, "identifer was not declared as a variable" },
-			                    {{ "note", ast->src_tok->source, "declared here" }});
+			throw CompilerExcept({ "error", var->src, "identifer was not declared as a variable" },
+			                    {{ "note", ast->src, "declared here" }});
 
 		var->decl = (AST_vardecl*)ast;
 	}
 
 	void resolve_func_call (AST_call* call) {
 		// min_scope = 0, functions can call all functions visible to them
-		AST* ast = resolve_ident(call->src_tok, call->ident, 0);
+		AST* ast = resolve_ident(call->src, call->ident, 0);
 		if (ast->kind != A_FUNCDEF)
-			throw CompilerExcept({ "error", call->src_tok->source, "identifer was not declared as a function" },
-			                    {{ "note", ast->src_tok->source, "declared here" }});
+			throw CompilerExcept({ "error", call->src, "identifer was not declared as a function" },
+			                    {{ "note", ast->src, "declared here" }});
 
 		call->fdef = ast;
 	}
 
-	AST_type* resolve_type (Token* type_ident) {
+	AST_type* resolve_type (source_range ident_src) {
 		// min_scope = 0, functions can call all types visible to them
-		AST* ast = resolve_ident(type_ident, type_ident->source.text(), 0);
+		AST* ast = resolve_ident(ident_src, ident_src.text(), 0);
 		if (ast->kind != A_TYPE)
-			throw CompilerExcept({ "error", type_ident->source, "identifer was not declared as a type" },
-			                    {{ "note", ast->src_tok->source, "declared here" }});
+			throw CompilerExcept({ "error", ident_src, "identifer was not declared as a type" },
+			                    {{ "note", ast->src, "declared here" }});
 
 		return (AST_type*)ast;
 	}
@@ -128,7 +128,7 @@ struct SemanticAnalysis {
 			stack.declare_ident(t, t->ident);
 
 		{ // add a declaration for a main function (global space of the file itself represents the main function)
-			AST_funcdef* module_main = ast_alloc<AST_funcdef>(A_FUNCDEF, root->src_tok);
+			AST_funcdef* module_main = ast_alloc<AST_funcdef>(A_FUNCDEF, root->src);
 			module_main->ident = "main";
 			module_main->rets = {};
 			module_main->args = {};
@@ -163,7 +163,7 @@ struct SemanticAnalysis {
 			else if (ast->kind == A_STRUCTDEF) {
 				auto* struc = (AST_structdef*)ast;
 
-				auto* type = ast_alloc<AST_type>(A_TYPE, struc->src_tok);
+				auto* type = ast_alloc<AST_type>(A_TYPE, struc->src);
 				type->tclass = TY_STRUCT;
 				type->ident  = struc->ident;
 				type->decl   = struc;
@@ -188,8 +188,8 @@ struct SemanticAnalysis {
 		*/
 		for (auto* struc : local_structs) {
 			for (auto* member : struc->members) {
-				auto* type_ident = member->get_type_tok();
-				if (type_ident)
+				auto type_ident = member->typeexpr;
+				if (!type_ident.start)
 					member->type = Typeref::LValue( stack.resolve_type(type_ident) );
 			}
 		}
@@ -218,14 +218,14 @@ struct SemanticAnalysis {
 	
 	Typeref typecheck_unary_op (AST_unop* op, AST* operand) {
 		if (operand->type.ty == nullptr)
-			ERROR(operand->src_tok->source, "void is not a valid operand");
+			ERROR(operand->src, "void is not a valid operand");
 
 		auto* ty = operand->type.ty;
 
 		if (op->op == OP_LOGICAL_NOT) {
 			// TODO: !<non-bool> should be transformed (in ast?) to !(bool)<non-bool>
 			if (ty != pTY_BOOL)
-				ERROR(op->src_tok->source, "logical not (!x) is not valid for type");
+				ERROR(op->src, "logical not (!x) is not valid for type");
 
 			return Typeref::RValue(pTY_BOOL);
 		}
@@ -233,7 +233,7 @@ struct SemanticAnalysis {
 		if (op->op == OP_INC || op->op == OP_DEC) {
 			// TODO: allow this for custom types?
 			if (operand->type.rval)
-				ERROR(operand->src_tok->source, "cannot inc/decrement RValue");
+				ERROR(operand->src, "cannot inc/decrement RValue");
 		}
 
 		switch (ty->tclass) {
@@ -254,10 +254,10 @@ struct SemanticAnalysis {
 				case OP_BIT_NOT:
 					return Typeref::RValue(ty);
 
-				case OP_POSITIVE: ERROR(op->src_tok->source, "positive operator is not valid for bool");
-				case OP_NEGATE:   ERROR(op->src_tok->source, "negate is not valid for bool"           );
-				case OP_INC:      ERROR(op->src_tok->source, "increment is not valid for bool"        );
-				case OP_DEC:      ERROR(op->src_tok->source, "decrement is not valid for bool"        );
+				case OP_POSITIVE: ERROR(op->src, "positive operator is not valid for bool");
+				case OP_NEGATE:   ERROR(op->src, "negate is not valid for bool"           );
+				case OP_INC:      ERROR(op->src, "increment is not valid for bool"        );
+				case OP_DEC:      ERROR(op->src, "decrement is not valid for bool"        );
 
 				INVALID_DEFAULT;
 			}
@@ -268,37 +268,37 @@ struct SemanticAnalysis {
 				case OP_NEGATE:  
 					return Typeref::RValue(ty);
 
-				case OP_BIT_NOT: ERROR(op->src_tok->source, "bitwise operators not valid for floats");
+				case OP_BIT_NOT: ERROR(op->src, "bitwise operators not valid for floats");
 
 				// NOTE: Maybe this is a weird decision, but incrementing a float rarely makes sense unlike ints
 				// Furthermore unlike for ints there is no inc/dec instruction in the cpu either, so maybe don't define this operator for floats
-				case OP_INC: ERROR(op->src_tok->source, "increment is not valid for floats (are you sure you want a float?)");
-				case OP_DEC: ERROR(op->src_tok->source, "decrement is not valid for floats (are you sure you want a float?)");
+				case OP_INC: ERROR(op->src, "increment is not valid for floats (are you sure you want a float?)");
+				case OP_DEC: ERROR(op->src, "decrement is not valid for floats (are you sure you want a float?)");
 
 				INVALID_DEFAULT;
 			}
 		}
 		case TY_STR: {
-			ERROR(op->src_tok->source, "operator valid for strings");
+			ERROR(op->src, "operator valid for strings");
 		}
 		INVALID_DEFAULT;
 		}
 	}
 	Typeref typecheck_binary_op (AST_binop* op, AST* lhs, AST* rhs) {
 		if (lhs->type.ty == nullptr)
-			ERROR(lhs->src_tok->source, "void is not a valid operand");
+			ERROR(lhs->src, "void is not a valid operand");
 		if (rhs->type.ty == nullptr)
-			ERROR(rhs->src_tok->source, "void is not a valid operand");
+			ERROR(rhs->src, "void is not a valid operand");
 		
 		if (lhs->type.ty->tclass == TY_STRUCT)
-			ERROR(op->src_tok->source, "operator not valid for struct");
+			ERROR(op->src, "operator not valid for struct");
 
 		if (op->op == OP_LOGICAL_AND || op->op == OP_LOGICAL_OR) {
 			// TODO: <non-bool> with and or or should be each transformed (in ast?) to (bool)<non-bool>
 			if (lhs->type.ty != pTY_BOOL)
-				ERROR(lhs->src_tok->source, "logical not (!x) is not valid for type");
+				ERROR(lhs->src, "logical not (!x) is not valid for type");
 			if (rhs->type.ty != pTY_BOOL)
-				ERROR(rhs->src_tok->source, "logical not (!x) is not valid for type");
+				ERROR(rhs->src, "logical not (!x) is not valid for type");
 
 			// these operators short-ciruit behavior which is currently implemented in codegen
 			// TODO: could also implement this as a AST-transformation?
@@ -322,7 +322,7 @@ struct SemanticAnalysis {
 		
 		// TOOD: there might be operators for which this is not true
 		if (lhs->type.ty != rhs->type.ty)
-			ERROR(op->src_tok->source, "binary operator: types do not match");
+			ERROR(op->src, "binary operator: types do not match");
 
 		switch (lhs->type.ty->tclass) {
 		case TY_INT: {
@@ -357,7 +357,7 @@ struct SemanticAnalysis {
 				case OP_MUL:
 				case OP_DIV:
 				case OP_MOD:
-					ERROR(op->src_tok->source, "math ops not valid for this type");
+					ERROR(op->src, "math ops not valid for this type");
 		
 				case OP_BIT_AND:
 				case OP_BIT_OR: 
@@ -368,7 +368,7 @@ struct SemanticAnalysis {
 				case OP_LESSEQ:
 				case OP_GREATER:
 				case OP_GREATEREQ:
-					ERROR(op->src_tok->source, "can't compare bools like that");
+					ERROR(op->src, "can't compare bools like that");
 		
 				case OP_EQUALS:    
 				case OP_NOT_EQUALS:
@@ -386,12 +386,12 @@ struct SemanticAnalysis {
 					return Typeref::RValue(lhs->type.ty);
 
 				case OP_MOD:
-					ERROR(op->src_tok->source, "remainder operator not valid for floats");
+					ERROR(op->src, "remainder operator not valid for floats");
 
 				case OP_BIT_AND:
 				case OP_BIT_OR:
 				case OP_BIT_XOR:
-					ERROR(op->src_tok->source, "bitwise operators not valid for floats");
+					ERROR(op->src, "bitwise operators not valid for floats");
 				
 				// always ordered comparisons (NaN behavior)
 				case OP_LESS:
@@ -407,14 +407,14 @@ struct SemanticAnalysis {
 		} break;
 
 		default:
-			ERROR(op->src_tok->source, "math ops not valid for this type");
+			ERROR(op->src, "math ops not valid for this type");
 		}
 	}
 	
 	void resolve_vardecl (AST_vardecl* vardecl, bool is_arg=false) {
 
-		auto* type_ident = vardecl->get_type_tok();
-		if (type_ident) {
+		auto type_ident = vardecl->typeexpr;
+		if (type_ident.start) {
 			vardecl->type.ty = stack.resolve_type(type_ident);
 		}
 
@@ -426,7 +426,7 @@ struct SemanticAnalysis {
 				// everything on the rhs of assignments except calls with void return should have a non-void type
 				assert(vardecl->init->kind == A_CALL);
 
-				ERROR(vardecl->init->src_tok->source, "variable initialization: void is not a valid variable type");
+				ERROR(vardecl->init->src, "variable initialization: void is not a valid variable type");
 			}
 
 			// variable declaration without explicit type -> infer type
@@ -436,7 +436,7 @@ struct SemanticAnalysis {
 			// variable declaration with explicit type -> check if types match
 			else {
 				if (vardecl->type.ty != vardecl->init->type.ty)
-					ERROR(vardecl->init->src_tok->source, "variable initialization: types do not match");
+					ERROR(vardecl->init->src, "variable initialization: types do not match");
 			}
 		}
 
@@ -455,7 +455,7 @@ struct SemanticAnalysis {
 
 			if (arg->kind == A_VARARGS) {
 				if (i != args.count-1)
-					ERROR(arg->src_tok->source, "variadic argument can only appear on the end of the argument list");
+					ERROR(arg->src, "variadic argument can only appear on the end of the argument list");
 				break;
 			}
 
@@ -464,7 +464,7 @@ struct SemanticAnalysis {
 			}
 			else {
 				if (default_args)
-					ERROR(arg->src_tok->source, "default arguments can only appear after all positional arguments");
+					ERROR(arg->src, "default arguments can only appear after all positional arguments");
 			}
 
 			resolve_vardecl(arg, is_arg);
@@ -477,7 +477,7 @@ struct SemanticAnalysis {
 		callarg->type = callarg->expr->type;
 
 		if (declarg->kind != A_VARARGS && callarg->type.ty != declarg->type.ty)
-			ERROR(callarg->src_tok->source, "argument type mismatch");
+			ERROR(callarg->src, "argument type mismatch");
 
 		callarg->decl = declarg;
 	}
@@ -496,7 +496,7 @@ struct SemanticAnalysis {
 
 		for (size_t i = 0; i < declargs.count; ++i) {
 			if (op->kind == A_RETURN && declargs[i]->kind == A_VARARGS)
-				ERROR(declargs[i]->src_tok->source, "variadic argument no allowed for return values");
+				ERROR(declargs[i]->src, "variadic argument no allowed for return values");
 
 			if (declargs[i]->kind == A_VARARGS)
 				break;
@@ -510,7 +510,7 @@ struct SemanticAnalysis {
 
 		for (; i < callargs.count && callargs[i]->ident.empty(); ++i) {
 			if (i >= declargs.count) // no more args in func
-				ERROR(callargs[i]->src_tok->source, "too many arguments");
+				ERROR(callargs[i]->src, "too many arguments");
 
 			if (declargs[i]->kind == A_VARARGS) {
 				auto* vararg_decl = declargs[i];
@@ -532,7 +532,7 @@ struct SemanticAnalysis {
 
 		for (; i < callargs.count && callargs[i]->ident.empty(); ++i) {
 			if (i >= declargs.count) // no more args in func
-				ERROR(callargs[i]->src_tok->source, "too many arguments");
+				ERROR(callargs[i]->src, "too many arguments");
 
 			if (declargs[i]->kind == A_VARARGS) {
 				args.push();
@@ -550,23 +550,23 @@ struct SemanticAnalysis {
 				if (args[i].decl->ident == callarg->ident)
 					return i;
 			}
-			ERROR(callarg->src_tok->source, "unknown argument");
+			ERROR(callarg->src, "unknown argument");
 		};
 		
 		for (; i < callargs.count; ++i) {
 			
 			if (callargs[i]->ident.empty())
-				ERROR(callargs[i]->src_tok->source, "named arguments can only appear after all positional arguments");
+				ERROR(callargs[i]->src, "named arguments can only appear after all positional arguments");
 
 			size_t argi = find_named_arg(callargs[i]);
 
 			if (args[argi].decl->kind == A_VARARGS)
-				ERROR(callargs[i]->src_tok->source, "variadic arguments cannot be assigned directly");
+				ERROR(callargs[i]->src, "variadic arguments cannot be assigned directly");
 
 			if (args[argi].expr)
-				throw CompilerExcept({ "error", callargs[i]->src_tok->source, "argument already set in call" }, {
-				                     { "note", args[argi].expr->src_tok->source, "argument was set here" }});
-				                     //{ args[argi].decl->src_tok->source, "note: argument declaration" }});
+				throw CompilerExcept({ "error", callargs[i]->src, "argument already set in call" }, {
+				                     { "note", args[argi].expr->src, "argument was set here" }});
+				                     //{ args[argi].decl->src, "note: argument declaration" }});
 			
 			resolve_callarg(callargs[i], args[argi].decl);
 
@@ -588,8 +588,8 @@ struct SemanticAnalysis {
 			for (size_t i=0; i<args.count; ++i) {
 				if (args[i].expr == nullptr) {
 					if (args[i].decl->init == nullptr)
-						throw CompilerExcept({ "error", call->src_tok->source, "required argument not provided" },
-						                    {{ "note", args[i].decl->src_tok->source, "argument declaration" }});
+						throw CompilerExcept({ "error", call->src, "required argument not provided" },
+						                    {{ "note", args[i].decl->src, "argument declaration" }});
 					
 					args[i].expr = args[i].decl->init;
 				}
@@ -603,7 +603,7 @@ struct SemanticAnalysis {
 		recurse(ast);
 		
 		if (ast->type.ty != pTY_BOOL)
-			ERROR(ast->src_tok->source, "condition expression must be a bool");
+			ERROR(ast->src, "condition expression must be a bool");
 	}
 
 	void recurse (AST* ast) {
@@ -634,20 +634,20 @@ struct SemanticAnalysis {
 			recurse(op->rhs);
 
 			//if (op->lhs->kind != A_VAR)
-			//	ERROR("can only assign to variables, not arbitrary expressions", op->lhs->src_tok->source);
+			//	ERROR("can only assign to variables, not arbitrary expressions", op->lhs->src);
 			if (op->lhs->type.rval)
-				ERROR(op->lhs->src_tok->source, "cannot assign to a RValue");
+				ERROR(op->lhs->src, "cannot assign to a RValue");
 
 			if (op->rhs->type.ty == nullptr) {
 				// everything on the rhs of assignments except calls with void return should have a non-void type
 				assert(op->rhs->kind == A_CALL);
 
-				ERROR(op->rhs->src_tok->source, "assignment: can't assign void to something");
+				ERROR(op->rhs->src, "assignment: can't assign void to something");
 			}
 
 			// check if types match
 			if (op->lhs->type.ty != op->rhs->type.ty)
-				ERROR(op->src_tok->source, "assignment: types do not match");
+				ERROR(op->src, "assignment: types do not match");
 
 		} break;
 
@@ -674,9 +674,9 @@ struct SemanticAnalysis {
 				// since for '.' operator the rhs expected to be A_VAR, but identifier is not resolved like a normal var
 
 				if (!op->lhs->type.ty || op->lhs->type.ty->tclass != TY_STRUCT)
-					ERROR(op->lhs->src_tok->source, "member operator '.' expects struct on the left-hand side");
+					ERROR(op->lhs->src, "member operator '.' expects struct on the left-hand side");
 				if (op->rhs->kind != A_VAR)
-					ERROR(op->rhs->src_tok->source, "member operator '.' expects member identifier on the right-hand side");
+					ERROR(op->rhs->src, "member operator '.' expects member identifier on the right-hand side");
 			
 				auto find_member = [] (AST_structdef* struc, AST_var* memb) -> AST_vardecl* {
 					for (auto* strucmem : struc->members) {
@@ -684,7 +684,7 @@ struct SemanticAnalysis {
 							return strucmem;
 					}
 
-					ERROR(memb->src_tok->source, "struct member not found");
+					ERROR(memb->src, "struct member not found");
 				};
 
 				auto* struc = (AST_structdef*)op->lhs->type.ty->decl;
@@ -709,7 +709,7 @@ struct SemanticAnalysis {
 
 			if (ast->kind == A_SELECT) {
 				if (aif->if_body->type.ty != aif->else_body->type.ty)
-					ERROR(aif->src_tok->source, "select expression: types do not match");
+					ERROR(aif->src, "select expression: types do not match");
 				
 				// result is an LValue if both a and b are LValues, so that we can do
 				// (cond ? a : b) = 5;

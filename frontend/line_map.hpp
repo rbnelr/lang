@@ -20,40 +20,6 @@ inline source_range to_source_range (std::string_view sv) {
 struct SourceLines {
 	std::vector<source_loc_t> lines; // each line with the newline character sequence excluded
 
-	void parse_lines (const char* src) {
-		ZoneScoped;
-
-		lines.reserve(1024*8);
-		const char* cur = src;
-		const char* cur_line = src;
-
-		// add first line
-		lines.emplace_back(src);
-
-		while (*cur != '\0') {
-			if (*cur == '\n' || *cur == '\r') {
-				// newline found
-				char c = *cur++;
-
-				// this code should even handle files with inconsistent unix vs windows newlines reasonably
-				// "\n" "\r" "\n\r" "\r\n" each count as one newline while "\n\n" "\r\r" count as two
-				if ((*cur == '\n' || *cur == '\r') && c != *cur)
-					cur++;
-
-				// add next line
-				lines.emplace_back(cur);
-			}
-			else {
-				cur++;
-			}
-		}
-
-		// add dummy line after EOF on one past the EOF character
-		// TODO: is this safe? I changed this from the dummy line being _on_ the EOF
-		// since my binary search below had a bug in the case of the source loc being _on_ the EOF as well
-		lines.emplace_back(cur + 1);
-	}
-
 	std::string_view get_line_text (size_t lineno) const {
 		assert(lineno+1 < lines.size()); // +1 to exclude dummy line
 

@@ -321,13 +321,13 @@ struct Typeref {
 struct AST {
 	ASTKind      kind;
 
-	Token*       src_tok;
+	source_range src;
 
 	Typeref      type;
 };
 
 inline constexpr AST cAST (ASTKind type, AST_type* valtype=nullptr) {
-	return { type, nullptr, valtype };
+	return { type, source_range{0,0}, valtype };
 }
 
 #if TRACY_ENABLE
@@ -335,16 +335,20 @@ inline size_t ast_nodes;
 #endif
 
 template <typename T>
-inline T* ast_alloc (ASTKind kind, Token* tok) {
+inline T* ast_alloc (ASTKind kind, source_range src) {
 	T* ret = g_allocator.alloc<T>();
 	
-	ret->kind     = kind;
-	ret->src_tok  = tok;
+	ret->kind  = kind;
+	ret->src   = src;
 
 #if TRACY_ENABLE
 	ast_nodes++;
 #endif
 	return ret;
+}
+template <typename T>
+inline T* ast_alloc (ASTKind kind, Token& tok) {
+	return ast_alloc<T>(kind, tok.source);
 }
 
 struct AST_block : public AST {
@@ -358,6 +362,8 @@ struct AST_literal : public AST {
 struct AST_vardecl : public AST {
 	strview      ident;
 
+	source_range typeexpr; // TODO: parse this into a AST_typeexpr and store that here instead ?
+
 	AST*         init         = nullptr;   // initialization during declaration
 
 	bool         is_arg       = false; // for IR gen, is this variable a function argument?
@@ -365,13 +371,6 @@ struct AST_vardecl : public AST {
 	llvm::Type*  llvm_type    = nullptr;
 	llvm::Value* llvm_value   = nullptr;
 	unsigned     llvm_GEP_idx = 0; // only for struct members
-
-	Token* get_type_tok () {
-		if (src_tok[2].type != T_IDENTIFIER)
-			return nullptr;
-
-		return &src_tok[2];
-	}
 };
 
 // TODO: either a variable identifier or a struct member identifer
@@ -453,6 +452,8 @@ struct AST_return : public AST {
 struct AST_Module {
 	std::string filename;
 
+	SourceLines lines;
+
 	AST* ast;
 
 	std::vector<AST_funcdef*>   funcs;
@@ -461,4 +462,4 @@ struct AST_Module {
 
 void dbg_print (AST* node, int depth=0);
 
-AST* parse (Token* tokens);
+void parse (AST_Module& modl, const char* src, int bufsz);

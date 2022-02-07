@@ -18,7 +18,7 @@
 	#define _DBG_CLEAR(ptr, val, size) memset(ptr, val, size);
 #endif
 
-template <typename T, size_t N>
+template <typename T, int N>
 struct smallvec {
 	T*     data;
 	size_t count;
@@ -29,6 +29,8 @@ struct smallvec {
 	//T storage[N];
 	alignas(T) char storage[N * sizeof(T)];
 	
+//// ctor / dtor / move / copy
+
 	_FORCEINLINE smallvec (): data{(T*)storage}, count{0}, capacity{N} {
 		_DBG_CLEAR(storage, _DBG_MAGIC_NONALLOC, N * sizeof(T));
 	}
@@ -57,6 +59,91 @@ struct smallvec {
 		_free();
 	}
 
+//// Accessors
+
+	_FORCEINLINE T& operator[] (size_t idx) {
+		assert(idx < count);
+		return data[idx];
+	}
+	_FORCEINLINE T const& operator[] (size_t idx) const {
+		assert(idx < count);
+		return data[idx];
+	}
+
+	_FORCEINLINE T* begin () {
+		return data;
+	}
+	_FORCEINLINE T* end () {
+		return data + count;
+	}
+	_FORCEINLINE T const* begin () const {
+		return data;
+	}
+	_FORCEINLINE T const* end () const {
+		return data + count;
+	}
+	
+//// Element add/remove
+
+	void push (T const& val) {
+		T copy = val; // TODO: is this how you should implement turning a lvalue ref into a rvalue ref?
+		push(std::move(copy));
+	}
+
+	void push (T&& val) {
+		assert(count + 1 > count);
+		_ASSUME(count + 1 > count);
+
+		size_t cnt = count;
+		if (cnt >= capacity) [[unlikely]]
+			_realloc();
+		count = cnt+1;
+
+		T* item = &data[cnt];
+
+		_DBG_CLEAR(item, _DBG_MAGIC_UNINIT, sizeof(T));
+		
+		// default-construct new elements
+		*item = std::move(val);
+	}
+
+
+	T& push () {
+		assert(count + 1 > count);
+		_ASSUME(count + 1 > count);
+
+		size_t cnt = count;
+		if (cnt >= capacity) [[unlikely]]
+			_realloc();
+		count = cnt+1;
+
+		T* item = &data[cnt];
+		
+		_DBG_CLEAR(item, _DBG_MAGIC_UNINIT, sizeof(T));
+
+		// default-construct new elements
+		new (item) T ();
+		
+		return *item;
+	}
+	
+	T pop_get () {
+		T val = std::move(data[count-1]);
+		pop();
+		return val;
+	}
+	
+	void pop () {
+		assert(count > 0);
+		_ASSUME(count > 0);
+		
+		data[--count].~T();
+		
+		_DBG_CLEAR(data + count, _DBG_MAGIC_FREED, sizeof(T));
+	}
+
+//// Resizing
+
 	size_t resize (size_t new_count) {
 		size_t old_count = count;
 
@@ -71,24 +158,30 @@ struct smallvec {
 	}
 
 	T* grow_by (size_t n) {
+		// don't handle overflow, since size_t should be more than large enough for that to not happen
+		assert(count + n > count);
+
 		size_t old_count = count;
 		grow_to(count + n);
 		return data + old_count;
 	}
 	void shrink_by (size_t n) {
+		// callers responsibilty to not underflow
 		assert(count >= n);
+
 		shrink_to(count - n);
 	}
 
 	void clear () {
 		shrink_to(0);
 	}
-
+	
+	// UB if called with new_count < count
 	void grow_to (size_t new_count) {
-		if (new_count <= count)
-			return;
+		assert(new_count >= count);
+		_ASSUME(new_count >= count);
 
-		if (new_count > capacity) [[unlikely]]
+		if (new_count > capacity) //[[unlikely]]
 			_realloc();
 
 		_DBG_CLEAR(data + count, _DBG_MAGIC_UNINIT, (new_count - count) * sizeof(T));
@@ -100,23 +193,29 @@ struct smallvec {
 
 		count = new_count;
 	}
+
+	// UB if called with new_count > count
 	void shrink_to (size_t new_count) {
-		if (new_count >= count)
-			return;
+		assert(new_count <= count);
+		_ASSUME(new_count <= count);
 		
 		for (size_t i=new_count; i<count; ++i) {
 			// destruct
 			data[count].~T();
 		}
-
+		
 		_DBG_CLEAR(data + new_count, _DBG_MAGIC_FREED, (count - new_count) * sizeof(T));
 
 		count = new_count;
 	}
 
-	static size_t _growfac (size_t old_count) {
-		return old_count * 2;
+//// internal allocation
+
+	static size_t _growfac (size_t old_capacity) {
+		return old_capacity * 2;
 	}
+
+	// needs this->count to still be old count (<count> items are moved to the newly allocated memeory)
 	_NOINLINE void _realloc () {
 		//ZoneScoped;
 		
@@ -151,49 +250,6 @@ struct smallvec {
 			//ZoneScoped;
 			aligned_free(data);
 		}
-	}
-
-	// push_back
-	T& push () {
-		return *grow_by(1);
-	}
-	void push (T const& val) {
-		*grow_by(1) = val;
-	}
-	
-	T pop_get () {
-		assert(count > 0);
-
-		T val = std::move(data[count-1]);
-		shrink_to(count-1);
-		return val;
-	}
-	void pop () {
-		assert(count > 0);
-
-		shrink_to(count-1);
-	}
-
-	_FORCEINLINE T& operator[] (size_t idx) {
-		assert(idx < count);
-		return data[idx];
-	}
-	_FORCEINLINE T const& operator[] (size_t idx) const {
-		assert(idx < count);
-		return data[idx];
-	}
-
-	_FORCEINLINE T* begin () {
-		return data;
-	}
-	_FORCEINLINE T* end () {
-		return data + count;
-	}
-	_FORCEINLINE T const* begin () const {
-		return data;
-	}
-	_FORCEINLINE T const* end () const {
-		return data + count;
 	}
 };
 
@@ -322,7 +378,7 @@ struct BumpAllocator {
 		return (T*)alloc(sizeof(T)*count, alignof(T));
 	}
 
-	inline char* alloc (size_t size, size_t align) {
+	char* alloc (size_t size, size_t align) {
 		// code would work fine with size=0, but maybe avoid returning a pointer to _no_ data
 		// esp. since it actually does align the pointer to align and
 		// potentially triggers new block allocation for no reason
@@ -365,7 +421,7 @@ struct BumpAllocator {
 		}
 	}
 
-	char* large_alloc (size_t size, size_t align) {
+	_NOINLINE char* large_alloc (size_t size, size_t align) {
 		ZoneScoped;
 
 		char* ptr = (char*)aligned_memalloc(size, align);

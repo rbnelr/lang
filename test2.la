@@ -1,41 +1,41 @@
 
-a := 2;
-b := -2;
-
-sel := timer() % 2 != 0;
-
-printf("a: {i}  b: {i}\n", a,b);
-
-(sel ? a : b) /= 2;
-
-printf("a: {i}  b: {i}\n", a,b);
-
-(!sel ? a : b) /= 2;
-
-printf("a: {i}  b: {i}\n", a,b);
-
-//n : int;
-//{
-//	a := 5;
-//	b := 10;
-//	n = a * b - 5;
-//}
+//a := 2;
+//b := -2;
 //
-//a := 0;
-//b := 1;
+//sel := timer() % 2 != 0;
 //
-//printf("Fibbonaci: {i} {i}", a, b);
+//printf("a: {i}  b: {i}\n", a,b);
 //
-//for i := 0; i < n-2; i++ {
-//	c := a + b;
-//	printf(" {i}", c);
-//	a = b;
-//	//break;
-//	b = c;
-//}
+//(sel ? a : b) /= 2;
 //
-//printf("\n");
-//return;
+//printf("a: {i}  b: {i}\n", a,b);
+//
+//(!sel ? a : b) /= 2;
+//
+//printf("a: {i}  b: {i}\n", a,b);
+
+n : int;
+{
+	a := 5;
+	b := 10;
+	n = a * b - 5;
+}
+
+a := 0;
+b := 1;
+
+printf("Fibbonaci: {i} {i}", a, b);
+
+for i := 0; i < n-2; i++ {
+	c := a + b;
+	printf(" {i}", c);
+	a = b;
+	//break;
+	b = c;
+}
+
+printf("\n");
+return;
 
 //sqr := 625; // 25^2
 //sqrt : int = -1;

@@ -17,6 +17,12 @@ inline struct _IDFormStrbuf { char str[32]; } format_id (size_t id) {
 
 #define PROFILE_DUPLICATE_FUNCS 0
 
+// NOTE: even though context is only used in  struct LLVM_gen
+// It actually needs to be kept around until the module is compiled (? or maybe even after that?) 
+// So just make it global for now, better approach would be to have a llvm context struct that contains a JIT compiler and JIT executor with independent lifetimes
+llvm::LLVMContext ctx;
+
+
 struct LLVM_gen {
 	arrview<AST_funcdef*>   funcdefs;
 	arrview<AST_structdef*> structdefs;
@@ -24,7 +30,6 @@ struct LLVM_gen {
 
 	llvm::Module* modl; // owned by caller
 	
-	llvm::LLVMContext ctx;
 	llvm::IRBuilder<llvm::NoFolder> build{ctx};
 	
 	//std::unique_ptr<llvm::DIBuilder> di_build;
@@ -829,7 +834,7 @@ struct LLVM_gen {
 
 		case A_BREAK: {
 			if (loop_blocks.empty())
-				ERROR(ast->src_tok->source, "break not inside of any loop");
+				ERROR(ast->src, "break not inside of any loop");
 				
 			build.CreateBr(loop_blocks.back().break_block);
 			unreachable();
@@ -837,7 +842,7 @@ struct LLVM_gen {
 		}
 		case A_CONTINUE: {
 			if (loop_blocks.empty())
-				ERROR(ast->src_tok->source, "continue not inside of any loop");
+				ERROR(ast->src, "continue not inside of any loop");
 			
 			build.CreateBr(loop_blocks.back().continue_block);
 			unreachable();

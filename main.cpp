@@ -12,16 +12,16 @@
 #define TRACY_REPEAT 1000
 
 void set_options () {
-	options.filename  = "test_100x.la";
+	options.filename  = "test_100k.la";
 
 	options.optimized = 1;
 
-#ifdef TRACY_ENABLE
+#ifdef NDEBUG
 	options.print_ast  = 0;
 	options.print_ir   = 0;
 	options.print_code = 0;
 #else
-	options.print_ast  = 0;
+	options.print_ast  = 1;
 	options.print_ir   = 1;
 	options.print_code = 1;
 #endif
@@ -41,33 +41,46 @@ bool compile () {
 			return false;
 		}
 	}
+	
+	int repeat = 100;
+	printf("averaged over %d runs\n", repeat);
+	printf("bufsz, time[ms], tokenize_count, bufmemsz[KB]\n");
 
-#if TRACY_ENABLE
-	for (int profi=0; profi<TRACY_REPEAT; ++profi) {
-	#endif
+	int bufsz = 0;
+	for (int i=0;; ++i) {
+
+		int sz = (int)std::powf(2.0f, 0.13f * (float)i);
+		if (sz <= bufsz)
+			continue;
+		bufsz = sz;
+
+		if (bufsz > 1000000)
+			break;
+
+		float total = 0.0f;
+
+		for (int j=0; j<repeat; ++j) {
+
+//#if TRACY_ENABLE
+//	for (int profi=0; profi<TRACY_REPEAT; ++profi) {
+//#endif
 
 		// we need at least one memory block anyway
-		// and in case we only end up needing one this could actually help the branch predictor
-		// since add_block will never be called in the compiler code this way
 		g_allocator.add_block();
 
-		SourceLines lines; // need lines outside of try to allow me to print error messages with line numbers
+		AST_Module modl;
+		modl.filename = options.filename;
+
 		try {
 
 			ZoneScopedN("compile");
 			
-			std::vector<Token> tokens;
-			AST_Module modl;
-			modl.filename = options.filename;
-
 			{
 				ZoneScopedNC("frontend", tracy::Color::CadetBlue);
 				
-				lines.parse_lines(tok.c_str());
-
-				tokens = tokenize(tok.c_str());
-
-				modl.ast = parse(tokens.data());
+				auto t = Timer::start();
+				parse(modl, tok.c_str(), bufsz);
+				total += t.end();
 
 				semantic_analysis(modl);
 			}
@@ -87,7 +100,7 @@ bool compile () {
 			//}
 		}
 		catch (CompilerExcept& ex) {
-			ex.print(options.filename.c_str(), lines);
+			ex.print(modl.filename.c_str(), modl.lines);
 			return false;
 		}
 		catch (RuntimeExcept& ex) {
@@ -101,9 +114,12 @@ bool compile () {
 		
 		g_allocator.reset();
 
-	#if TRACY_ENABLE
+//#if TRACY_ENABLE
+//	}
+//#endif
+		}
+		printf("%d, %g, %d, %f\n", bufsz, total/(float)repeat * 1000.0f, tokenize_count, bufsz * sizeof(Token) / 1024.0f);
 	}
-#endif
 
 	return true;
 }

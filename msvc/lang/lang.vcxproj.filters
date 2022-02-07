@@ -18,9 +18,6 @@
     <ClCompile Include="..\..\backend_llvm\llvm_jit.cpp">
       <Filter>backend\llvm</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\backend_llvm\llvm_pch.cpp">
-      <Filter>backend\llvm</Filter>
-    </ClCompile>
     <ClCompile Include="..\..\backend_llvm\win32_mmap.cpp">
       <Filter>backend\llvm</Filter>
     </ClCompile>
@@ -45,6 +42,9 @@
     <ClCompile Include="..\..\util\timer.cpp">
       <Filter>util</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\backend_llvm\llvm_pch.cpp">
+      <Filter>backend\llvm</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\..\common\tracy\Tracy.hpp">
@@ -59,9 +59,6 @@
       <Filter>backend\llvm</Filter>
     </ClInclude>
     <ClInclude Include="..\..\backend_llvm\llvm_disasm.hpp">
-      <Filter>backend\llvm</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\backend_llvm\llvm_pch.hpp">
       <Filter>backend\llvm</Filter>
     </ClInclude>
     <ClInclude Include="..\..\backend_llvm\llvm_sec_mem_manager.hpp">
@@ -111,6 +108,9 @@
     </ClInclude>
     <ClInclude Include="..\..\util\timer.hpp">
       <Filter>util</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\backend_llvm\llvm_pch.hpp">
+      <Filter>backend\llvm</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

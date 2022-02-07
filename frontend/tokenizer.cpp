@@ -18,6 +18,9 @@ constexpr inline bool is_ident_c (char c) {
 constexpr inline bool is_whitespace_c (char c) {
 	return c == ' ' || c == '\t';
 }
+constexpr inline bool is_newline_c (char c) {
+	return c == '\n' || c == '\r';
+}
 
 // parse 1_000_000 as 1000000 for better readability
 // (user can put _ anywhere in int after intial digit
@@ -86,29 +89,44 @@ const char* parse_escaped_string (const char* start, const char* end) {
 	return result;
 }
 
-std::vector<Token> tokenize (const char* src) {
-	ZoneScoped;
-	std::vector<Token> tokens;
-	tokens.reserve(1024*8);
+const char* tokenize (Token* buf, Token* bufend, const char* cur_src, SourceLines& lines) {
+	const char* cur = cur_src;
 
-	const char* cur = src;
-	const char* cur_line = src;
+	Token* cur_tok = buf;
+
+	auto newline = [&] () {
+		assert(*cur == '\n' || *cur == '\r');
+
+		// newline found
+		char c = *cur++;
+
+		// this code should even handle files with inconsistent unix vs windows newlines reasonably
+		// "\n" "\r" "\n\r" "\r\n" each count as one newline while "\n\n" "\r\r" count as two
+		if ((*cur == '\n' || *cur == '\r') && c != *cur)
+			cur++;
+
+		// add next line
+		lines.lines.emplace_back(cur);
+	};
 
 	for (;;) {
 		switch (*cur) {
 			// skip whitespace
-			case ' ': case '\t':
 			case '\n': case '\r': {
+				newline();
+				continue;
+			}
+			case ' ': case '\t': {
 				cur++;
 				continue;
 			}
 			
-			case '/': {
+			case '/': { // '//' or '/*'
 				// "//" if line comment begin, skip until newline or EOF
 				if (cur[1] == '/') {
 					cur+=2;
 
-					while (*cur != '\n' && *cur != '\r' && *cur != '\0')
+					while (!is_newline_c(*cur) && *cur != '\0')
 						cur++; // skip anything until newline or EOF
 
 					continue;
@@ -131,6 +149,9 @@ std::vector<Token> tokenize (const char* src) {
 							cur += 2; // skip "*/"
 							depth--;
 						}
+						else if (is_newline_c(*cur)) {
+							newline();
+						}
 						else {
 							cur++;
 						}
@@ -138,7 +159,7 @@ std::vector<Token> tokenize (const char* src) {
 					continue;
 				}
 			} break;
-			case '*': {
+			case '*': { // '*/'
 				if (cur[1] == '/') {
 					SYNTAX_ERROR(source_range(cur, cur+2), "unexpected block comment close");
 				}
@@ -147,12 +168,21 @@ std::vector<Token> tokenize (const char* src) {
 
 		// non-whitespace character outside of comment -> start of a token
 
-		Token& tok = tokens.emplace_back();
+		if (cur_tok >= bufend)
+			return cur;
+
+		Token& tok = *cur_tok++;
 
 		if (*cur == '\0') {
 			tok.type = T_EOF;
 			tok.source = { cur, cur+1 };
-			break;
+			
+			// add dummy line after EOF on one past the EOF character
+			// TODO: is this safe? I changed this from the dummy line being _on_ the EOF
+			// since my binary search below had a bug in the case of the source loc being _on_ the EOF as well
+			lines.lines.emplace_back(cur + 1);
+			
+			return cur;
 		}
 
 		const char* start = cur;
@@ -273,13 +303,20 @@ std::vector<Token> tokenize (const char* src) {
 				char const* strstart = cur;
 
 				for (;;) {
-					if (*cur == '\0')
+					if (*cur == '\0') {
 						SYNTAX_ERROR(source_range(cur, cur+1), "end of file in string literal");
+					}
+					else if (is_newline_c(*cur)) {
+						SYNTAX_ERROR(source_range(cur, cur+1), "newline in string literal"); // Allow newlines?
+						//newline();
+					}
 					// escape sequences \\ and \"
-					else if (cur[0] == '\\' && (cur[1] == '"' || cur[1] == '\\'))
+					else if (cur[0] == '\\' && (cur[1] == '"' || cur[1] == '\\')) {
 						cur += 2;
-					else if (*cur == '"')
+					}
+					else if (*cur == '"') {
 						break;
+					}
 					cur++;
 				}
 
@@ -357,10 +394,4 @@ std::vector<Token> tokenize (const char* src) {
 		cur++; // single-char token
 		tok.source = { start, cur };
 	}
-
-#if TRACY_ENABLE
-	auto str = std::format("tokens: {}", tokens.size());
-	ZoneText(str.data(), str.size());
-#endif
-	return tokens;
 }

@@ -187,13 +187,16 @@ struct Lexer {
 		lex(new_toks, buf+BUFSZ);
 	}
 	
+	size_t saturate16 (size_t x) { return x <= UINT32_MAX ? x : UINT32_MAX; }
+	size_t saturate32 (size_t x) { return x <= UINT16_MAX ? x : UINT16_MAX; }
+
 	void set_source_range_start (SourceRange* r, char const* start) {
 		r->start        = start;
-		r->start_lineno = (uint32_t)std::min(cur_lineno,       (size_t)   UINT32_MAX);
-		r->start_charno = (uint16_t)std::min(start - cur_line, (ptrdiff_t)UINT16_MAX);
+		r->start_lineno = (uint32_t)saturate32(cur_lineno                );
+		r->start_charno = (uint16_t)saturate16((size_t)(start - cur_line));
 	}
 	void set_source_range_len (SourceRange* r, ptrdiff_t len) {
-		r->length       = (uint16_t)std::min(len,              (ptrdiff_t)UINT16_MAX);
+		r->length       = (uint16_t)saturate16((size_t)len);
 	}
 
 	SourceRange get_source_range (char const* start, char const* end) {

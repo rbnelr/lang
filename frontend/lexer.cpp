@@ -22,6 +22,20 @@ constexpr inline bool is_newline_c (char c) {
 	return c == '\n' || c == '\r';
 }
 
+// ughh... not range-based switch-case...
+#define IDENT_START_CASES \
+	case 'a': case 'b': case 'c': case 'd': case 'e': case 'f': case 'g': case 'h': case 'i': \
+	case 'j': case 'k': case 'l': case 'm': case 'n': case 'o': case 'p': case 'q': case 'r': \
+	case 's': case 't': case 'u': case 'v': case 'w': case 'x': case 'y': case 'z': \
+	case 'A': case 'B': case 'C': case 'D': case 'E': case 'F': case 'G': case 'H': case 'I': \
+	case 'J': case 'K': case 'L': case 'M': case 'N': case 'O': case 'P': case 'Q': case 'R': \
+	case 'S': case 'T': case 'U': case 'V': case 'W': case 'X': case 'Y': case 'Z': \
+	case '_':
+
+#define NUMBER_START_CASES \
+	case '0': case '1': case '2': case '3': case '4': case '5': case '6': case '7': case '8': case '9':
+
+
 void Lexer::parse_lit_bool    (const char* start, const char* end, Value* out_val) {
 	if (start[0] == 'f') {
 		assert(strview(start, (size_t)(end - start)) == "false");
@@ -177,59 +191,6 @@ void match_keyword (char const* start, char const* end, Token& tok) {
 #endif
 }
 
-struct _LUT {
-	struct LUT_Entry {
-		TokenType a = (TokenType)0;
-
-		char      b0c = -1;
-		TokenType b0t = (TokenType)0;
-
-		char      b1c = -1;
-		TokenType b1t = (TokenType)0;
-	};
-	LUT_Entry LUT[128];
-};
-constexpr _LUT _gen_LUT () {
-	_LUT l = {};
-
-	l.LUT['~'] = { T_BIT_NOT      };
-	l.LUT['^'] = { T_BIT_XOR      };
-	
-	l.LUT['.'] = { T_MEMBER       };
-	l.LUT[':'] = { T_COLON        };
-	l.LUT[';'] = { T_SEMICOLON    };
-	l.LUT[','] = { T_COMMA        };
-	l.LUT['?'] = { T_QUESTIONMARK };
-	
-	l.LUT['('] = { T_PAREN_OPEN   };
-	l.LUT[')'] = { T_PAREN_CLOSE  };
-	l.LUT['{'] = { T_BLOCK_OPEN   };
-	l.LUT['}'] = { T_BLOCK_CLOSE  };
-	l.LUT['['] = { T_INDEX_OPEN   };
-	l.LUT[']'] = { T_INDEX_CLOSE  };
-
-	
-	l.LUT['*'] = { T_MUL,         '=', T_MULEQ      };
-	l.LUT['/'] = { T_DIV,         '=', T_DIVEQ      };
-	l.LUT['%'] = { T_MOD,         '=', T_MODEQ      };
-	l.LUT['&'] = { T_BIT_AND,     '&', T_AND        };
-	l.LUT['|'] = { T_BIT_OR,      '|', T_OR         };
-	l.LUT['<'] = { T_LESS,        '=', T_LESSEQ     };
-	l.LUT['>'] = { T_GREATER,     '=', T_GREATEREQ  };
-	l.LUT['!'] = { T_NOT,         '=', T_NOT_EQUALS };
-	l.LUT['='] = { T_ASSIGN,      '=', T_EQUALS     };
-
-	l.LUT['!'] = { T_NOT,         '=', T_NOT_EQUALS };
-	l.LUT['='] = { T_ASSIGN,      '=', T_EQUALS     };
-	
-
-	l.LUT['+'] = { T_ADD,         '=', T_ADDEQ,     '+', T_INC};
-	l.LUT['-'] = { T_SUB,         '=', T_SUBEQ,     '-', T_DEC};
-	
-	return l;
-}
-constexpr _LUT LUT = _gen_LUT(); 
-
 void Lexer::lex (Token* first_tok, Token* end_tok) {
 	const char* cur = cur_char; // copy into local to help compiler avoid reloading this during the loop
 
@@ -320,98 +281,155 @@ void Lexer::lex (Token* first_tok, Token* end_tok) {
 
 		set_source_range_start(&tok.source, start);
 		
-		if (*cur == '\0') {
-			tok.type = T_EOF;
-			tok.source.length = 1;
-			break; // end lexing loop
-		}
-		
+		// tok.source.length = LEN: avoid range check by not calling set_source_range_len()
 		#define SIMPLE_TOK(TYPE, LEN) {             \
-			cur += LEN;                             \
 			tok.type = TYPE;                        \
-			set_source_range_len(&tok.source, LEN); \
+			tok.source.length = (uint16_t)LEN;      \
+			cur += LEN;                             \
 			continue;                               \
 		}
-
-		if (is_ident_start_c(*cur)) {
-
-			while (is_ident_c(*cur))
-				cur++; // find end of identifier
-
-			set_source_range_len(&tok.source, cur - start);
-
-			match_keyword(start, cur, tok);
-			continue;
-		}
 		
-		auto& l = LUT.LUT[*cur];
-		if (l.a != T_EOF) {
-			cur++;
-			auto t = l.a;
-			int len = 1;
+		switch (*cur) {
 
-			char bc = *cur;
-			if      (bc == l.b0c) { t = l.b0t; cur++; }
-			else if (bc == l.b1c) { t = l.b1t; cur++; }
+			case '\0': {
+				tok.type = T_EOF;
+				tok.source.length = 1;
 
-			tok.type = t;
-			set_source_range_len(&tok.source, cur - start);
-			continue;
-		}
-		
-		if (*cur >= '0' && *cur <= '9') {
-			while (is_decimal_c(*cur))
-				cur++;
+				// break would exit switch
+				// and we really want this to be in the switch to remove, since this removes one conditional from every token lexing)
+				goto L_exit; // end lexing loop
+			}
 
-			// float
-			if (*cur == '.') {
+			case '+':
+				if (cur[1] == '=')      SIMPLE_TOK(T_ADDEQ, 2)
+				else if (cur[1] == '+') SIMPLE_TOK(T_INC,   2)
+				else                    SIMPLE_TOK(T_ADD,   1)
 
-				cur++;
+			case '-':
+				if (cur[1] == '=')      SIMPLE_TOK(T_SUBEQ, 2)
+				else if (cur[1] == '-') SIMPLE_TOK(T_DEC,   2)
+				else                    SIMPLE_TOK(T_SUB,   1)
+
+			case '*':
+				if (cur[1] == '=') SIMPLE_TOK(T_MULEQ,      2)
+				else               SIMPLE_TOK(T_MUL,        1)
+
+			case '/':
+				if (cur[1] == '=') SIMPLE_TOK(T_DIVEQ,      2)
+				else               SIMPLE_TOK(T_DIV,        1)
+
+			case '%':
+				if (cur[1] == '=') SIMPLE_TOK(T_MODEQ,      2)
+				else               SIMPLE_TOK(T_MOD,        1)
+				
+			case '&':
+				if (cur[1] == '&') SIMPLE_TOK(T_AND,        2)
+				else               SIMPLE_TOK(T_BIT_AND,    1)
+
+			case '|':
+				if (cur[1] == '|') SIMPLE_TOK(T_OR,         2)
+				else               SIMPLE_TOK(T_BIT_OR,     1)
+
+			case '<':
+				if (cur[1] == '=') SIMPLE_TOK(T_LESSEQ,     2)
+				else               SIMPLE_TOK(T_LESS,       1)
+
+			case '>':
+				if (cur[1] == '=') SIMPLE_TOK(T_GREATEREQ,  2)
+				else               SIMPLE_TOK(T_GREATER,    1)
+
+			case '!':
+				if (cur[1] == '=') SIMPLE_TOK(T_NOT_EQUALS, 2)
+				else               SIMPLE_TOK(T_NOT,        1)
+
+			case '=':
+				if (cur[1] == '=') SIMPLE_TOK(T_EQUALS,     2)
+				else               SIMPLE_TOK(T_ASSIGN,     1)
+				
+			case '~':      SIMPLE_TOK(T_BIT_NOT,         1)
+			case '^':      SIMPLE_TOK(T_BIT_XOR,         1)
+			
+			case '.':      SIMPLE_TOK(T_MEMBER,          1)
+			case ':':      SIMPLE_TOK(T_COLON,           1)
+			case ';':      SIMPLE_TOK(T_SEMICOLON,       1)
+			case ',':      SIMPLE_TOK(T_COMMA,           1)
+			case '?':      SIMPLE_TOK(T_QUESTIONMARK,    1)
+			
+			case '(':      SIMPLE_TOK(T_PAREN_OPEN,      1)
+			case ')':      SIMPLE_TOK(T_PAREN_CLOSE,     1)
+			case '{':      SIMPLE_TOK(T_BLOCK_OPEN,      1)
+			case '}':      SIMPLE_TOK(T_BLOCK_CLOSE,     1)
+			case '[':      SIMPLE_TOK(T_INDEX_OPEN,      1)
+			case ']':      SIMPLE_TOK(T_INDEX_CLOSE,     1)
+			
+			IDENT_START_CASES {
+				while (is_ident_c(*cur))
+					cur++; // find end of identifier
+
+				set_source_range_len(&tok.source, cur - start);
+
+				match_keyword(start, cur, tok);
+				continue;
+			}
+
+			NUMBER_START_CASES {
+
 				while (is_decimal_c(*cur))
 					cur++;
 
-				tok.type = T_LITERAL_FLT;
+				// float
+				if (*cur == '.') {
+
+					cur++;
+					while (is_decimal_c(*cur))
+						cur++;
+
+					tok.type = T_LITERAL_FLT;
+				}
+				// int
+				else {
+					tok.type = T_LITERAL_INT;
+				}
+				set_source_range_len(&tok.source, cur - start);
+				continue;
 			}
-			// int
-			else {
-				tok.type = T_LITERAL_INT;
+
+			case '"': {
+				cur++; // skip '"'
+
+				char const* strstart = cur;
+
+				for (;;) {
+					if (*cur == '\0') {
+						SYNTAX_ERROR(get_source_range(cur, cur+1), "end of file in string literal");
+					}
+					else if (is_newline_c(*cur)) {
+						//SYNTAX_ERROR(get_source_range(cur, cur+1), "newline in string literal"); // Allow newlines?
+						newline();
+					}
+					// escape sequences \\ and \"
+					else if (cur[0] == '\\' && (cur[1] == '"' || cur[1] == '\\')) {
+						cur += 2;
+					}
+					else if (*cur == '"') {
+						break;
+					}
+					cur++;
+				}
+
+				char const* strend = cur++; // skip '"'
+
+				tok.type = T_LITERAL_STR;
+				set_source_range_len(&tok.source, cur - start);
+				continue;
 			}
-			set_source_range_len(&tok.source, cur - start);
-			continue;
+
+			default: {
+				SYNTAX_ERROR(tok.source, "unknown token");
+			}
 		}
-		
-		if (*cur == '"') {
-			cur++; // skip '"'
-
-			char const* strstart = cur;
-
-			for (;;) {
-				if (*cur == '\0') {
-					SYNTAX_ERROR(get_source_range(cur, cur+1), "end of file in string literal");
-				}
-				else if (is_newline_c(*cur)) {
-					//SYNTAX_ERROR(get_source_range(cur, cur+1), "newline in string literal"); // Allow newlines?
-					newline();
-				}
-				// escape sequences \\ and \"
-				else if (cur[0] == '\\' && (cur[1] == '"' || cur[1] == '\\')) {
-					cur += 2;
-				}
-				else if (*cur == '"') {
-					break;
-				}
-				cur++;
-			}
-
-			char const* strend = cur++; // skip '"'
-
-			tok.type = T_LITERAL_STR;
-			set_source_range_len(&tok.source, cur - start);
-			continue;
-		}
-
-		SYNTAX_ERROR(tok.source, "unknown token");
 	}
+	L_exit:
 
 	cur_char = cur;
 }

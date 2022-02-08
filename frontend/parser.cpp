@@ -3,10 +3,8 @@
 #include "types.hpp"
 
 template <typename... Args>
-[[noreturn]] inline void SYNTAX_ERROR_AFTER (Tokenizer& tok, const char* format, Args... args) {
-	auto src = tok[-1].source;
-
-	_ERROR("syntax error", source_range( src.end, src.end+1 ), format, std::make_format_args(args...));
+[[noreturn]] inline void SYNTAX_ERROR_AFTER (Lexer& tok, const char* format, Args... args) {
+	_ERROR("syntax error", tok[-1].source.get_single_char_after(), format, std::make_format_args(args...));
 }
 
 void dbg_print (AST* node, int depth) {
@@ -168,7 +166,7 @@ arrview<T> make_copy (arrview<T> tmp_arr) {
 }
 
 struct Parser {
-	Tokenizer tok;
+	Lexer tok;
 
 	void eat_semicolon () {
 		if (tok[0].type != T_SEMICOLON)
@@ -234,10 +232,18 @@ struct Parser {
 				}
 			}
 
-			case T_LITERAL: {
+			case T_LITERAL_BOOL:
+			case T_LITERAL_INT:
+			case T_LITERAL_FLT:
+			case T_LITERAL_STR: {
 				auto* lit = ast_alloc<AST_literal>(A_LITERAL, tok[0]);
-				lit->type  = Typeref::RValue( BASIC_TYPES[tok[0].lit_type] );
-				lit->value = tok[0].lit_val;
+
+				auto start = tok[0].source.start;
+				auto end   = start + tok[0].source.length;
+
+				auto lit_type = tok.parse_literal(tok[0].type, start, end, &lit->value);
+
+				lit->type  = Typeref::RValue( BASIC_TYPES[lit_type] );
 				tok.eat();
 
 				return lit;
@@ -351,8 +357,8 @@ struct Parser {
 			// no type identifier, type will have to be inferred from initialization
 
 			if (tok[0].type != T_ASSIGN)
-				SYNTAX_ERROR_AFTER(tok, "\neither specify type during variable declaration with \"<var> : <type>;\"\n"
-				                        "or let type be inferred with \"<var> := <expr>;\"");
+				SYNTAX_ERROR_AFTER(tok, "\neither specify type during variable declaration with \"<var> : <type>;\""
+				                        "\nor let type be inferred with \"<var> := <expr>;\"");
 		}
 
 		if (tok[0].type == T_ASSIGN) {
@@ -673,7 +679,7 @@ struct Parser {
 		}
 	}
 
-	AST* _block (source_range src, TokenType endtok) {
+	AST* _block (SourceRange const& src, TokenType endtok) {
 		auto* block = ast_alloc<AST_block>(A_BLOCK, src);
 
 		smallvec<AST*, 32> statements;
@@ -722,18 +728,16 @@ struct Parser {
 	}
 };
 
-void parse (AST_Module& modl, const char* src, int bufsz) {
+void parse (AST_Module& modl, const char* src) {
 	ZoneScoped;
-
+	
 #if TRACY_ENABLE
 	ast_nodes = 0;
 #endif
-
-	Parser parser { Tokenizer{src, bufsz} };
+	
+	Parser parser { Lexer{src} };
 
 	modl.ast = parser.file();
-
-	modl.lines = std::move(parser.tok.lines);
 
 #if TRACY_ENABLE
 	auto str = std::format("AST nodes: {}", ast_nodes);

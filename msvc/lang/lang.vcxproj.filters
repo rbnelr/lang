@@ -27,7 +27,7 @@
     <ClCompile Include="..\..\frontend\semantic.cpp">
       <Filter>frontend</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\frontend\tokenizer.cpp">
+    <ClCompile Include="..\..\frontend\lexer.cpp">
       <Filter>frontend</Filter>
     </ClCompile>
     <ClCompile Include="..\..\util\console_colors.cpp">
@@ -73,16 +73,13 @@
     <ClInclude Include="..\..\frontend\errors.hpp">
       <Filter>frontend</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\frontend\line_map.hpp">
-      <Filter>frontend</Filter>
-    </ClInclude>
     <ClInclude Include="..\..\frontend\parser.hpp">
       <Filter>frontend</Filter>
     </ClInclude>
     <ClInclude Include="..\..\frontend\semantic.hpp">
       <Filter>frontend</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\frontend\tokenizer.hpp">
+    <ClInclude Include="..\..\frontend\lexer.hpp">
       <Filter>frontend</Filter>
     </ClInclude>
     <ClInclude Include="..\..\frontend\types.hpp">

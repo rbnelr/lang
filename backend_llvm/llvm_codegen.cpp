@@ -26,7 +26,6 @@ llvm::LLVMContext ctx;
 struct LLVM_gen {
 	arrview<AST_funcdef*>   funcdefs;
 	arrview<AST_structdef*> structdefs;
-	SourceLines const& lines;
 
 	llvm::Module* modl; // owned by caller
 	
@@ -887,11 +886,11 @@ struct LLVM_gen {
 	}
 };
 
-llvm::Module* llvm_gen_module (AST_Module& modl, SourceLines const& lines) {
+llvm::Module* llvm_gen_module (AST_Module& modl) {
 	ZoneScoped;
 
 	LLVM_gen llvm_gen = {
-		modl.funcs, modl.structs, lines
+		modl.funcs, modl.structs
 	};
 	llvm_gen.generate(modl.filename);
 

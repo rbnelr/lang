@@ -3,7 +3,7 @@
 #include "options.hpp"
 
 #include "frontend/errors.hpp"
-#include "frontend/tokenizer.hpp"
+#include "frontend/lexer.hpp"
 #include "frontend/parser.hpp"
 #include "frontend/semantic.hpp"
 
@@ -42,28 +42,10 @@ bool compile () {
 		}
 	}
 	
-	int repeat = 100;
-	printf("averaged over %d runs\n", repeat);
-	printf("bufsz, time[ms], tokenize_count, bufmemsz[KB]\n");
-
-	int bufsz = 0;
-	for (int i=0;; ++i) {
-
-		int sz = (int)std::powf(2.0f, 0.13f * (float)i);
-		if (sz <= bufsz)
-			continue;
-		bufsz = sz;
-
-		if (bufsz > 1000000)
-			break;
-
-		float total = 0.0f;
-
-		for (int j=0; j<repeat; ++j) {
-
-//#if TRACY_ENABLE
-//	for (int profi=0; profi<TRACY_REPEAT; ++profi) {
-//#endif
+#if TRACY_ENABLE
+	for (int profi=0; profi<TRACY_REPEAT; ++profi) {
+#endif
+		ZoneScopedN("compile");
 
 		// we need at least one memory block anyway
 		g_allocator.add_block();
@@ -72,16 +54,10 @@ bool compile () {
 		modl.filename = options.filename;
 
 		try {
-
-			ZoneScopedN("compile");
-			
 			{
 				ZoneScopedNC("frontend", tracy::Color::CadetBlue);
-				
-				auto t = Timer::start();
-				parse(modl, tok.c_str(), bufsz);
-				total += t.end();
 
+				parse(modl, tok.c_str());
 				semantic_analysis(modl);
 			}
 
@@ -100,7 +76,7 @@ bool compile () {
 			//}
 		}
 		catch (CompilerExcept& ex) {
-			ex.print(modl.filename.c_str(), modl.lines);
+			ex.print(modl.filename.c_str());
 			return false;
 		}
 		catch (RuntimeExcept& ex) {
@@ -114,12 +90,9 @@ bool compile () {
 		
 		g_allocator.reset();
 
-//#if TRACY_ENABLE
-//	}
-//#endif
-		}
-		printf("%d, %g, %d, %f\n", bufsz, total/(float)repeat * 1000.0f, tokenize_count, bufsz * sizeof(Token) / 1024.0f);
+#if TRACY_ENABLE
 	}
+#endif
 
 	return true;
 }

@@ -1,7 +1,7 @@
 #pragma once
 #include "common.hpp"
 
-enum TypeClass {
+enum TypeClass : uint8_t {
 	TY_BOOL,
 	TY_INT,
 	TY_FLT,

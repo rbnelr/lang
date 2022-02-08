@@ -1,6 +1,6 @@
 #pragma once
 #include "common.hpp"
-#include "tokenizer.hpp"
+#include "lexer.hpp"
 #include "errors.hpp"
 
 //typedef void (*builtin_func_t)(Value* vals);
@@ -218,7 +218,7 @@ inline const char* ASTKind_str[] = {
 	"A_SELECT",
 };
 
-enum OpType {
+enum OpType : uint8_t {
 	OP_ASSIGN=0, // used for =
 
 	// binary operators
@@ -311,23 +311,23 @@ namespace llvm { // forward decls to associate llvm IR with AST nodes
 struct AST_type;
 
 struct Typeref {
-	AST_type* ty   = nullptr;
 	bool      rval = false;
+	AST_type* ty   = nullptr;
 	
-	static Typeref LValue (AST_type* ty) { return { ty, false }; }
-	static Typeref RValue (AST_type* ty) { return { ty, true }; }
+	static Typeref LValue (AST_type* ty) { return { false, ty }; }
+	static Typeref RValue (AST_type* ty) { return { true,  ty }; }
 };
 
 struct AST {
 	ASTKind      kind;
 
-	source_range src;
-
 	Typeref      type;
+
+	SourceRange  src;
 };
 
-inline constexpr AST cAST (ASTKind type, AST_type* valtype=nullptr) {
-	return { type, source_range{0,0}, valtype };
+inline constexpr AST cAST (ASTKind type, Typeref valtype = {}) {
+	return { type, valtype, SourceRange{0,0} };
 }
 
 #if TRACY_ENABLE
@@ -335,7 +335,7 @@ inline size_t ast_nodes;
 #endif
 
 template <typename T>
-inline T* ast_alloc (ASTKind kind, source_range src) {
+inline T* ast_alloc (ASTKind kind, SourceRange const& src) {
 	T* ret = g_allocator.alloc<T>();
 	
 	ret->kind  = kind;
@@ -362,7 +362,7 @@ struct AST_literal : public AST {
 struct AST_vardecl : public AST {
 	strview      ident;
 
-	source_range typeexpr; // TODO: parse this into a AST_typeexpr and store that here instead ?
+	SourceRange  typeexpr; // TODO: parse this into a AST_typeexpr and store that here instead ?
 
 	AST*         init         = nullptr;   // initialization during declaration
 
@@ -452,8 +452,6 @@ struct AST_return : public AST {
 struct AST_Module {
 	std::string filename;
 
-	SourceLines lines;
-
 	AST* ast;
 
 	std::vector<AST_funcdef*>   funcs;
@@ -462,4 +460,4 @@ struct AST_Module {
 
 void dbg_print (AST* node, int depth=0);
 
-void parse (AST_Module& modl, const char* src, int bufsz);
+void parse (AST_Module& modl, const char* src);

@@ -1,13 +1,15 @@
 #pragma once
 #include "common.hpp"
 #include "basic_types.hpp"
-#include "line_map.hpp"
 
 #define TOKTYPES \
 	/*end of file*/                    \
 	X( EOF=0,         "<EOF>" )        \
-	/* literals of differing types */  \
-	X( LITERAL,       "literal" )      \
+	/* literals */                     \
+	X( LITERAL_BOOL,  "literal_bool" ) \
+	X( LITERAL_INT,   "literal_int"  ) \
+	X( LITERAL_FLT,   "literal_flt"  ) \
+	X( LITERAL_STR,   "literal_str"  ) \
 	/* starts with  '_' or [a-Z]  and then any number of  '_' or [a-Z] or [0-9] */ \
 	X( IDENTIFIER,    "identifier" ) \
 \
@@ -75,7 +77,7 @@
 	X( MODEQ,         "%="  ) \
 
 #define X(ENUM, SHORTSTR) T_##ENUM,
-enum TokenType {
+enum TokenType : uint8_t {
 	TOKTYPES
 };
 #undef X
@@ -94,25 +96,52 @@ inline constexpr const char* TokenType_char[] = {
 #undef TOKTYPES
 
 
-struct Token {
-	TokenType    type;
-	source_range source;
 
-	TypeClass    lit_type;
-	Value        lit_val;
+// only for debug printing, so we don't care about handling degenerate cases like 2GB long tokens etc.
+// use this to cut down on the size of this struct a little, since every Token and AST node inludes an instance of this
+
+struct SourceRange {
+	// first char as ptr into source (allows me to see things in debugger)
+	char const* start;
+
+	// lineno of start character     (1-based to match common text editors)
+	uint32_t    start_lineno;
+
+	// char index of start character (0-based TODO: also 1-based?)
+	uint16_t    start_charno;
+
+	// lengh of string starting from start (saturated on overflow)
+	uint16_t    length;
+
+	strview text () const {
+		return strview(start, (size_t)length);
+	}
+
+	SourceRange get_single_char_after () {
+		SourceRange r;
+		r.start  = start + length;
+		r.length = 1;
+		r.start_lineno = start_lineno;
+		r.start_charno = start_charno;
+		return r;
+	}
 };
 
-const char* parse_escaped_string (const char* start, const char* end);
 
-const char* tokenize (Token* buf, Token* bufend, const char* cur_src, SourceLines& lines);
+struct Token {
+	TokenType    type;
+	SourceRange  source;
+};
 
-inline int tokenize_count;
+constexpr size_t _sr_sz = sizeof(SourceRange);
+constexpr size_t _tok_sz = sizeof(Token);
 
-struct Tokenizer {
-	const char* cur_src;
+struct Lexer {
+	const char* cur_char;
+	const char* cur_line;
+	size_t      cur_lineno;
+
 	Token*      cur_tok;
-
-	SourceLines lines;
 	
 	static inline constexpr int LOOKBACK = 1;
 	// how many tokes are always valid relative to lookahead with peek(), eg. peek(LOOKAHEAD-1) is safe
@@ -121,36 +150,27 @@ struct Tokenizer {
 	static inline constexpr int WINDOW_SIZE = LOOKBACK + LOOKAHEAD; // how many buffered tokens are valid to access at any one point
 	static inline constexpr int KEEP_TOKENS = WINDOW_SIZE -1; // how many tokens are kept in refill_buf() when reaching the end of the buffer
 
-	//static inline constexpr int BUFSZ = 256; // if  sizeof(Token) * BUFSZ  fits into a cpu cache level that should improve perf 
+	static inline constexpr int BUFSZ = 1024; // if  sizeof(Token) * BUFSZ  fits into a cpu cache level that should improve perf 
 	
-	//Token buf[BUFSZ];
-	Token* buf = nullptr;
-	int BUFSZ;
+	Token buf[BUFSZ];
 
-	Tokenizer (const char* src, int bufsize) {
-		buf = new Token[bufsize * sizeof(Token)];
-		BUFSZ = bufsize + KEEP_TOKENS;
-
-		cur_src = src;
-		cur_tok = &buf[0];
+	Lexer (const char* src) {
+		cur_char = src;
 		
-		lines.lines.clear();
-		lines.lines.reserve(1024*8);
+		cur_line = cur_char;
+		cur_lineno = 1;
 
-		cur_src = tokenize(cur_tok, buf+BUFSZ, cur_src, lines);
+		cur_tok = &buf[0];
 
-		tokenize_count = 1;
-	}
-	~Tokenizer () {
-		delete[] buf;
+		lex(&buf[0], buf+BUFSZ);
 	}
 
 	// our lookahead rage moves over the end of buf
 	// copy visible window (LOOKBACK - LOOKAHEAD) from end of buffer to start of buffer
 	// and fill rest of buffer with new tokens
-	void refill_buf () {
+	_NOINLINE void refill_buf () {
 		ZoneScoped;
-		
+
 		Token* src = cur_tok - LOOKBACK;
 		int count = LOOKBACK + LOOKAHEAD - 1; // -1 since that one token was outside the window (that's what triggered refill_buf)
 
@@ -164,12 +184,35 @@ struct Tokenizer {
 
 		_DBG_CLEAR(new_toks, _DBG_MAGIC_UNINIT, (buf+BUFSZ - new_toks) * sizeof(Token));
 
-		cur_src = tokenize(new_toks, buf+BUFSZ, cur_src, lines);
-
-		tokenize_count++;
+		lex(new_toks, buf+BUFSZ);
+	}
+	
+	void set_source_range_start (SourceRange* r, char const* start) {
+		r->start        = start;
+		r->start_lineno = (uint32_t)std::min(cur_lineno,       (size_t)   UINT32_MAX);
+		r->start_charno = (uint16_t)std::min(start - cur_line, (ptrdiff_t)UINT16_MAX);
+	}
+	void set_source_range_len (SourceRange* r, ptrdiff_t len) {
+		r->length       = (uint16_t)std::min(len,              (ptrdiff_t)UINT16_MAX);
 	}
 
-	void eat () {
+	SourceRange get_source_range (char const* start, char const* end) {
+		SourceRange r;
+		set_source_range_start(&r, start);
+		set_source_range_len(&r, end - start);
+		return r;
+	}
+	
+	void parse_lit_bool    (const char* start, const char* end, Value* out_val);
+	void parse_lit_integer (const char* start, const char* end, Value* out_val);
+	void parse_lit_double  (const char* start, const char* end, Value* out_val);
+	void parse_lit_string  (const char* start, const char* end, Value* out_val);
+
+	TypeClass parse_literal (TokenType type, const char* start, const char* end, Value* out_val);
+
+	void lex (Token* first_tok, Token* end_tok);
+
+	_FORCEINLINE void eat () {
 		cur_tok++;
 
 		if (cur_tok > buf+BUFSZ - LOOKAHEAD)

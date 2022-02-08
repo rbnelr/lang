@@ -228,7 +228,7 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Use</PrecompiledHeader>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|x64'">common.hpp</PrecompiledHeaderFile>
     </ClCompile>
-    <ClCompile Include="..\..\frontend\tokenizer.cpp">
+    <ClCompile Include="..\..\frontend\lexer.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Use</PrecompiledHeader>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">common.hpp</PrecompiledHeaderFile>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Tracy|x64'">Use</PrecompiledHeader>
@@ -260,10 +260,9 @@
     <ClInclude Include="..\..\frontend\basic_types.hpp" />
     <ClInclude Include="..\..\frontend\builtins.hpp" />
     <ClInclude Include="..\..\frontend\errors.hpp" />
-    <ClInclude Include="..\..\frontend\line_map.hpp" />
     <ClInclude Include="..\..\frontend\parser.hpp" />
     <ClInclude Include="..\..\frontend\semantic.hpp" />
-    <ClInclude Include="..\..\frontend\tokenizer.hpp" />
+    <ClInclude Include="..\..\frontend\lexer.hpp" />
     <ClInclude Include="..\..\frontend\types.hpp" />
     <ClInclude Include="..\..\options.hpp" />
     <ClInclude Include="..\..\util\allocators.hpp" />

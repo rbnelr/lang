@@ -69,7 +69,7 @@ struct IdentiferStack {
 		ident_stack.emplace_back(ident);
 	}
 
-	AST* resolve_ident (source_range src, strview ident, size_t min_scope) {
+	AST* resolve_ident (SourceRange const& src, strview ident, size_t min_scope) {
 		assert(scope_id > 0);
 
 		for (size_t i=scope_id; ; i--) {
@@ -102,7 +102,7 @@ struct IdentiferStack {
 		call->fdef = ast;
 	}
 
-	AST_type* resolve_type (source_range ident_src) {
+	AST_type* resolve_type (SourceRange const& ident_src) {
 		// min_scope = 0, functions can call all types visible to them
 		AST* ast = resolve_ident(ident_src, ident_src.text(), 0);
 		if (ast->kind != A_TYPE)

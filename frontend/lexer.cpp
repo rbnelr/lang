@@ -140,42 +140,63 @@ struct _Keyword {
 	TokenType tok;
 };
 
-
 struct KeywordsByLen {
-	#define COMPARE2(str,kw)  *(uint16_t*)str == *(uint16_t*)kw
-	#define COMPARE3(str,kw) (*(uint16_t*)str == *(uint16_t*)kw) & (*(uint8_t *)&str[2] == *(uint8_t *)&kw[2])
-	#define COMPARE4(str,kw)  *(uint32_t*)str == *(uint32_t*)kw
-	#define COMPARE5(str,kw) (*(uint32_t*)str == *(uint32_t*)kw) & (*(uint8_t *)&str[4] == *(uint8_t *)&kw[4])
-	#define COMPARE6(str,kw) (*(uint32_t*)str == *(uint32_t*)kw) & (*(uint16_t*)&str[4] == *(uint16_t*)&kw[4])
-	#define COMPARE8(str,kw)  *(uint64_t*)str == *(uint64_t*)kw
+	
+	static _FORCEINLINE uint64_t read_u64_safe (char const* p, int len) {
+		if (len == 8)
+			return *(uint64_t*)p;
+		
+		char const* end = p + len;
+		int i = 0;
+
+		uint64_t val = 0;
+		if (p <= end-4) {
+			val |= (uint64_t)(*(uint32_t*)p) << i;
+			p += 4; i += 32;
+		}
+		if (p <= end-2) {
+			val |= (uint64_t)(*(uint16_t*)p) << i;
+			p += 2; i += 16;
+		}
+		if (p <= end-1) {
+			val |= (uint64_t)(*(uint8_t*)p) << i;
+			p += 1; i += 8;
+		}
+		return val;
+	}
+	// depends on little vs. big-endian
+	static constexpr uint64_t KW (char const* p) {
+		int val = 0;
+		for (int i=0; *p && i<8; ++i)
+			val |= ((uint64_t)*p++) << (8*i);
+		return val;
+	}
 
 	_NOINLINE TokenType get (const char* str, size_t len) {
-		switch (len) {
-			case 2: {
-				if (COMPARE2(str, "if")) return T_IF;
-				if (COMPARE2(str, "do")) return T_DO;
-			} break;
-			case 3: {
-				if (COMPARE3(str, "for")) return T_FOR;
-			} break;
-			case 4: {
-				if (COMPARE4(str, "elif")) return T_ELIF;
-				if (COMPARE4(str, "else")) return T_ELSE;
-				if (COMPARE4(str, "func")) return T_FUNC;
-				if (COMPARE4(str, "true")) return T_LITERAL_BOOL;
-				if (COMPARE4(str, "goto")) return T_GOTO;
-			} break;
-			case 5: {
-				if (COMPARE5(str, "while")) return T_WHILE;
-				if (COMPARE5(str, "break")) return T_BREAK;
-				if (COMPARE5(str, "false")) return T_LITERAL_BOOL;
-			} break;
-			case 6: {
-				if (COMPARE6(str, "return")) return T_RETURN;
-			} break;
-			case 8: {
-				if (COMPARE8(str, "continue")) return T_CONTINUE;
-			} break;
+		static_assert(KW("printf") == 0x66746E697270ull, "");
+		
+		if (len > 1 && len <= 8) {
+			uint64_t stri = read_u64_safe(str, (int)len);
+			switch (stri) {
+				case KW("func"     ): return T_FUNC;
+				case KW("struct"   ): return T_STRUCT;
+
+				case KW("if"       ): return T_IF;
+				case KW("elif"     ): return T_ELIF;
+				case KW("else"     ): return T_ELSE;
+					
+				case KW("while"    ): return T_WHILE;
+				case KW("for"      ): return T_FOR;
+				case KW("do"       ): return T_DO;
+
+				case KW("return"   ): return T_RETURN;
+				case KW("break"    ): return T_BREAK;
+				case KW("continue" ): return T_CONTINUE;
+				case KW("goto"     ): return T_GOTO;
+
+				case KW("true"     ):
+				case KW("false"    ): return T_LITERAL_BOOL;
+			}
 		}
 		return T_IDENTIFIER;
 	}

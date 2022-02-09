@@ -140,35 +140,44 @@ struct _Keyword {
 	TokenType tok;
 };
 
-struct KeywordsByLen {
-	std::vector<std::vector<_Keyword>> keywords;
 
-	KeywordsByLen () {
-		constexpr _Keyword kws[] = {
-			{ "if"      , T_IF           },
-			{ "elif"    , T_ELIF         },
-			{ "else"    , T_ELSE         },
-			{ "while"   , T_WHILE        },
-			{ "for"     , T_FOR          },
-			{ "do"      , T_DO           },
-	
-			{ "true"    , T_LITERAL_BOOL },
-			{ "false"   , T_LITERAL_BOOL },
-	
-			{ "func"    , T_FUNC         },
-			{ "struct"  , T_STRUCT       },
-	
-			{ "return"  , T_RETURN       },
-			{ "break"   , T_BREAK        },
-			{ "continue", T_CONTINUE     },
-			{ "goto"    , T_GOTO         },
-		};
-		
-		for (auto& kw : kws) {
-			if (keywords.size() < kw.str.size())
-				keywords.resize(kw.str.size());
-			keywords[kw.str.size()-1].push_back(kw);
+struct KeywordsByLen {
+	#define COMPARE2(str,kw)  *(uint16_t*)str == *(uint16_t*)kw
+	#define COMPARE3(str,kw) (*(uint16_t*)str == *(uint16_t*)kw) & (*(uint8_t *)&str[2] == *(uint8_t *)&kw[2])
+	#define COMPARE4(str,kw)  *(uint32_t*)str == *(uint32_t*)kw
+	#define COMPARE5(str,kw) (*(uint32_t*)str == *(uint32_t*)kw) & (*(uint8_t *)&str[4] == *(uint8_t *)&kw[4])
+	#define COMPARE6(str,kw) (*(uint32_t*)str == *(uint32_t*)kw) & (*(uint16_t*)&str[4] == *(uint16_t*)&kw[4])
+	#define COMPARE8(str,kw)  *(uint64_t*)str == *(uint64_t*)kw
+
+	_NOINLINE TokenType get (const char* str, size_t len) {
+		switch (len) {
+			case 2: {
+				if (COMPARE2(str, "if")) return T_IF;
+				if (COMPARE2(str, "do")) return T_DO;
+			} break;
+			case 3: {
+				if (COMPARE3(str, "for")) return T_FOR;
+			} break;
+			case 4: {
+				if (COMPARE4(str, "elif")) return T_ELIF;
+				if (COMPARE4(str, "else")) return T_ELSE;
+				if (COMPARE4(str, "func")) return T_FUNC;
+				if (COMPARE4(str, "true")) return T_LITERAL_BOOL;
+				if (COMPARE4(str, "goto")) return T_GOTO;
+			} break;
+			case 5: {
+				if (COMPARE5(str, "while")) return T_WHILE;
+				if (COMPARE5(str, "break")) return T_BREAK;
+				if (COMPARE5(str, "false")) return T_LITERAL_BOOL;
+			} break;
+			case 6: {
+				if (COMPARE6(str, "return")) return T_RETURN;
+			} break;
+			case 8: {
+				if (COMPARE8(str, "continue")) return T_CONTINUE;
+			} break;
 		}
+		return T_IDENTIFIER;
 	}
 };
 KeywordsByLen keywords_by_len;
@@ -191,149 +200,6 @@ std::unordered_map<strview, TokenType> keywords_hashed = {
 	{ {"break"    }, T_BREAK        },
 	{ {"continue" }, T_CONTINUE     },
 	{ {"goto"     }, T_GOTO         },
-};
-
-struct PerfectHash {
-	
-	uint32_t count;
-	std::vector<int32_t>                      seeds;
-	std::vector<_Keyword>                     values;
-	
-	static constexpr int32_t MSB = (int32_t)(1u<<31);
-	
-	uint32_t strhash (strview const& str) {
-		return MurmurHash2(str.data(), (int)str.size(), 0);
-	}
-	uint32_t hash (int32_t seed, uint32_t shash) {
-		return (uint32_t)std::hash<uint32_t>()((uint32_t)seed ^ shash);
-	}
-
-	_Keyword const& get_kv (strview const& str) {
-		uint32_t shash = strhash(str);
-
-		uint32_t slot = shash % count;
-		uint32_t slot2;
-
-		int32_t seed = seeds[slot];
-
-		if (seed & MSB) slot2 = (uint32_t)(seed & ~MSB);
-		else            slot2 = hash(seed, shash) % count;
-
-		return values[slot2];
-	}
-	TokenType get (strview const& str) {
-		auto& kv = get_kv(str);
-		if (kv.str == str) return kv.tok;
-		else               return T_IDENTIFIER;
-	}
-
-	PerfectHash (std::initializer_list<_Keyword> keywords) {
-		count = (uint32_t)keywords.size();
-		
-		// create enough buckets to fit every item
-		struct Bucket {
-			uint32_t orig_slot;
-			std::vector<_Keyword const*> items;
-		};
-		std::vector<Bucket> buckets;
-
-		buckets    .resize(count, {});
-		values     .resize(count, {});
-		seeds      .resize(count, 0);
-
-		// insert items into buckets based on 0-seeded hash
-		for (auto& kw : keywords) {
-			int32_t slot = (int32_t)(strhash(kw.str) % count);
-			
-			buckets[slot].orig_slot = slot;
-			buckets[slot].items.push_back(&kw);
-		}
-
-		// sort buckets with most items to the front
-		std::sort(buckets.begin(), buckets.end(), [] (Bucket const& l, Bucket const& r) {
-			return l.items.size() > r.items.size();
-		});
-		
-		std::vector<int32_t> used_slots;
-		used_slots.resize(buckets.size() > 0 ? buckets[0].items.size() : 0);
-		
-		// find seeds for each bucket such that all its items fit in the values array without collisions
-		size_t bi = 0;
-		for (; bi<count; ++bi) {
-			auto& bucket = buckets[bi];
-			auto& items = bucket.items;
-
-			if (items.size() <= 1)
-				break;
-
-			for (int32_t seed=1;; ++seed) {
-
-				bool collision = false;
-				for (size_t i=0; i<items.size(); ++i) {
-					int32_t slot = (int32_t)(hash(seed, strhash(items[i]->str)) % count);
-
-					auto already_used_slot = [&] () {
-						for (size_t j=0; j<i; ++j)
-							if (used_slots[j] == slot) return true;
-						return false;
-					};
-
-					if (!values[slot].str.empty() || already_used_slot()) {
-						collision = true; // collision found, try new seed
-						break;
-					}
-					used_slots[i] = slot;
-				}
-				if (!collision) {
-					// seed found, no collision
-					seeds[bucket.orig_slot] = seed;
-					break;
-				}
-			}
-
-			// seed found apply temp_values to values array
-			for (size_t i=0; i<items.size(); ++i) {
-				values[used_slots[i]] = *items[i];
-			}
-		}
-
-		// remaining buckets contain 0 or 1 items
-		// place each remaining item into the first free slot in values and store this index as the seed but with the MSB set
-		int32_t slot = 0;
-		for (; bi<count; ++bi) {
-			auto& bucket = buckets[bi];
-
-			if (bucket.items.size() == 0)
-				break;
-			assert(bucket.items.size() == 1);
-			
-			while (!values[slot].str.empty())
-				++slot;
-
-			values[slot] = *bucket.items[0];
-			seeds[bucket.orig_slot] = slot | MSB;
-			slot++;
-		}
-	}
-};
-PerfectHash perfect_hash = {
-	{ "if"      , T_IF           },
-	{ "elif"    , T_ELIF         },
-	{ "else"    , T_ELSE         },
-	{ "while"   , T_WHILE        },
-	{ "for"     , T_FOR          },
-	{ "do"      , T_DO           },
-	
-	{ "true"    , T_LITERAL_BOOL },
-	{ "false"   , T_LITERAL_BOOL },
-	
-	{ "func"    , T_FUNC         },
-	{ "struct"  , T_STRUCT       },
-	
-	{ "return"  , T_RETURN       },
-	{ "break"   , T_BREAK        },
-	{ "continue", T_CONTINUE     },
-	{ "goto"    , T_GOTO         },
 };
 
 _FORCEINLINE TokenType match_keyword (char const* start, char const* end) {
@@ -360,16 +226,9 @@ _FORCEINLINE TokenType match_keyword (char const* start, char const* end) {
 	if (text == "goto"     ) return T_GOTO;        
 
 	return T_IDENTIFIER;
-#elif 0
+#elif 1
 	auto text = std::string_view(start, (size_t)(end - start));
-	
-	size_t idx = text.size()-1;
-	if (idx < keywords_by_len.keywords.size()) {
-		for (auto& kw : keywords_by_len.keywords[idx]) {
-			if (memcmp(kw.str.data(), text.data(), text.size()) == 0) return kw.tok;
-		}
-	}
-	return T_IDENTIFIER;
+	return keywords_by_len.get(text.data(), text.size());
 #elif 0
 	auto text = std::string_view(start, (size_t)(end - start));
 	auto it = keywords_hashed.find(text);
@@ -377,8 +236,7 @@ _FORCEINLINE TokenType match_keyword (char const* start, char const* end) {
 		return T_IDENTIFIER;
 	return it->second;
 #else
-	auto text = std::string_view(start, (size_t)(end - start));
-	return perfect_hash.get(text);
+	
 #endif
 }
 

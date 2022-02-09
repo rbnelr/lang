@@ -122,7 +122,7 @@ struct SourceRange {
 		r.start  = start + length;
 		r.length = 1;
 		r.start_lineno = start_lineno;
-		r.start_charno = start_charno;
+		r.start_charno = start_charno + length;
 		return r;
 	}
 };

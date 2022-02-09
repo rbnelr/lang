@@ -45,6 +45,12 @@
     <ClCompile Include="..\..\backend_llvm\llvm_pch.cpp">
       <Filter>backend\llvm</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\util\smhasher\MurmurHash1.cpp">
+      <Filter>util\smhasher</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\util\smhasher\MurmurHash3.cpp">
+      <Filter>util\smhasher</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\..\common\tracy\Tracy.hpp">
@@ -108,6 +114,12 @@
     </ClInclude>
     <ClInclude Include="..\..\backend_llvm\llvm_pch.hpp">
       <Filter>backend\llvm</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\util\smhasher\MurmurHash1.h">
+      <Filter>util\smhasher</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\util\smhasher\MurmurHash3.h">
+      <Filter>util\smhasher</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

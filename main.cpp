@@ -64,7 +64,7 @@ bool compile () {
 			//{
 			//	ZoneScopedNC("backend", tracy::Color::Burlywood);
 			//
-			//	llvm::Module* llvm_modl = llvm_gen_module(modl, lines);
+			//	llvm::Module* llvm_modl = llvm_gen_module(modl);
 			//	defer( llvm_free_module(llvm_modl); );
 			//
 			//	//#ifndef TRACY_ENABLE

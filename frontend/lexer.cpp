@@ -133,61 +133,252 @@ TypeClass Lexer::parse_literal (TokenType type, const char* start, const char* e
 	return (TypeClass)0;
 }
 
-void match_keyword (char const* start, char const* end, Token& tok) {
-#if 0
-	auto text = tok.source.text();
+#include <algorithm>
 
-	struct Keyword {
-		char const* str;
-		Token       val;
+struct _Keyword {
+	strview   str;
+	TokenType tok;
+};
 
+struct KeywordsByLen {
+	std::vector<std::vector<_Keyword>> keywords;
 
-	};
-	std::vector<std::vector<char const*>>
-
-	switch (text.size()) {
-		case 2: {
-			if      (text == "if"   ) { tok.type = T_IF;                           continue; }
-			else if (text == "do"   ) { tok.type = T_DO;                           continue; }
-		} break;
-		case 3: {
-			if      (text == "for"  ) { tok.type = T_FOR;                          continue; }
-		} break;
-		case 4: {
-			if      (text == "elif" ) { tok.type = T_ELIF;                         continue; }
-			else if (text == "else" ) { tok.type = T_ELSE;                         continue; }
-			else if (text == "true" ) { tok.type = T_LITERAL; tok.lit_type = TY_BOOL; tok.lit_val.b = true; continue; }
-			else if (text == "func" ) { tok.type = T_FUNC;  continue; }
-			else if (text == "goto" ) { tok.type = T_GOTO;  continue; }
-		} break;
-		case 5: {
-			if      (text == "while") { tok.type = T_LITERAL; tok.val = { false }; continue; }
-		} break;
+	KeywordsByLen () {
+		constexpr _Keyword kws[] = {
+			{ "if"      , T_IF           },
+			{ "elif"    , T_ELIF         },
+			{ "else"    , T_ELSE         },
+			{ "while"   , T_WHILE        },
+			{ "for"     , T_FOR          },
+			{ "do"      , T_DO           },
+	
+			{ "true"    , T_LITERAL_BOOL },
+			{ "false"   , T_LITERAL_BOOL },
+	
+			{ "func"    , T_FUNC         },
+			{ "struct"  , T_STRUCT       },
+	
+			{ "return"  , T_RETURN       },
+			{ "break"   , T_BREAK        },
+			{ "continue", T_CONTINUE     },
+			{ "goto"    , T_GOTO         },
+		};
+		
+		for (auto& kw : kws) {
+			if (keywords.size() < kw.str.size())
+				keywords.resize(kw.str.size());
+			keywords[kw.str.size()-1].push_back(kw);
+		}
 	}
-	tok.type = T_IDENTIFIER;
-#else
+};
+KeywordsByLen keywords_by_len;
+
+std::unordered_map<strview, TokenType> keywords_hashed = {
+	{ {"if"       }, T_IF           },
+	{ {"elif"     }, T_ELIF         },
+	{ {"else"     }, T_ELSE         },
+	{ {"while"    }, T_WHILE        },
+	{ {"for"      }, T_FOR          },
+	{ {"do"       }, T_DO           },
+	
+	{ {"true"     }, T_LITERAL_BOOL },
+	{ {"false"    }, T_LITERAL_BOOL },
+	
+	{ {"func"     }, T_FUNC         },
+	{ {"struct"   }, T_STRUCT       },
+	
+	{ {"return"   }, T_RETURN       },
+	{ {"break"    }, T_BREAK        },
+	{ {"continue" }, T_CONTINUE     },
+	{ {"goto"     }, T_GOTO         },
+};
+
+struct PerfectHash {
+	
+	uint32_t count;
+	std::vector<int32_t>                      seeds;
+	std::vector<_Keyword>                     values;
+	
+	static constexpr int32_t MSB = (int32_t)(1u<<31);
+	
+	uint32_t strhash (strview const& str) {
+		return MurmurHash2(str.data(), (int)str.size(), 0);
+	}
+	uint32_t hash (int32_t seed, uint32_t shash) {
+		return (uint32_t)std::hash<uint32_t>()((uint32_t)seed ^ shash);
+	}
+
+	_Keyword const& get_kv (strview const& str) {
+		uint32_t shash = strhash(str);
+
+		uint32_t slot = shash % count;
+		uint32_t slot2;
+
+		int32_t seed = seeds[slot];
+
+		if (seed & MSB) slot2 = (uint32_t)(seed & ~MSB);
+		else            slot2 = hash(seed, shash) % count;
+
+		return values[slot2];
+	}
+	TokenType get (strview const& str) {
+		auto& kv = get_kv(str);
+		if (kv.str == str) return kv.tok;
+		else               return T_IDENTIFIER;
+	}
+
+	PerfectHash (std::initializer_list<_Keyword> keywords) {
+		count = (uint32_t)keywords.size();
+		
+		// create enough buckets to fit every item
+		struct Bucket {
+			uint32_t orig_slot;
+			std::vector<_Keyword const*> items;
+		};
+		std::vector<Bucket> buckets;
+
+		buckets    .resize(count, {});
+		values     .resize(count, {});
+		seeds      .resize(count, 0);
+
+		// insert items into buckets based on 0-seeded hash
+		for (auto& kw : keywords) {
+			int32_t slot = (int32_t)(strhash(kw.str) % count);
+			
+			buckets[slot].orig_slot = slot;
+			buckets[slot].items.push_back(&kw);
+		}
+
+		// sort buckets with most items to the front
+		std::sort(buckets.begin(), buckets.end(), [] (Bucket const& l, Bucket const& r) {
+			return l.items.size() > r.items.size();
+		});
+		
+		std::vector<int32_t> used_slots;
+		used_slots.resize(buckets.size() > 0 ? buckets[0].items.size() : 0);
+		
+		// find seeds for each bucket such that all its items fit in the values array without collisions
+		size_t bi = 0;
+		for (; bi<count; ++bi) {
+			auto& bucket = buckets[bi];
+			auto& items = bucket.items;
+
+			if (items.size() <= 1)
+				break;
+
+			for (int32_t seed=1;; ++seed) {
+
+				bool collision = false;
+				for (size_t i=0; i<items.size(); ++i) {
+					int32_t slot = (int32_t)(hash(seed, strhash(items[i]->str)) % count);
+
+					auto already_used_slot = [&] () {
+						for (size_t j=0; j<i; ++j)
+							if (used_slots[j] == slot) return true;
+						return false;
+					};
+
+					if (!values[slot].str.empty() || already_used_slot()) {
+						collision = true; // collision found, try new seed
+						break;
+					}
+					used_slots[i] = slot;
+				}
+				if (!collision) {
+					// seed found, no collision
+					seeds[bucket.orig_slot] = seed;
+					break;
+				}
+			}
+
+			// seed found apply temp_values to values array
+			for (size_t i=0; i<items.size(); ++i) {
+				values[used_slots[i]] = *items[i];
+			}
+		}
+
+		// remaining buckets contain 0 or 1 items
+		// place each remaining item into the first free slot in values and store this index as the seed but with the MSB set
+		int32_t slot = 0;
+		for (; bi<count; ++bi) {
+			auto& bucket = buckets[bi];
+
+			if (bucket.items.size() == 0)
+				break;
+			assert(bucket.items.size() == 1);
+			
+			while (!values[slot].str.empty())
+				++slot;
+
+			values[slot] = *bucket.items[0];
+			seeds[bucket.orig_slot] = slot | MSB;
+			slot++;
+		}
+	}
+};
+PerfectHash perfect_hash = {
+	{ "if"      , T_IF           },
+	{ "elif"    , T_ELIF         },
+	{ "else"    , T_ELSE         },
+	{ "while"   , T_WHILE        },
+	{ "for"     , T_FOR          },
+	{ "do"      , T_DO           },
+	
+	{ "true"    , T_LITERAL_BOOL },
+	{ "false"   , T_LITERAL_BOOL },
+	
+	{ "func"    , T_FUNC         },
+	{ "struct"  , T_STRUCT       },
+	
+	{ "return"  , T_RETURN       },
+	{ "break"   , T_BREAK        },
+	{ "continue", T_CONTINUE     },
+	{ "goto"    , T_GOTO         },
+};
+
+_FORCEINLINE TokenType match_keyword (char const* start, char const* end) {
+#if 0
 	auto text = std::string_view(start, (size_t)(end - start));
 
-	if      (text == "if"       ) tok.type = T_IF;         
-	else if (text == "elif"     ) tok.type = T_ELIF;       
-	else if (text == "else"     ) tok.type = T_ELSE;       
-	else if (text == "while"    ) tok.type = T_WHILE;      
-	else if (text == "for"      ) tok.type = T_FOR;        
-	else if (text == "do"       ) tok.type = T_DO;         
+	if (text == "if"       ) return T_IF;         
+	if (text == "elif"     ) return T_ELIF;       
+	if (text == "else"     ) return T_ELSE;       
+	if (text == "while"    ) return T_WHILE;      
+	if (text == "for"      ) return T_FOR;        
+	if (text == "do"       ) return T_DO;         
 
-	//else if (text == "null"     ) { tok.type = T_LITERAL;
-	else if (text == "true"     ) tok.type = T_LITERAL_BOOL;
-	else if (text == "false"    ) tok.type = T_LITERAL_BOOL;
+	//if (text == "null"     ) return T_LITERAL;
+	if (text == "true"     ) return T_LITERAL_BOOL;
+	if (text == "false"    ) return T_LITERAL_BOOL;
 
-	else if (text == "func"     ) tok.type = T_FUNC;        
-	else if (text == "struct"   ) tok.type = T_STRUCT;      
+	if (text == "func"     ) return T_FUNC;        
+	if (text == "struct"   ) return T_STRUCT;      
 
-	else if (text == "return"   ) tok.type = T_RETURN;      
-	else if (text == "break"    ) tok.type = T_BREAK;       
-	else if (text == "continue" ) tok.type = T_CONTINUE;    
-	else if (text == "goto"     ) tok.type = T_GOTO;        
+	if (text == "return"   ) return T_RETURN;      
+	if (text == "break"    ) return T_BREAK;       
+	if (text == "continue" ) return T_CONTINUE;    
+	if (text == "goto"     ) return T_GOTO;        
 
-	else tok.type = T_IDENTIFIER;
+	return T_IDENTIFIER;
+#elif 0
+	auto text = std::string_view(start, (size_t)(end - start));
+	
+	size_t idx = text.size()-1;
+	if (idx < keywords_by_len.keywords.size()) {
+		for (auto& kw : keywords_by_len.keywords[idx]) {
+			if (memcmp(kw.str.data(), text.data(), text.size()) == 0) return kw.tok;
+		}
+	}
+	return T_IDENTIFIER;
+#elif 0
+	auto text = std::string_view(start, (size_t)(end - start));
+	auto it = keywords_hashed.find(text);
+	if (it == keywords_hashed.end())
+		return T_IDENTIFIER;
+	return it->second;
+#else
+	auto text = std::string_view(start, (size_t)(end - start));
+	return perfect_hash.get(text);
 #endif
 }
 
@@ -368,7 +559,7 @@ void Lexer::lex (Token* first_tok, Token* end_tok) {
 
 				set_source_range_len(&tok.source, cur - start);
 
-				match_keyword(start, cur, tok);
+				tok.type = match_keyword(start, cur);
 				continue;
 			}
 

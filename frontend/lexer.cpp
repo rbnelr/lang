@@ -133,133 +133,11 @@ TypeClass Lexer::parse_literal (TokenType type, const char* start, const char* e
 	return (TypeClass)0;
 }
 
-#include <algorithm>
-
 struct _Keyword {
 	strview   str;
 	TokenType tok;
 };
-
-struct KeywordsByLen {
-	
-	static _FORCEINLINE uint64_t read_u64_safe (char const* p, int len) {
-		if (len == 8)
-			return *(uint64_t*)p;
-		
-		char const* end = p + len;
-		int i = 0;
-
-		uint64_t val = 0;
-		if (p <= end-4) {
-			val |= (uint64_t)(*(uint32_t*)p) << i;
-			p += 4; i += 32;
-		}
-		if (p <= end-2) {
-			val |= (uint64_t)(*(uint16_t*)p) << i;
-			p += 2; i += 16;
-		}
-		if (p <= end-1) {
-			val |= (uint64_t)(*(uint8_t*)p) << i;
-			p += 1; i += 8;
-		}
-		return val;
-	}
-	// depends on little vs. big-endian
-	static constexpr uint64_t KW (char const* p) {
-		int val = 0;
-		for (int i=0; *p && i<8; ++i)
-			val |= ((uint64_t)*p++) << (8*i);
-		return val;
-	}
-
-	_NOINLINE TokenType get (const char* str, size_t len) {
-		static_assert(KW("printf") == 0x66746E697270ull, "");
-		
-		if (len > 1 && len <= 8) {
-			uint64_t stri = read_u64_safe(str, (int)len);
-			switch (stri) {
-				case KW("func"     ): return T_FUNC;
-				case KW("struct"   ): return T_STRUCT;
-
-				case KW("if"       ): return T_IF;
-				case KW("elif"     ): return T_ELIF;
-				case KW("else"     ): return T_ELSE;
-					
-				case KW("while"    ): return T_WHILE;
-				case KW("for"      ): return T_FOR;
-				case KW("do"       ): return T_DO;
-
-				case KW("return"   ): return T_RETURN;
-				case KW("break"    ): return T_BREAK;
-				case KW("continue" ): return T_CONTINUE;
-				case KW("goto"     ): return T_GOTO;
-
-				case KW("true"     ):
-				case KW("false"    ): return T_LITERAL_BOOL;
-			}
-		}
-		return T_IDENTIFIER;
-	}
-};
-KeywordsByLen keywords_by_len;
-
-std::unordered_map<strview, TokenType> keywords_hashed = {
-	{ {"if"       }, T_IF           },
-	{ {"elif"     }, T_ELIF         },
-	{ {"else"     }, T_ELSE         },
-	{ {"while"    }, T_WHILE        },
-	{ {"for"      }, T_FOR          },
-	{ {"do"       }, T_DO           },
-	
-	{ {"true"     }, T_LITERAL_BOOL },
-	{ {"false"    }, T_LITERAL_BOOL },
-	
-	{ {"func"     }, T_FUNC         },
-	{ {"struct"   }, T_STRUCT       },
-	
-	{ {"return"   }, T_RETURN       },
-	{ {"break"    }, T_BREAK        },
-	{ {"continue" }, T_CONTINUE     },
-	{ {"goto"     }, T_GOTO         },
-};
-
-_FORCEINLINE TokenType match_keyword (char const* start, char const* end) {
-#if 0
-	auto text = std::string_view(start, (size_t)(end - start));
-
-	if (text == "if"       ) return T_IF;         
-	if (text == "elif"     ) return T_ELIF;       
-	if (text == "else"     ) return T_ELSE;       
-	if (text == "while"    ) return T_WHILE;      
-	if (text == "for"      ) return T_FOR;        
-	if (text == "do"       ) return T_DO;         
-
-	//if (text == "null"     ) return T_LITERAL;
-	if (text == "true"     ) return T_LITERAL_BOOL;
-	if (text == "false"    ) return T_LITERAL_BOOL;
-
-	if (text == "func"     ) return T_FUNC;        
-	if (text == "struct"   ) return T_STRUCT;      
-
-	if (text == "return"   ) return T_RETURN;      
-	if (text == "break"    ) return T_BREAK;       
-	if (text == "continue" ) return T_CONTINUE;    
-	if (text == "goto"     ) return T_GOTO;        
-
-	return T_IDENTIFIER;
-#elif 1
-	auto text = std::string_view(start, (size_t)(end - start));
-	return keywords_by_len.get(text.data(), text.size());
-#elif 0
-	auto text = std::string_view(start, (size_t)(end - start));
-	auto it = keywords_hashed.find(text);
-	if (it == keywords_hashed.end())
-		return T_IDENTIFIER;
-	return it->second;
-#else
-	
-#endif
-}
+#include "keyword_hash.hpp"
 
 void Lexer::lex (Token* first_tok, Token* end_tok) {
 	const char* cur = cur_char; // copy into local to help compiler avoid reloading this during the loop
@@ -438,7 +316,7 @@ void Lexer::lex (Token* first_tok, Token* end_tok) {
 
 				set_source_range_len(&tok.source, cur - start);
 
-				tok.type = match_keyword(start, cur);
+				tok.type = get_keyword(start, (size_t)(cur - start));
 				continue;
 			}
 

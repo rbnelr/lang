@@ -121,6 +121,9 @@
     <ClInclude Include="..\..\util\smhasher\MurmurHash3.h">
       <Filter>util\smhasher</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\frontend\keyword_hash.hpp">
+      <Filter>frontend</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <Filter Include="util">

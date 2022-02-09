@@ -262,6 +262,7 @@
     <ClInclude Include="..\..\frontend\basic_types.hpp" />
     <ClInclude Include="..\..\frontend\builtins.hpp" />
     <ClInclude Include="..\..\frontend\errors.hpp" />
+    <ClInclude Include="..\..\frontend\keyword_hash.hpp" />
     <ClInclude Include="..\..\frontend\parser.hpp" />
     <ClInclude Include="..\..\frontend\semantic.hpp" />
     <ClInclude Include="..\..\frontend\lexer.hpp" />

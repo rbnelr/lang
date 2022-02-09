@@ -15,9 +15,9 @@
 
 a : A;
 
-a.a = 5;
+a.a    = 5;
 a.flag = true;
-a.f = 7.4;
+a.f    = 7.4;
 
 a.foo.b0 = false;
 a.foo.b1 = true;

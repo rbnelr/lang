@@ -311,11 +311,11 @@ namespace llvm { // forward decls to associate llvm IR with AST nodes
 struct AST_type;
 
 struct Typeref {
-	bool      rval = false;
 	AST_type* ty   = nullptr;
+	bool      rval = false;
 	
-	static Typeref LValue (AST_type* ty) { return { false, ty }; }
-	static Typeref RValue (AST_type* ty) { return { true,  ty }; }
+	static Typeref LValue (AST_type* ty) { return { ty, false }; }
+	static Typeref RValue (AST_type* ty) { return { ty, true  }; }
 };
 
 struct AST {
@@ -326,8 +326,10 @@ struct AST {
 	SourceRange  src;
 };
 
+inline constexpr size_t asz = sizeof(AST);
+
 inline constexpr AST cAST (ASTKind type, Typeref valtype = {}) {
-	return { type, valtype, SourceRange{0,0} };
+	return { type, valtype, SourceRange{} };
 }
 
 #if TRACY_ENABLE
@@ -335,12 +337,9 @@ inline size_t ast_nodes;
 #endif
 
 template <typename T>
-inline T* ast_alloc (ASTKind kind, SourceRange const& src) {
+inline T* ast_alloc (ASTKind kind) {
 	T* ret = g_allocator.alloc<T>();
-	
 	ret->kind  = kind;
-	ret->src   = src;
-
 #if TRACY_ENABLE
 	ast_nodes++;
 #endif
@@ -348,7 +347,9 @@ inline T* ast_alloc (ASTKind kind, SourceRange const& src) {
 }
 template <typename T>
 inline T* ast_alloc (ASTKind kind, Token& tok) {
-	return ast_alloc<T>(kind, tok.source);
+	T* ast = ast_alloc<T>(kind);
+	ast->src = tok.src;
+	return ast;
 }
 
 struct AST_block : public AST {

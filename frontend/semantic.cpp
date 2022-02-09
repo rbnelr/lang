@@ -128,11 +128,12 @@ struct SemanticAnalysis {
 			stack.declare_ident(t, t->ident);
 
 		{ // add a declaration for a main function (global space of the file itself represents the main function)
-			AST_funcdef* module_main = ast_alloc<AST_funcdef>(A_FUNCDEF, root->src);
+			AST_funcdef* module_main = ast_alloc<AST_funcdef>(A_FUNCDEF);
 			module_main->ident = "main";
 			module_main->rets = {};
 			module_main->args = {};
 			module_main->body = root;
+			module_main->src = root->src;
 
 			modl.funcs.emplace_back(module_main);
 
@@ -163,10 +164,11 @@ struct SemanticAnalysis {
 			else if (ast->kind == A_STRUCTDEF) {
 				auto* struc = (AST_structdef*)ast;
 
-				auto* type = ast_alloc<AST_type>(A_TYPE, struc->src);
+				auto* type = ast_alloc<AST_type>(A_TYPE);
 				type->tclass = TY_STRUCT;
 				type->ident  = struc->ident;
 				type->decl   = struc;
+				type->src    = struc->src;
 
 				stack.declare_ident(type, struc->ident);
 
@@ -189,8 +191,8 @@ struct SemanticAnalysis {
 		for (auto* struc : local_structs) {
 			for (auto* member : struc->members) {
 				auto type_ident = member->typeexpr;
-				if (!type_ident.start)
-					member->type = Typeref::LValue( stack.resolve_type(type_ident) );
+				assert(type_ident.start);
+				member->type = Typeref::LValue( stack.resolve_type(type_ident) );
 			}
 		}
 		// seperate pass for funcs to enable:
@@ -633,17 +635,17 @@ struct SemanticAnalysis {
 			recurse(op->lhs);
 			recurse(op->rhs);
 
-			//if (op->lhs->kind != A_VAR)
-			//	ERROR("can only assign to variables, not arbitrary expressions", op->lhs->src);
-			if (op->lhs->type.rval)
-				ERROR(op->lhs->src, "cannot assign to a RValue");
-
 			if (op->rhs->type.ty == nullptr) {
 				// everything on the rhs of assignments except calls with void return should have a non-void type
 				assert(op->rhs->kind == A_CALL);
 
-				ERROR(op->rhs->src, "assignment: can't assign void to something");
+				ERROR(op->src, "assignment: can't assign void to something");
 			}
+
+			//if (op->lhs->kind != A_VAR)
+			//	ERROR("can only assign to variables, not arbitrary expressions", op->lhs->src);
+			if (op->lhs->type.rval)
+				ERROR(op->src, "cannot assign to a RValue");
 
 			// check if types match
 			if (op->lhs->type.ty != op->rhs->type.ty)
@@ -694,7 +696,7 @@ struct SemanticAnalysis {
 				memb->type = Typeref::LValue(memb->decl->type.ty);
 
 				// a.b is a RValue if a is a RValue, b is always just a identifier referring to a member of the a struct refers to
-				op->type.ty   = op->rhs->type.ty;
+				op->type.ty   = memb->type.ty;
 				op->type.rval = op->lhs->type.rval;
 			}
 		} break;

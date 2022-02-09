@@ -74,7 +74,7 @@ struct LLVM_gen {
 		for (_dupl_func_i=0; _dupl_func_i<1000; ++_dupl_func_i) {
 	#endif
 			
-		// Clear just in case we codegen the same AST twice
+		// Clear structdef->llvm_struct just in case we codegen the same AST twice
 		for (auto* structdef : structdefs) {
 			structdef->llvm_struct = nullptr;
 		}
@@ -144,9 +144,11 @@ struct LLVM_gen {
 		llvm::Type*      type;
 
 		static Value RValue (llvm::Value* val) {
+			assert(val);
 			return { val, true };
 		}
 		static Value LValue (llvm::Value* ptr, llvm::Type* type) {
+			assert(ptr && type);
 			return { ptr, false, type };
 		}
 	};
@@ -369,7 +371,15 @@ struct LLVM_gen {
 				break;
 			}
 			else {
-				args_ty.push_back(map_type(arg->type));
+				auto* ty = map_type(arg->type);
+
+				// Always pass structs by reference for now
+				if (arg->type.ty->tclass == TY_STRUCT) {
+					arg->llvm_type = ty;
+					ty = ty->getPointerTo();
+				}
+				
+				args_ty.push_back(ty);
 			}
 
 			arg->is_arg = true;
@@ -534,10 +544,14 @@ struct LLVM_gen {
 			auto* vardecl = (AST_vardecl*)var->decl;
 			assert(vardecl);
 			
-			if (vardecl->is_arg)
+			// args that are passed by value are rvalues in llvm
+			bool pass_by_val = vardecl->is_arg && vardecl->type.ty->tclass != TY_STRUCT;
+			if (pass_by_val) {
 				return Value::RValue(vardecl->llvm_value);
-			else
+			}
+			else {
 				return Value::LValue(vardecl->llvm_value, vardecl->llvm_type);
+			}
 		}
 
 		case A_ASSIGNOP: {
@@ -633,15 +647,16 @@ struct LLVM_gen {
 
 				Value lhs = codegen(op->lhs);
 				if (lhs.rval) {
-					unsigned indices[] = {
-						memb->decl->llvm_GEP_idx,
-					};
-					llvm::Value* val = build.CreateExtractValue(lhs.llvm_val, indices, SR(memb->decl->ident));
-
-					return Value::RValue(val);
+					assert(false);
+					//unsigned indices[] = {
+					//	memb->decl->llvm_GEP_idx,
+					//};
+					//llvm::Value* val = build.CreateExtractValue(lhs.llvm_val, indices, SR(memb->decl->ident));
+					//
+					//return Value::RValue(val);
 				}
 				else {
-					assert(lhs.type->isStructTy());
+					assert(lhs.type && lhs.type->isStructTy());
 				
 					llvm::Value* indices[] = {
 						llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0),
@@ -855,8 +870,25 @@ struct LLVM_gen {
 			llvm::SmallVector<llvm::Value*, 16> arg_values;
 			arg_values.resize(call->resolved_args.count, nullptr);
 
-			for (size_t i=0; i<call->resolved_args.count; ++i)
-				arg_values[i] = codegen_rval(call->resolved_args[i]);
+			for (size_t i=0; i<call->resolved_args.count; ++i) {
+				auto* arg = call->resolved_args[i];
+
+				Value val = codegen(call->resolved_args[i]);
+				
+				// Always pass structs by reference for now
+				if (arg->type.ty->tclass == TY_STRUCT) {
+					// There might be RValue structs if I implement struct init syntax
+					// Since I want to always pass structs by const ref, I might have to put it on the stack here
+					assert(!val.rval);
+					assert(val.type && val.type->isStructTy() && val.llvm_val->getType()->isPointerTy());
+
+					arg_values[i] = val.llvm_val;
+				}
+				else {
+					arg_values[i] = load_value(val);
+				}
+				assert(arg_values[i]);
+			}
 
 			llvm::Value* retval = build.CreateCall(fdef->llvm_func, arg_values, fdef->rets.count > 0 ? "_call" : "");
 			return Value::RValue(retval);

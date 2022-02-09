@@ -227,12 +227,12 @@ void Lexer::lex (Token* first_tok, Token* end_tok) {
 
 		Token& tok = *out_tok++;
 
-		set_source_range_start(&tok.source, start);
+		set_source_range_start(&tok.src, start);
 		
 		// tok.source.length = LEN: avoid range check by not calling set_source_range_len()
 		#define SIMPLE_TOK(TYPE, LEN) {             \
 			tok.type = TYPE;                        \
-			tok.source.length = (uint16_t)LEN;      \
+			tok.src.length = (uint16_t)LEN;      \
 			cur += LEN;                             \
 			continue;                               \
 		}
@@ -241,7 +241,7 @@ void Lexer::lex (Token* first_tok, Token* end_tok) {
 
 			case '\0': {
 				tok.type = T_EOF;
-				tok.source.length = 1;
+				tok.src.length = 1;
 
 				// break would exit switch
 				// and we really want this to be in the switch to remove, since this removes one conditional from every token lexing)
@@ -314,7 +314,7 @@ void Lexer::lex (Token* first_tok, Token* end_tok) {
 				while (is_ident_c(*cur))
 					cur++; // find end of identifier
 
-				set_source_range_len(&tok.source, cur - start);
+				set_source_range_len(&tok.src, cur - start);
 
 				tok.type = get_keyword(start, (size_t)(cur - start));
 				continue;
@@ -338,7 +338,7 @@ void Lexer::lex (Token* first_tok, Token* end_tok) {
 				else {
 					tok.type = T_LITERAL_INT;
 				}
-				set_source_range_len(&tok.source, cur - start);
+				set_source_range_len(&tok.src, cur - start);
 				continue;
 			}
 
@@ -368,12 +368,12 @@ void Lexer::lex (Token* first_tok, Token* end_tok) {
 				char const* strend = cur++; // skip '"'
 
 				tok.type = T_LITERAL_STR;
-				set_source_range_len(&tok.source, cur - start);
+				set_source_range_len(&tok.src, cur - start);
 				continue;
 			}
 
 			default: {
-				SYNTAX_ERROR(tok.source, "unknown token");
+				SYNTAX_ERROR(tok.src, "unknown token");
 			}
 		}
 	}

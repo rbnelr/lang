@@ -44,6 +44,7 @@ struct ErrorSource {
 
 			int range_start = (int) src.start_charno;
 			int range_end   = (int)(src.start_charno + src.length);
+			int range_arrow = (int)(src.start_charno + src.arrow);
 
 			// fill up source with the source line truncated to CONSOLE_WIDTH characters and with tabs turned into spaces
 			// fill up arrow with the ^~~~ indicator of the src range, where it actually corresponds with the source in terms of tabs
@@ -52,7 +53,7 @@ struct ErrorSource {
 				
 				char arrowchar;
 				if (in < range_start || in >= range_end) arrowchar = ' ';
-				else if (in == range_start)              arrowchar = '^';
+				else if (in == range_arrow)              arrowchar = '^';
 				else                                     arrowchar = '~';
 
 				if (str[in] != '\t') {
@@ -69,7 +70,7 @@ struct ErrorSource {
 			}
 
 			{
-				if (in == range_start) {
+				if (in == range_arrow) {
 					// handle src range starting on end of line
 					arrow[out++] = '^';
 					in++;

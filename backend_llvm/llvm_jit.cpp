@@ -227,7 +227,10 @@ struct JIT {
 		modl->setDataLayout(DL);
 		
 		run_mem2reg(modl);
-		run_optimize(modl);
+
+		if (options.optimized)
+			run_optimize(modl);
+
 		run_MCgen(modl);
 	}
 	void execute () {

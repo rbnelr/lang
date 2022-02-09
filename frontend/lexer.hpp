@@ -100,6 +100,9 @@ inline constexpr const char* TokenType_char[] = {
 // only for debug printing, so we don't care about handling degenerate cases like 2GB long tokens etc.
 // use this to cut down on the size of this struct a little, since every Token and AST node inludes an instance of this
 
+inline size_t saturate16 (size_t x) { return x <= UINT32_MAX ? x : UINT32_MAX; }
+inline size_t saturate32 (size_t x) { return x <= UINT16_MAX ? x : UINT16_MAX; }
+
 struct SourceRange {
 	// first char as ptr into source (allows me to see things in debugger)
 	char const* start;
@@ -113,24 +116,43 @@ struct SourceRange {
 	// lengh of string starting from start (saturated on overflow)
 	uint16_t    length;
 
+	// offset of source token relative to start (for binary operators etc.) to show up like ~~~~^~~~~
+	uint16_t    arrow;
+
 	strview text () const {
 		return strview(start, (size_t)length);
 	}
 
-	SourceRange get_single_char_after () {
+	static SourceRange after_tok (SourceRange& src) {
 		SourceRange r;
-		r.start  = start + length;
+		r.start  = src.start + src.length;
+		r.start_lineno = src.start_lineno;
+		r.start_charno = (uint16_t)saturate16(src.start_charno + src.length);
 		r.length = 1;
-		r.start_lineno = start_lineno;
-		r.start_charno = start_charno + length;
+		r.arrow = 0;
+		return r;
+	}
+
+	static SourceRange range (SourceRange& a, SourceRange& b) {
+		SourceRange r = a;
+		r.length = (uint16_t)saturate16((size_t)(b.start - a.start) + b.length);
+		r.arrow  = 0;
+		return r;
+	}
+	static SourceRange range_with_arrow (SourceRange& a, SourceRange& arrow, SourceRange& b) {
+		SourceRange r = a;
+		r.length = (uint16_t)saturate16((size_t)(b.start - a.start) + b.length);
+		r.arrow  = (uint16_t)saturate16((size_t)(arrow.start - a.start));
 		return r;
 	}
 };
 
 
+
+
 struct Token {
 	TokenType    type;
-	SourceRange  source;
+	SourceRange  src;
 };
 
 constexpr size_t _sr_sz = sizeof(SourceRange);
@@ -187,9 +209,6 @@ struct Lexer {
 		lex(new_toks, buf+BUFSZ);
 	}
 	
-	size_t saturate16 (size_t x) { return x <= UINT32_MAX ? x : UINT32_MAX; }
-	size_t saturate32 (size_t x) { return x <= UINT16_MAX ? x : UINT16_MAX; }
-
 	void set_source_range_start (SourceRange* r, char const* start) {
 		r->start        = start;
 		r->start_lineno = (uint32_t)saturate32(cur_lineno                );

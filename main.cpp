@@ -12,7 +12,7 @@
 #define TRACY_REPEAT 1000
 
 void set_options () {
-	options.filename  = "test_100k.la";
+	options.filename  = "test6.la";
 
 	options.optimized = 1;
 
@@ -21,7 +21,7 @@ void set_options () {
 	options.print_ir   = 0;
 	options.print_code = 0;
 #else
-	options.print_ast  = 1;
+	options.print_ast  = 0;
 	options.print_ir   = 1;
 	options.print_code = 1;
 #endif
@@ -61,19 +61,19 @@ bool compile () {
 				semantic_analysis(modl);
 			}
 
-			//{
-			//	ZoneScopedNC("backend", tracy::Color::Burlywood);
-			//
-			//	llvm::Module* llvm_modl = llvm_gen_module(modl);
-			//	defer( llvm_free_module(llvm_modl); );
-			//
-			//	//#ifndef TRACY_ENABLE
-			//	{
-			//		ZoneScopedN("llvm_jit_and_exec");
-			//		llvm_jit_and_exec(llvm_modl);
-			//	}
-			//	//#endif
-			//}
+			{
+				ZoneScopedNC("backend", tracy::Color::Burlywood);
+			
+				llvm::Module* llvm_modl = llvm_gen_module(modl);
+				defer( llvm_free_module(llvm_modl); );
+			
+				//#ifndef TRACY_ENABLE
+				{
+					ZoneScopedN("llvm_jit_and_exec");
+					llvm_jit_and_exec(llvm_modl);
+				}
+				//#endif
+			}
 		}
 		catch (CompilerExcept& ex) {
 			ex.print(modl.filename.c_str());

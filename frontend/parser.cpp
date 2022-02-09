@@ -4,7 +4,7 @@
 
 template <typename... Args>
 [[noreturn]] inline void SYNTAX_ERROR_AFTER (Lexer& tok, const char* format, Args... args) {
-	_ERROR("syntax error", tok[-1].source.get_single_char_after(), format, std::make_format_args(args...));
+	_ERROR("syntax error", SourceRange::after_tok(tok[-1].src), format, std::make_format_args(args...));
 }
 
 void dbg_print (AST* node, int depth) {
@@ -214,18 +214,22 @@ struct Parser {
 			case T_IDENTIFIER: {
 				// func call
 				if (tok[1].type == T_PAREN_OPEN) {
-					auto* call = ast_alloc<AST_call>(A_CALL, tok[0]);
-					call->ident = tok[0].source.text();
+					auto src = tok[0].src;
+
+					auto* call = ast_alloc<AST_call>(A_CALL);
+					call->ident = tok[0].src.text();
 					tok.eat();
 
 					call->args = call_args();
+
+					call->src = SourceRange::range(src, tok[-1].src);
 
 					return call;
 				}
 				// variable
 				else {
 					auto* var = ast_alloc<AST_var>(A_VAR, tok[0]);
-					var->ident = tok[0].source.text();
+					var->ident = tok[0].src.text();
 					tok.eat();
 
 					return var;
@@ -238,8 +242,8 @@ struct Parser {
 			case T_LITERAL_STR: {
 				auto* lit = ast_alloc<AST_literal>(A_LITERAL, tok[0]);
 
-				auto start = tok[0].source.start;
-				auto end   = start + tok[0].source.length;
+				auto start = tok[0].src.start;
+				auto end   = start + tok[0].src.length;
 
 				auto lit_type = tok.parse_literal(tok[0].type, start, end, &lit->value);
 
@@ -265,11 +269,15 @@ struct Parser {
 		if (is_unary_prefix_op(tok[0].type)) {
 			unsigned prec = un_prec(tok[0].type);
 
-			auto* unary_op = ast_alloc<AST_unop>(A_UNOP, tok[0]);
+			auto src = tok[0].src;
+
+			auto* unary_op = ast_alloc<AST_unop>(A_UNOP);
 			unary_op->op = tok2unop(tok[0].type);
 			tok.eat();
 			
 			unary_op->operand = expression(prec);
+			unary_op->src = SourceRange::range(src, tok[-1].src); // '-a' is the src range
+
 			lhs = unary_op;
 		}
 		// once all unary operators are parsed right-recursion stops
@@ -283,11 +291,15 @@ struct Parser {
 			if (prec < min_prec) // handle precedence rules
 				return lhs;
 
-			auto* post_op = ast_alloc<AST_unop>(A_UNOP, tok[0]);
+			auto src = tok[0].src;
+
+			auto* post_op = ast_alloc<AST_unop>(A_UNOP);
 			post_op->op = tok2unop(tok[0].type);
 			tok.eat();
 
 			post_op->operand = lhs;
+			post_op->src = SourceRange::range_with_arrow(lhs->src, src, src); // 'a++' is the src range
+
 			lhs = post_op;
 		}
 
@@ -304,29 +316,34 @@ struct Parser {
 
 			AST* rhs = expression(assoc == LEFT_ASSOC ? prec+1 : prec);
 
-			// normal binary operator
-			if (op_tok.type != T_QUESTIONMARK) {
-				auto* op = ast_alloc<AST_binop>(A_BINOP, op_tok);
-				op->op = tok2binop(op_tok.type);
-				op->lhs = lhs;
-				op->rhs = rhs;
-				lhs = op;
-			}
+			AST* bop;
 			// special case: ternary operator
-			else {
+			if (op_tok.type == T_QUESTIONMARK) {
 				if (tok[0].type != T_COLON)
 					SYNTAX_ERROR_AFTER(tok, "':' expected after true case of select operator");
 				tok.eat();
 
-				auto* op = ast_alloc<AST_if>(A_SELECT, op_tok);
+				auto* op = ast_alloc<AST_if>(A_SELECT);
 				op->cond     = lhs;
 				op->if_body  = rhs;
 
 				assert(assoc == RIGHT_ASSOC);
 				op->else_body = expression(prec);
-
-				lhs = op;
+				
+				bop = op;
 			}
+			// normal binary operator
+			else {
+				auto* op = ast_alloc<AST_binop>(A_BINOP);
+				op->op = tok2binop(op_tok.type);
+				op->lhs = lhs;
+				op->rhs = rhs;
+
+				bop = op;
+			}
+
+			bop->src = SourceRange::range_with_arrow(lhs->src, op_tok.src, tok[-1].src); // 'a + b' or 'cond ? a : b' is the src range
+			lhs = bop;
 		}
 
 		return lhs;
@@ -338,8 +355,12 @@ struct Parser {
 		if (!(tok[0].type == T_IDENTIFIER && tok[1].type == T_COLON))
 			SYNTAX_ERROR_AFTER(tok, "expected variable declaration");
 
-		auto* var = ast_alloc<AST_vardecl>(A_VARDECL, tok[0]);
-		var->ident = tok[0].source.text();
+
+		auto* var = ast_alloc<AST_vardecl>(A_VARDECL);
+		var->ident = tok[0].src.text();
+		
+		auto ident_src = tok[0].src;
+		auto colon_src = tok[1].src;
 
 		tok.eat(); // T_IDENTIFER
 		tok.eat(); // T_COLON
@@ -349,21 +370,22 @@ struct Parser {
 			// ident specifies type, but these identifiers can only be matched to AST_Type's in the later phase
 			// leave later phase to find this on it's own
 			
-			var->typeexpr = tok[0].source;
-
+			var->typeexpr = tok[0].src;
 			tok.eat();
 		}
 		else {
 			// no type identifier, type will have to be inferred from initialization
-
+			
 			if (tok[0].type != T_ASSIGN)
 				SYNTAX_ERROR_AFTER(tok, "\neither specify type during variable declaration with \"<var> : <type>;\""
 				                        "\nor let type be inferred with \"<var> := <expr>;\"");
 		}
 
+		var->src = SourceRange::range_with_arrow(ident_src, colon_src, tok[-1].src); // 'a :' or 'a : type' is the src range (with the arrow on the :)
+
 		if (tok[0].type == T_ASSIGN) {
 			if (!allow_init)
-				ERROR(tok[0].source, "vardecl initialization not allowed in struct (yet)");
+				ERROR(tok[0].src, "vardecl initialization not allowed in struct (yet)");
 			tok.eat();
 
 			var->init = expression(0);
@@ -373,49 +395,49 @@ struct Parser {
 
 	//    <expression>
 	// or <expression> = <expression>
-	AST* assignment_or_expression () {
-		AST* expr = expression(0);
-
-		// lhs = rhs   or  lhs += rhs  etc.
-		if (is_binary_assignemnt_op(tok[0].type)) {
-			auto* op = ast_alloc<AST_binop>(A_ASSIGNOP, tok[0]);
-			op->op = tok2assignop(tok[0].type);
-			tok.eat();
-
-			op->lhs = expr;
-			op->rhs = expression(0);
-			return op;
-		}
-		return expr;
-	}
-
-	//    <expression>
-	// or <expression> = <expression>
 	// or <vardecl> = <expression>   ie.  <varname> : [typename] = <expression>
 	AST* decl_or_assignment_or_expression () {
-		// lhs is var decl
 		if (tok[0].type == T_IDENTIFIER && tok[1].type == T_COLON) {
 			return var_decl();
 		}
-		// lhs is expression
 		else {
-			return assignment_or_expression();
+			AST* expr = expression(0);
+
+			// lhs = rhs   or  lhs += rhs  etc.
+			if (is_binary_assignemnt_op(tok[0].type)) {
+				auto src = tok[0].src;
+
+				auto* op = ast_alloc<AST_binop>(A_ASSIGNOP);
+				op->op = tok2assignop(tok[0].type);
+				tok.eat();
+
+				op->lhs = expr;
+				op->rhs = expression(0);
+				
+				op->src = SourceRange::range_with_arrow(op->lhs->src, src, op->rhs->src); // 'a = b' is the src range
+				return op;
+			}
+			return expr;
 		}
 	}
 
 	//    <expression>
 	// or <argname> = <expression>
 	AST_callarg* call_arg (TokenType endtok) {
-		auto* arg = ast_alloc<AST_callarg>(A_CALLARG, tok[0]);
+		auto src = tok[0].src;
+
+		auto* arg = ast_alloc<AST_callarg>(A_CALLARG);
 		arg->ident = strview();
 
 		if (tok[0].type == T_IDENTIFIER && tok[1].type == T_ASSIGN) {
-			arg->ident = tok[0].source.text();
+			arg->ident = tok[0].src.text();
 			tok.eat();
 			tok.eat();
 		}
 
 		arg->expr = expression(0);
+		
+		arg->src = SourceRange::range(src, tok[-1].src); // 'arg = expr' is the src range
 		return arg;
 	}
 
@@ -443,10 +465,14 @@ struct Parser {
 
 	// return <return_args>;
 	AST* return_statement () {
-		auto* ast = ast_alloc<AST_return>(A_RETURN, tok[0]);
+		auto src = tok[0].src;
+
+		auto* ast = ast_alloc<AST_return>(A_RETURN);
 		tok.eat();
 
 		ast->args = return_args();
+
+		ast->src = SourceRange::range(src, tok[-1].src); // 'return arg = expr, expr2' is the src range
 
 		eat_semicolon();
 		return ast;
@@ -492,7 +518,7 @@ struct Parser {
 	// do <block> while <cond>
 	// NOTE: that <cond> has special scoping rules to allow it to access objects from inside the block
 	AST* do_while_loop () {
-		auto* loop = ast_alloc<AST_loop>(A_DO_WHILE, tok[0]);
+		auto* loop = ast_alloc<AST_loop>(A_DO_WHILE, tok[0]); // TODO: should the entire 'do {} while()' be the source range  
 		tok.eat();
 
 		loop->body = block();
@@ -526,13 +552,17 @@ struct Parser {
 	}
 	
 	AST* struct_def () {
-		auto* struc = ast_alloc<AST_structdef>(A_STRUCTDEF, tok[0]);
+		auto src = tok[0].src;
+
+		auto* struc = ast_alloc<AST_structdef>(A_STRUCTDEF);
 		tok.eat();
 		
 		if (tok[0].type != T_IDENTIFIER)
 			SYNTAX_ERROR_AFTER(tok, "struct identifer expected after struct keyword!");
-		struc->ident = tok[0].source.text();
+		struc->ident = tok[0].src.text();
 		tok.eat();
+
+		struc->src = SourceRange::range(src, tok[-1].src); // 'struct name' is the src range
 
 		smallvec<AST_vardecl*, 16> members;
 
@@ -552,7 +582,7 @@ struct Parser {
 		if (tok[0].type != T_BLOCK_CLOSE)
 			SYNTAX_ERROR_AFTER(tok, "syntax error, '}' expected");
 		tok.eat();
-
+		
 		return struc;
 	}
 	
@@ -588,12 +618,14 @@ struct Parser {
 	//    func <funcname> (<arg_decl>, <arg_decl>, ...) <block>
 	// or func <funcname> (<arg_decl>, <arg_decl>, ...) = (<ret_decl>, <ret_decl>) <block>
 	AST* function_def () {
-		auto* func = ast_alloc<AST_funcdef>(A_FUNCDEF, tok[0]);
+		auto src = tok[0].src;
+
+		auto* func = ast_alloc<AST_funcdef>(A_FUNCDEF);
 		tok.eat();
 		
 		if (tok[0].type != T_IDENTIFIER)
 			SYNTAX_ERROR_AFTER(tok, "function identifer expected after func keyword!");
-		func->ident = tok[0].source.text();
+		func->ident = tok[0].src.text();
 		tok.eat();
 
 		if (tok[0].type != T_PAREN_OPEN)
@@ -611,6 +643,8 @@ struct Parser {
 
 			func->rets = funcdecl_arglist();
 		}
+
+		func->src = SourceRange::range(src, tok[-1].src); // 'func name (...) = (...)' is the src range
 
 		func->body = block();
 
@@ -679,8 +713,8 @@ struct Parser {
 		}
 	}
 
-	AST* _block (SourceRange const& src, TokenType endtok) {
-		auto* block = ast_alloc<AST_block>(A_BLOCK, src);
+	AST* _block (TokenType endtok) {
+		auto* block = ast_alloc<AST_block>(A_BLOCK);
 
 		smallvec<AST*, 32> statements;
 
@@ -701,16 +735,19 @@ struct Parser {
 	//   ...
 	// }
 	AST* block () {
+		auto src = tok[0].src;
+		
 		if (tok[0].type != T_BLOCK_OPEN)
 			SYNTAX_ERROR_AFTER(tok, "'{' expected");
-		auto src = tok[0].source;
 		tok.eat();
 
-		auto* block = _block(src, T_BLOCK_CLOSE);
+		auto* block = _block(T_BLOCK_CLOSE);
 
 		if (tok[0].type != T_BLOCK_CLOSE)
 			SYNTAX_ERROR_AFTER(tok, "syntax error, '}' expected");
 		tok.eat();
+		
+		block->src = SourceRange::range(src, tok[-1].src); // '{ ... }' is the src range
 
 		return block;
 	}
@@ -719,10 +756,14 @@ struct Parser {
 	// <statement>
 	// ...
 	AST* file () {
-		auto* block = _block(tok[0].source, T_EOF);
+		auto src = tok[0].src;
+
+		auto* block = _block(T_EOF);
 
 		if (tok[0].type != T_EOF)
 			SYNTAX_ERROR_AFTER(tok, "end of file expected");
+
+		block->src = SourceRange::range(src, tok[-1].src); // whole file is the src range
 
 		return block;
 	}

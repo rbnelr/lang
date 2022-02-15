@@ -1,6 +1,9 @@
 #include "llvm_pch.hpp"
 #include "llvm_disasm.hpp"
 #include "llvm_sec_mem_manager.hpp"
+#include "frontend/builtins.hpp"
+
+#include <regex>
 
 
 struct DisasmPrinter {
@@ -22,7 +25,7 @@ struct DisasmPrinter {
 		llvm::StringRef name;
 		const uint8_t*  addr;
 	};
-	llvm::SmallVector<Symbol, 64> symbols;
+	std::vector<Symbol> symbols;
 
 	void handle_symbols (llvm::RuntimeDyld& dyld, llvm::object::ObjectFile& obj) {
 		print_seperator("Symbols", '-');
@@ -38,9 +41,13 @@ struct DisasmPrinter {
 			if (options.disasm_print_symbols)
 				printf("%-16.*s : %p\n", (int)name.size(), name.data(), addr);
 
-			if (addr != nullptr)
+			if (addr != nullptr) {
 				symbols.push_back({ name, addr });
+			}
 		}
+
+		for (auto* bi : builtin_funcs)
+			symbols.push_back({ { bi->ident.data(), bi->ident.size() }, (const uint8_t*)bi->builtin_func_ptr });
 
 		std::sort(symbols.begin(), symbols.end(), [] (Symbol const& l, Symbol const& r) {
 			return std::less<uintptr_t>()((uintptr_t)l.addr, (uintptr_t)r.addr);
@@ -184,6 +191,32 @@ struct DisasmPrinter {
 			str_untab.push_back('\0');
 		};
 
+		auto print_comment = [&] () {
+			char* int_str = nullptr;
+
+			for (int i=0; i<ARRLEN(str) && str[i] != '\0'; ++i) {
+				if (str[i] == ' ' && str[i+1] >= '0' && str[i+1] <= '9') {
+					int_str = &str[i+1];
+					break;
+				}
+			}
+
+			if (int_str == nullptr)
+				return;
+
+			uint64_t val = (uint64_t)atoll(int_str);
+			
+			printf(" 0x%llx", val);
+
+			auto* ptr = (const uint8_t*)val;
+			for (auto& sym : symbols) {
+				if (sym.addr == ptr) {
+					printf(" @%.*s", (int)sym.name.size(), sym.name.data());
+					break;
+				}
+			}
+		};
+
 		auto cur_sym = symbols.begin();
 
 		// prints string indented by a few spaces
@@ -207,7 +240,11 @@ struct DisasmPrinter {
 
 			untabbify();
 			
-			printf(" %-35s #\n", str_untab.data());
+			printf(" %-35s #", str_untab.data());
+
+			print_comment();
+
+			printf("\n");
 
 			offs += sz;
 			remain -= sz;

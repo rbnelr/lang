@@ -114,6 +114,11 @@ struct JIT {
 		TT = llvm::Triple(triple_str);
 
 		llvm::orc::JITTargetMachineBuilder JTMB(TT);
+		
+		// This might be required to get normal calls in the code, but currently the relocation asserts with "Relocation type not implemented yet!"
+		//JTMB.setCodeModel(llvm::CodeModel::Small);
+		
+		//JTMB.setRelocationModel(llvm::Reloc::Static);
 
 		TM = llvm::cantFail( JTMB.createTargetMachine() );
 

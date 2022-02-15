@@ -35,6 +35,7 @@ typedef std::string_view strview;
 inline BumpAllocator g_allocator;
 
 // g_allocator-backed buffer printf
+
 inline char const* format (char const* format, ...) {
 	va_list vl;
 	va_start(vl, format);
@@ -53,6 +54,7 @@ inline char const* format (char const* format, ...) {
 
 	return str;
 }
+
 
 inline void print_seperator (strview str, char fill_char='=') {
 #ifdef TRACY_ENABLE // disable prints for profiling

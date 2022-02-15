@@ -1,51 +1,59 @@
+/*
+a := 2;
+b := -2;
 
-//a := 2;
-//b := -2;
-//
-//sel := timer() % 2 != 0;
-//
-//printf("a: {i}  b: {i}\n", a,b);
-//
-//(sel ? a : b) /= 2;
-//
-//printf("a: {i}  b: {i}\n", a,b);
-//
-//(!sel ? a : b) /= 2;
-//
-//printf("a: {i}  b: {i}\n", a,b);
+sel := timer() % 2 != 0;
 
-n : int;
-{
-	a := 5;
-	b := 10;
-	n = a * b - 5;
+printf("a: {i}  b: {i}\n", a,b);
+
+(sel ? a : b) /= 2;
+
+printf("a: {i}  b: {i}\n", a,b);
+
+(!sel ? a : b) /= 2;
+
+printf("a: {i}  b: {i}\n", a,b);
+*/
+
+func fib_iter () {
+	n : int;
+	{
+		a := 5;
+		b := 10;
+		n = a * b - 5;
+	}
+
+	a := 0;
+	b := 1;
+
+	printf("Fibbonaci: {i} {i}", a, b);
+
+	for i := 0; i < n-2; i++ {
+		c := a + b;
+		printf(" {i}", c);
+		a = b;
+		//break;
+		b = c;
+	}
+
+	printf("\n");
+	return;
 }
 
-a := 0;
-b := 1;
+fib_iter();
 
-printf("Fibbonaci: {i} {i}", a, b);
-
-for i := 0; i < n-2; i++ {
-	c := a + b;
-	printf(" {i}", c);
-	a = b;
-	//break;
-	b = c;
+func sqrt (square : int) = (sqrt : int) { 
+	sqrt = -1;
+	for i:=0; i<100; i++ {
+		if i*i == square {
+			sqrt = i;
+			break;
+		}
+	}
+	printf("sqrt({i}) is {i}\n", square, sqrt);
 }
 
-printf("\n");
-return;
-
-//sqr := 625; // 25^2
-//sqrt : int = -1;
-//for i:=0; i<100; i++ {
-//	if i*i == sqr {
-//		sqrt = i;
-//		break;
-//	}
-//}
-//printf("sqrt({i}) is {i}\n", sqr, sqrt);
+sqrt(625); // 25^2
 
 /*
 func test (a : int, b : int) = (ret : int) {

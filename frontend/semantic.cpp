@@ -130,7 +130,8 @@ struct SemanticAnalysis {
 		{ // add a declaration for a main function (global space of the file itself represents the main function)
 			AST_funcdef* module_main = ast_alloc<AST_funcdef>(A_FUNCDEF);
 			module_main->ident = "main";
-			module_main->rets = {};
+			module_main->ret_struct = nullptr;
+			module_main->ret_struct_ty = nullptr;
 			module_main->args = {};
 			module_main->body = root;
 			module_main->src = root->src;
@@ -161,6 +162,9 @@ struct SemanticAnalysis {
 
 				modl.funcs.emplace_back(fdef);
 				local_funcs.push(fdef);
+
+				if (fdef->ret_struct)
+					modl.structs.emplace_back(fdef->ret_struct);
 			}
 			else if (ast->kind == A_STRUCTDEF) {
 				auto* struc = (AST_structdef*)ast;
@@ -877,7 +881,12 @@ struct SemanticAnalysis {
 			resolve_call_args(call, call->args, fdef->args);
 
 			// returns are always RValues
-			call->type = Typeref::RValue( fdef->rets.count > 0 ? fdef->rets[0]->type.ty : nullptr );
+			if (fdef->rets.count == 0)
+				call->type = {};
+			else if (fdef->rets.count == 1)
+				call->type = Typeref::RValue( fdef->rets[0]->type.ty );
+			else
+				call->type = Typeref::RValue( fdef->ret_struct_ty );
 		} break;
 
 		case A_RETURN: {

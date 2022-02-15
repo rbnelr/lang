@@ -77,17 +77,18 @@ printf("{i}|{i}\n", a,b);
 //printf("{i}|{i}\n", a,b);
 
 
-struct Ret {
-	success : bool;
-	message : str;
-}
-func do_thing () = (ret : Ret) {
+//struct Ret {
+//	success : bool;
+//	message : str;
+//}
+//func do_thing () = (ret : Ret) {
+func do_thing () = (success : bool, message := "") {
 	t := timer();
-	//ret : Ret; // error: identifer already declared in this scope.
-	ret.success = t % 2 != 0;
-	ret.message = "";
-	if !ret.success {
-		ret.message = "bad luck";
+	
+	success = t % 2 != 0;
+	
+	if !success {
+		message = "bad luck";
 	}
 }
 

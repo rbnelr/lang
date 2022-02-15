@@ -80,35 +80,77 @@ inline double timer_end (int64_t start) {
 
 ////
 
-// printf
-inline AST_vardecl bf_printf_val     = { cAST(A_VARDECL, Typeref::RValue(pTY_STR)), "format" };
-inline AST_vardecl bf_printf_varargs = { cAST(A_VARARGS                          ), "args" };
-
-inline AST_vardecl* bf_printf_args[] = { &bf_printf_val, &bf_printf_varargs };
-inline AST_funcdef bf_printf = {
-	cAST(A_FUNCDEF), "printf", bf_printf_args, {}, nullptr, &my_printf
+struct BuiltinArg {
+	strview   name;
+	AST_type* basic_type = nullptr; // null -> varargs
 };
+inline AST_funcdef* make_builtin_func (strview name, void* func_ptr, std::initializer_list<BuiltinArg> args, std::initializer_list<BuiltinArg> rets) {
+	auto* func = ast_alloc<AST_funcdef>(A_FUNCDEF);
+	func->src = SourceRange{}; // no source text to point to
+	func->ident = name;
 
-// timer
-inline AST_vardecl bf_timer_ret = { cAST(A_VARDECL, Typeref::RValue(pTY_INT)), "timestamp" };
+	auto get_args = [] (std::initializer_list<BuiltinArg>& args) -> arrview<AST_vardecl*> {
+		smallvec<AST_vardecl*, 32> vec;
 
-inline AST_vardecl* bf_timer_rets[] = { &bf_timer_ret };
-inline AST_funcdef bf_timer = {
-	cAST(A_FUNCDEF), "timer", {}, bf_timer_rets, nullptr, &timer
-};
+		for (auto& arg : args) {
+			auto* decl = ast_alloc<AST_vardecl>(arg.basic_type ? A_VARDECL : A_VARARGS);
+			decl->src = SourceRange{}; // no source text to point to
+			decl->ident = arg.name;
+			
+			if (arg.basic_type)
+				decl->type  = Typeref::RValue( arg.basic_type );
 
-// timer_end
-inline AST_vardecl bf_timer_end_start = { cAST(A_VARDECL, Typeref::RValue(pTY_INT)), "start_timestamp" };
-inline AST_vardecl bf_timer_end_ret   = { cAST(A_VARDECL, Typeref::RValue(pTY_FLT)), "timestamp" };
+			vec.push(decl);
+		}
 
-inline AST_vardecl* bf_timer_end_args[] = { &bf_timer_end_start };
-inline AST_vardecl* bf_timer_end_rets[] = { &bf_timer_end_ret };
-inline AST_funcdef bf_timer_end = {
-	cAST(A_FUNCDEF), "timer_end", bf_timer_end_args, bf_timer_end_rets, nullptr, &timer_end
-};
+		auto* arr = g_allocator.alloc_array<AST_vardecl*>(vec.count);
+		memcpy(arr, vec.data, sizeof(AST_vardecl*) * vec.count);
+		return { arr, vec.count };
+	};
+
+	func->args = get_args(args);
+	func->rets = get_args(rets);
+
+	assert(func->rets.count <= 1);
+	//func->ret_struct = ast_alloc<AST_structdef>(A_STRUCTDEF);
+	//func->ret_struct->src = SourceRange{}; // no source text to point to
+	//func->ret_struct->ident = format("%.*s.Result", (int)func->ident.size(), func->ident.data());
+	//func->ret_struct->members = rets;
+	//
+	//// Create type for return struct
+	//func->ret_struct_ty = ast_alloc<AST_type>(A_TYPE);
+	//func->ret_struct_ty->tclass = TY_STRUCT;
+	//func->ret_struct_ty->ident  = func->ret_struct->ident;
+	//func->ret_struct_ty->decl   = func->ret_struct;
+	//func->ret_struct_ty->src    = func->ret_struct->src;
+
+	func->builtin_func_ptr = func_ptr;
+
+	return func;
+}
 
 inline AST_funcdef* builtin_funcs[] = {
-	&bf_printf,
-	&bf_timer,
-	&bf_timer_end,
+	make_builtin_func("printf", my_printf,
+		{
+			{"format", pTY_STR},
+			{"args"}
+		},
+		{}
+	),
+
+	make_builtin_func("timer", timer,
+		{},
+		{
+			{"timestamp", pTY_INT}
+		}
+	),
+	
+	make_builtin_func("timer_end", timer_end,
+		{
+			{"start_timestamp", pTY_INT}
+		},
+		{
+			{"period", pTY_FLT}
+		}
+	),
 };

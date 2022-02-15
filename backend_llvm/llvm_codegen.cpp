@@ -76,7 +76,7 @@ struct LLVM_gen {
 			
 		// Clear structdef->llvm_struct just in case we codegen the same AST twice
 		for (auto* structdef : structdefs) {
-			structdef->llvm_struct = nullptr;
+			structdef->llvm_ty = nullptr;
 		}
 		for (auto* structdef : structdefs) {
 			declare_struct(structdef);
@@ -177,6 +177,41 @@ struct LLVM_gen {
 		build.CreateStore(rhs, val.llvm_val);
 	}
 
+	Value get_ret_struct_ptr (AST_funcdef* fdef, AST_vardecl* ret) {
+		llvm::Value* indices[] = {
+			llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0),
+			llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), ret->llvm_GEP_idx),
+		};
+		auto* ptr = build.CreateInBoundsGEP(fdef->ret_struct->llvm_ty, fdef->llvm_ret_struct, indices, SR(ret->ident));
+
+		return Value::LValue(ptr, ret->llvm_type);
+	}
+
+	Value var_value (AST_vardecl* decl) {
+		// args that are passed by value are rvalues in llvm
+		switch (decl->vartype) {
+			case AST_vardecl::LOCAL: {
+				return Value::LValue(decl->llvm_value, decl->llvm_type);
+			}
+
+			case AST_vardecl::ARG: {
+				if (decl->type.ty->tclass == TY_STRUCT)
+					return Value::LValue(decl->llvm_value, decl->llvm_type);
+				else
+					return Value::RValue(decl->llvm_value);
+			}
+
+			case AST_vardecl::RET: {
+				if (cur_fdef->llvm_ret_struct)
+					return get_ret_struct_ptr(cur_fdef, decl);
+				else
+					return Value::LValue(decl->llvm_value, decl->llvm_type);
+			}
+
+			INVALID_DEFAULT;
+		}
+	}
+
 	void begin_basic_block (llvm::BasicBlock* block) {
 		block->insertInto(cur_fdef->llvm_func);
 		build.SetInsertPoint(block);
@@ -205,11 +240,11 @@ struct LLVM_gen {
 				auto* struc = (AST_structdef*)type.ty->decl;
 
 				// handle out-of order struct dependencies
-				if (struc->llvm_struct == nullptr) {
+				if (struc->llvm_ty == nullptr) {
 					declare_struct(struc);
 				}
-				assert(struc->llvm_struct);
-				return struc->llvm_struct;
+				assert(struc->llvm_ty);
+				return struc->llvm_ty;
 			}
 
 			INVALID_DEFAULT;
@@ -217,7 +252,7 @@ struct LLVM_gen {
 	}
 	
 	void declare_struct (AST_structdef* struc) {
-		if (struc->llvm_struct)
+		if (struc->llvm_ty)
 			return; // already declared as a dependency of an earlier struct
 
 		llvm::SmallVector<llvm::Type*, 32> elements;
@@ -234,7 +269,7 @@ struct LLVM_gen {
 			member->llvm_GEP_idx = idx++;
 		}
 
-		struc->llvm_struct = llvm::StructType::create(ctx, elements, SR(struc->ident));
+		struc->llvm_ty = llvm::StructType::create(ctx, elements, SR(struc->ident));
 	}
 
 	llvm::Value* codegen_unary (OpType op, llvm::Value* operand, AST* operand_ast) {
@@ -353,13 +388,13 @@ struct LLVM_gen {
 	
 	void declare_function (AST_funcdef* fdef) {
 		// returns
-		llvm::Type* ret_ty = llvm::Type::getVoidTy(ctx);
-		assert(fdef->rets.count <= 1); // TODO: implememt multiple return values
-		
-		for (auto* ret : fdef->rets) {
-			assert(ret->kind != A_VARARGS);
-			ret_ty = map_type(ret->type);
-		}
+		llvm::Type* ret_ty;
+		if (fdef->rets.count == 0)
+			ret_ty = llvm::Type::getVoidTy(ctx);
+		else if (fdef->rets.count == 1)
+			ret_ty = map_type(fdef->rets[0]->type);
+		else
+			ret_ty = fdef->ret_struct->llvm_ty;
 
 		// arguments
 		llvm::SmallVector<llvm::Type*, 16> args_ty;
@@ -382,7 +417,7 @@ struct LLVM_gen {
 				args_ty.push_back(ty);
 			}
 
-			arg->is_arg = true;
+			arg->vartype = AST_vardecl::ARG;
 		}
 
 		auto* func_ty = llvm::FunctionType::get(ret_ty, args_ty, vararg);
@@ -450,16 +485,33 @@ struct LLVM_gen {
 		alloca_block->insertInto(cur_fdef->llvm_func);
 		
 		begin_basic_block(entry_block);
+		
+		if (fdef->rets.count > 0) {
+			auto tmp_build = llvm::IRBuilder<llvm::NoFolder>(alloca_block);
 
-		for (auto* ret : fdef->rets) {
-			assert(ret->kind != A_VARARGS);
+			if (fdef->rets.count == 1) {
+				auto ret = fdef->rets[0];
+				
+				ret->llvm_type = map_type(ret->type);
+				ret->llvm_value = tmp_build.CreateAlloca(ret->llvm_type, nullptr, SR("ret"));
+
+				ret->vartype = AST_vardecl::RET;
+			}
+			else {
+				fdef->llvm_ret_struct = tmp_build.CreateAlloca(fdef->ret_struct->llvm_ty, nullptr, SR("ret"));
 			
-			auto* ptr = declare_local_var(ret);
+				for (auto* ret : fdef->ret_struct->members) {
+					assert(ret->kind != A_VARARGS);
+					
+					if (ret->init) {
+						Value ptr = get_ret_struct_ptr(fdef, ret);
+						llvm::Value* val = codegen_rval(ret->init);
 
-			if (ret->init) {
-				llvm::Value* val = codegen_rval(ret->init);
-
-				build.CreateStore(val, ptr);
+						store_value(ptr, val);
+					}
+				
+					ret->vartype = AST_vardecl::RET;
+				}
 			}
 		}
 
@@ -480,21 +532,22 @@ struct LLVM_gen {
 	}
 
 	void return_ret_vars (AST* ast) {
-		// TODO: implement multiple returns
-		assert(cur_fdef->rets.count <= 1);
-
-		llvm::Instruction* I;
-		if (cur_fdef->rets.count == 1) {
-			auto* vardecl = cur_fdef->rets[0];
-			auto* val = build.CreateLoad(vardecl->llvm_type, vardecl->llvm_value, SR(vardecl->ident));
-			
-			I = build.CreateRet(val);
+		if (cur_fdef->rets.count == 0) {
+			build.CreateRetVoid();
 		}
 		else {
-			I = build.CreateRetVoid();
-		}
+			llvm::Value* val;
+			
+			if (cur_fdef->llvm_ret_struct) {
+				val = build.CreateLoad(cur_fdef->ret_struct->llvm_ty, cur_fdef->llvm_ret_struct, "retval");
+			}
+			else {
+				auto* decl = cur_fdef->rets[0];
+				val = build.CreateLoad(decl->llvm_type, decl->llvm_value, "retval");
+			}
 
-		//dbg_info(I, ast);
+			build.CreateRet(val);
+		}
 	}
 
 	Value codegen (AST* ast) {
@@ -544,14 +597,7 @@ struct LLVM_gen {
 			auto* vardecl = (AST_vardecl*)var->decl;
 			assert(vardecl);
 			
-			// args that are passed by value are rvalues in llvm
-			bool pass_by_val = vardecl->is_arg && vardecl->type.ty->tclass != TY_STRUCT;
-			if (pass_by_val) {
-				return Value::RValue(vardecl->llvm_value);
-			}
-			else {
-				return Value::LValue(vardecl->llvm_value, vardecl->llvm_type);
-			}
+			return var_value(vardecl);
 		}
 
 		// Is explicitly handles during assignops
@@ -972,20 +1018,19 @@ struct LLVM_gen {
 				assert(arg_values[i]);
 			}
 
-			llvm::Value* retval = build.CreateCall(fdef->llvm_func, arg_values, fdef->rets.count > 0 ? "_call" : "");
+			llvm::Value* retval = build.CreateCall(fdef->llvm_func, arg_values, fdef->ret_struct ? "_call" : "");
 			return Value::RValue(retval);
 		}
 			
 		case A_RETURN: {
 			auto* ret = (AST_return*)ast;
 
-			// TODO: implement multiple returns
-			assert(ret->args.count <= 1);
-
 			for (size_t i=0; i<ret->args.count; ++i) {
-				llvm::Value* result = codegen_rval(ret->args[i]->expr);
+				llvm::Value* expr = codegen_rval(ret->args[i]->expr);
 
-				build.CreateStore(result, ret->args[i]->decl->llvm_value);
+				auto val = var_value(ret->args[i]->decl);
+
+				store_value(val, expr);
 			}
 			
 			return_ret_vars(ret);

@@ -400,7 +400,12 @@ struct AST_vardecl : public AST {
 
 	AST*         init         = nullptr;   // initialization during declaration
 
-	bool         is_arg       = false; // for IR gen, is this variable a function argument?
+	enum VarType {
+		LOCAL,
+		ARG,
+		RET,
+	};
+	VarType      vartype      = LOCAL; // for IR gen, is this variable a function argument?
 	
 	llvm::Type*  llvm_type    = nullptr;
 	llvm::Value* llvm_value   = nullptr;
@@ -412,22 +417,24 @@ struct AST_structdef : public AST {
 	
 	arrview<AST_vardecl*> members;
 	
-	llvm::StructType*  llvm_struct = nullptr;
+	llvm::StructType*  llvm_ty = nullptr;
 };
 
 struct AST_funcdef : public AST {
 	strview      ident;
 	
 	arrview<AST_vardecl*> args;
-	arrview<AST_vardecl*> rets;
+	arrview<AST_vardecl*> rets; // Duplicated in ret_struct->members
 
-	//AST_structdef* ret_struct;
+	AST_structdef* ret_struct     = nullptr;
+	AST_type*      ret_struct_ty  = nullptr;
 
-	AST_block*   body         = nullptr;
+	AST_block*   body             = nullptr;
 	
 	void*        builtin_func_ptr = nullptr;
 
-	llvm::Function* llvm_func = nullptr;
+	llvm::Function* llvm_func     = nullptr;
+	llvm::Value*    llvm_ret_struct = nullptr;
 };
 
 struct AST_callarg : public AST {

@@ -123,7 +123,7 @@ void dbg_print (AST* node, int depth) {
 			indent(depth); printf(")\n");
 			
 			indent(depth); printf("rets: (\n");
-			for (auto* ret : f->rets)
+			for (auto* ret : f->ret_struct->members)
 				dbg_print(ret, depth+1);
 			indent(depth); printf(")\n");
 
@@ -192,7 +192,7 @@ struct Parser {
 	// <element>, <element> [,] <endtok>
 	// ie. comma seperated list of elements, with optional trailing comma, followed by mandatory end token
 	template <typename T, typename FUNC>
-	arrview<T> comma_seperated_list (TokenType endtok, const char* dbgname, FUNC element) {
+	arrview<T> comma_seperated_list (TokenType endtok, FUNC element) {
 		smallvec<T, 32> list;
 
 		while (tok[0].type != endtok) {
@@ -201,7 +201,6 @@ struct Parser {
 			if (!try_eat(T_COMMA))
 				break;
 		}
-		expect(endtok, "expected '{}' after {}!", TokenType_char[endtok], dbgname);
 
 		return make_copy<T>(list);
 	}
@@ -249,9 +248,12 @@ struct Parser {
 		AST_call* call = ast_alloc<AST_call>(A_CALL);
 		call->ident = tok[0].src.text();
 		tok.eat(); // T_IDENTIFIER
+
 		tok.eat(); // T_PAREN_OPEN
 
-		call->args = comma_seperated_list<AST_callarg*>(T_PAREN_CLOSE, "call argument list", [this] () { return call_arg(); });
+		call->args = comma_seperated_list<AST_callarg*>(T_PAREN_CLOSE, [this] () { return call_arg(); });
+		
+		expect(T_PAREN_CLOSE, "expected ')' after call argument list!");
 
 		call->src = SourceRange::range(src, tok[-1].src);
 
@@ -491,7 +493,7 @@ struct Parser {
 		auto* ast = ast_alloc<AST_return>(A_RETURN);
 		tok.eat();
 
-		ast->args = comma_seperated_list<AST_callarg*>(T_SEMICOLON, "return argument list", [this] () { return call_arg(); });
+		ast->args = comma_seperated_list<AST_callarg*>(T_SEMICOLON, [this] () { return call_arg(); });
 
 		ast->src = SourceRange::range(src, tok[-1].src); // 'return arg = expr, expr2' is the src range
 		return ast;
@@ -643,17 +645,32 @@ struct Parser {
 		tok.eat();
 
 		expect(T_PAREN_OPEN, "'(' expected for function argument list!");
-		func->args = comma_seperated_list<AST_vardecl*>(T_PAREN_CLOSE, "function declaration argument list", [this] () {
-			return funcdecl_arg();
-		});
+		func->args = comma_seperated_list<AST_vardecl*>(T_PAREN_CLOSE, [this] () { return funcdecl_arg(); });
+		expect(T_PAREN_CLOSE, "expected ')' after function declaration argument list!");
 		
 		if (try_eat(T_ASSIGN)) {
 			// explicit return list
-
+			
+			auto rets_src = tok[0].src;
+			
 			expect(T_PAREN_OPEN, "'(' expected for function returns list!");
-			func->rets = comma_seperated_list<AST_vardecl*>(T_PAREN_CLOSE, "function declaration return list", [this] () {
-				return funcdecl_arg();
-			});
+			func->rets = comma_seperated_list<AST_vardecl*>(T_PAREN_CLOSE, [this] () { return funcdecl_arg(); });
+			expect(T_PAREN_CLOSE, "expected ')' after function declaration return list!");
+
+			if (func->rets.count > 1) {
+				// Create struct for return values
+				func->ret_struct = ast_alloc<AST_structdef>(A_STRUCTDEF);
+				func->ret_struct->src = SourceRange::range(rets_src, tok[-1].src);
+				func->ret_struct->ident = format("%.*s.Result", (int)func->ident.size(), func->ident.data());
+				func->ret_struct->members = func->rets;
+
+				// Create type for return struct
+				func->ret_struct_ty = ast_alloc<AST_type>(A_TYPE);
+				func->ret_struct_ty->tclass = TY_STRUCT;
+				func->ret_struct_ty->ident  = func->ret_struct->ident;
+				func->ret_struct_ty->decl   = func->ret_struct;
+				func->ret_struct_ty->src    = func->ret_struct->src;
+			}
 		} else {
 			// implicit (void) return list
 		}

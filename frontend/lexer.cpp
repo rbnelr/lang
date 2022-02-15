@@ -77,6 +77,12 @@ void Lexer::parse_lit_double  (const char* start, const char* end, Value* out_va
 }
 
 void Lexer::parse_lit_string  (const char* start, const char* end, Value* out_val) {
+	assert(*start == '"');
+	start++;
+	assert(end > start);
+	end--;
+	assert(*end == '"');
+
 	// resulting strings should be shorter than escaped strings
 	size_t max_len = end - start + 1; // +1 to add null terminator
 
@@ -345,8 +351,6 @@ void Lexer::lex (Token* first_tok, Token* end_tok) {
 			case '"': {
 				cur++; // skip '"'
 
-				char const* strstart = cur;
-
 				for (;;) {
 					if (*cur == '\0') {
 						SYNTAX_ERROR(get_source_range(cur, cur+1), "end of file in string literal");
@@ -365,7 +369,7 @@ void Lexer::lex (Token* first_tok, Token* end_tok) {
 					cur++;
 				}
 
-				char const* strend = cur++; // skip '"'
+				cur++; // skip '"'
 
 				tok.type = T_LITERAL_STR;
 				set_source_range_len(&tok.src, cur - start);

@@ -148,7 +148,7 @@ enum ASTKind : uint8_t {
 	A_TYPE,
 
 	A_BLOCK,
-	A_TUPLE,
+	A_EXPR_LIST,
 
 	// values
 	A_LITERAL,
@@ -186,7 +186,7 @@ inline const char* ASTKind_str[] = {
 	"A_TYPE",
 
 	"A_BLOCK",
-	"A_TUPLE",
+	"A_EXPR_LIST",
 
 	"A_LITERAL",
 
@@ -320,9 +320,7 @@ struct Typeref {
 
 struct AST {
 	ASTKind      kind;
-
 	Typeref      type;
-
 	SourceRange  src;
 };
 
@@ -360,6 +358,41 @@ struct AST_literal : public AST {
 	Value        value;
 };
 
+struct AST_unop : public AST {
+	OpType       op;
+	AST*         operand   = nullptr;
+};
+struct AST_binop : public AST {
+	OpType       op;
+	AST*         lhs       = nullptr;
+	AST*         rhs       = nullptr;
+};
+
+struct AST_expr_list : public AST {
+	arrview<AST*> expressions;
+};
+
+struct AST_vardecl;
+// TODO: either a variable identifier or a struct member identifer
+//       could split these into seperate AST types if desired
+struct AST_var : public AST {
+	strview      ident;
+	AST_vardecl* decl = nullptr;
+};
+
+struct AST_if : public AST {
+	AST*         cond      = nullptr;
+	// bodies are AST* instead of AST_block* if/else bodies can be blocks or expressions or chained ifs (if-elif-else)
+	AST*         if_body   = nullptr;
+	AST*         else_body = nullptr;
+};
+struct AST_loop : public AST {
+	AST*         start     = nullptr;
+	AST*         cond      = nullptr;
+	AST*         end       = nullptr;
+	AST_block*   body      = nullptr;
+};
+
 struct AST_vardecl : public AST {
 	strview      ident;
 
@@ -372,13 +405,6 @@ struct AST_vardecl : public AST {
 	llvm::Type*  llvm_type    = nullptr;
 	llvm::Value* llvm_value   = nullptr;
 	unsigned     llvm_GEP_idx = 0; // only for struct members
-};
-
-// TODO: either a variable identifier or a struct member identifer
-//       could split these into seperate AST types if desired
-struct AST_var : public AST {
-	strview      ident;
-	AST_vardecl* decl = nullptr;
 };
 
 struct AST_structdef : public AST {
@@ -397,7 +423,7 @@ struct AST_funcdef : public AST {
 
 	//AST_structdef* ret_struct;
 
-	AST*         body         = nullptr;
+	AST_block*   body         = nullptr;
 	
 	void*        builtin_func_ptr = nullptr;
 
@@ -424,28 +450,6 @@ struct AST_call : public AST {
 	arrview<AST*> resolved_args;
 };
 
-struct AST_if : public AST {
-	AST*         cond      = nullptr;
-	AST*         if_body   = nullptr;
-	AST*         else_body = nullptr;
-};
-struct AST_loop : public AST {
-	AST*         start     = nullptr;
-	AST*         cond      = nullptr;
-	AST*         end       = nullptr;
-	AST*         body      = nullptr;
-};
-
-struct AST_unop : public AST {
-	OpType       op;
-	AST*         operand   = nullptr;
-};
-struct AST_binop : public AST {
-	OpType       op;
-	AST*         lhs       = nullptr;
-	AST*         rhs       = nullptr;
-};
-
 struct AST_return : public AST {
 	arrview<AST_callarg*> args;
 };
@@ -453,7 +457,7 @@ struct AST_return : public AST {
 struct AST_Module {
 	std::string filename;
 
-	AST* ast;
+	AST_block* ast;
 
 	std::vector<AST_funcdef*>   funcs;
 	std::vector<AST_structdef*> structs;

@@ -213,6 +213,7 @@ struct Lexer {
 		r->start        = start;
 		r->start_lineno = (uint32_t)saturate32(cur_lineno                );
 		r->start_charno = (uint16_t)saturate16((size_t)(start - cur_line));
+		r->arrow        = 0;
 	}
 	void set_source_range_len (SourceRange* r, ptrdiff_t len) {
 		r->length       = (uint16_t)saturate16((size_t)len);

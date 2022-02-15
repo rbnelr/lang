@@ -62,6 +62,13 @@ void dbg_print (AST* node, int depth) {
 				dbg_print(n, depth+1);
 			indent(depth); printf(")\n");
 		} break;
+
+		case A_EXPR_LIST: { auto* expr_list = (AST_expr_list*)node;
+			printf(" (\n");
+			for (auto* expr : expr_list->expressions)
+				dbg_print(expr, depth+1);
+			indent(depth); printf(")\n");
+		} break;
 			
 		case A_IF:
 		case A_SELECT: { auto* aif = (AST_if*)node;
@@ -167,13 +174,23 @@ arrview<T> make_copy (arrview<T> tmp_arr) {
 
 struct Parser {
 	Lexer tok;
-
-	void eat_semicolon () {
-		if (tok[0].type != T_SEMICOLON)
-			SYNTAX_ERROR_AFTER(tok, "';' expected");
+	
+	template <typename... Args>
+	void expect (TokenType type, const char* format, Args... args) {
+		if (tok[0].type != type) {
+			SYNTAX_ERROR_AFTER(tok, format, args...);
+		}
 		tok.eat();
 	}
+	bool try_eat (TokenType type) {
+		if (tok[0].type != type)
+			return false;
+		tok.eat();
+		return true;
+	}
 
+	// <element>, <element> [,] <endtok>
+	// ie. comma seperated list of elements, with optional trailing comma, followed by mandatory end token
 	template <typename T, typename FUNC>
 	arrview<T> comma_seperated_list (TokenType endtok, const char* dbgname, FUNC element) {
 		smallvec<T, 32> list;
@@ -181,58 +198,105 @@ struct Parser {
 		while (tok[0].type != endtok) {
 			list.push( element() );
 
-			if (tok[0].type == T_COMMA) {
-				tok.eat();
-			}
-			else if (tok[0].type != endtok) {
-				SYNTAX_ERROR_AFTER(tok, "expected '%s' after %s!", TokenType_char[endtok], dbgname );
-			}
+			if (!try_eat(T_COMMA))
+				break;
 		}
+		expect(endtok, "expected '{}' after {}!", TokenType_char[endtok], dbgname);
 
 		return make_copy<T>(list);
 	}
 
-	//    (<expression>)                               -> Parenthesized expression 
-	// or function call  -> function call with argument expressions
-	// or <literal>
+	
+	AST_literal* literal_ () {
+		auto* lit = ast_alloc<AST_literal>(A_LITERAL, tok[0]);
+
+		auto start = tok[0].src.start;
+		auto end   = start + tok[0].src.length;
+
+		auto lit_type = tok.parse_literal(tok[0].type, start, end, &lit->value);
+
+		lit->type = Typeref::RValue( BASIC_TYPES[lit_type] );
+		tok.eat();
+
+		return lit;
+	}
+	
+	//    <expression>
+	// or <argname> = <expression>
+	AST_callarg* call_arg () {
+		auto src = tok[0].src;
+
+		auto* arg = ast_alloc<AST_callarg>(A_CALLARG);
+		arg->ident = strview();
+
+		if (tok[0].type == T_IDENTIFIER && tok[1].type == T_ASSIGN) {
+			arg->ident = tok[0].src.text();
+			tok.eat();
+			tok.eat();
+		}
+
+		arg->expr = expression();
+		
+		arg->src = SourceRange::range(src, tok[-1].src); // 'arg = expr' is the src range
+		return arg;
+	}
+
+	AST_call* func_call () {
+		assert(tok[0].type == T_IDENTIFIER && tok[1].type == T_PAREN_OPEN);
+		
+		auto src = tok[0].src;
+
+		AST_call* call = ast_alloc<AST_call>(A_CALL);
+		call->ident = tok[0].src.text();
+		tok.eat(); // T_IDENTIFIER
+		tok.eat(); // T_PAREN_OPEN
+
+		call->args = comma_seperated_list<AST_callarg*>(T_PAREN_CLOSE, "call argument list", [this] () { return call_arg(); });
+
+		call->src = SourceRange::range(src, tok[-1].src);
+
+		return call;
+	}
+	AST_var* single_var () {
+		auto* var = ast_alloc<AST_var>(A_VAR, tok[0]);
+		var->ident = tok[0].src.text();
+		tok.eat();
+
+		return var;
+	}
+	
+	static bool is_expression (TokenType tok_type) {
+		switch (tok_type) {
+			case T_PAREN_OPEN:
+				return true;
+
+			case T_IDENTIFIER:
+				return true;
+
+			case T_LITERAL_BOOL:
+			case T_LITERAL_INT:
+			case T_LITERAL_FLT:
+			case T_LITERAL_STR:
+				return true;
+		}
+		return false;
+	}
 	AST* atom () {
 		switch (tok[0].type) {
 
 			case T_PAREN_OPEN: {
-				// expression in parentheses
 				tok.eat();
-
-				AST* result = expression(0);
-
-				if (tok[0].type != T_PAREN_CLOSE)
-					SYNTAX_ERROR_AFTER(tok, "expected ')' after parenthesized expression");
-				tok.eat();
-
-				return result;
+				return expression_or_expr_list();
 			}
 
 			case T_IDENTIFIER: {
 				// func call
 				if (tok[1].type == T_PAREN_OPEN) {
-					auto src = tok[0].src;
-
-					auto* call = ast_alloc<AST_call>(A_CALL);
-					call->ident = tok[0].src.text();
-					tok.eat();
-
-					call->args = call_args();
-
-					call->src = SourceRange::range(src, tok[-1].src);
-
-					return call;
+					return func_call();
 				}
-				// variable
+				// single variable
 				else {
-					auto* var = ast_alloc<AST_var>(A_VAR, tok[0]);
-					var->ident = tok[0].src.text();
-					tok.eat();
-
-					return var;
+					return single_var();
 				}
 			}
 
@@ -240,17 +304,7 @@ struct Parser {
 			case T_LITERAL_INT:
 			case T_LITERAL_FLT:
 			case T_LITERAL_STR: {
-				auto* lit = ast_alloc<AST_literal>(A_LITERAL, tok[0]);
-
-				auto start = tok[0].src.start;
-				auto end   = start + tok[0].src.length;
-
-				auto lit_type = tok.parse_literal(tok[0].type, start, end, &lit->value);
-
-				lit->type  = Typeref::RValue( BASIC_TYPES[lit_type] );
-				tok.eat();
-
-				return lit;
+				return literal_();
 			}
 			
 			default: {
@@ -261,7 +315,7 @@ struct Parser {
 	}
 
 	// expression consisting of atoms combined with unary, binary or ternary operators parsed according to associativity and precedence rules
-	AST* expression (unsigned min_prec) {
+	AST* expression (unsigned min_prec=0) {
 
 		AST* lhs;
 
@@ -319,9 +373,7 @@ struct Parser {
 			AST* bop;
 			// special case: ternary operator
 			if (op_tok.type == T_QUESTIONMARK) {
-				if (tok[0].type != T_COLON)
-					SYNTAX_ERROR_AFTER(tok, "':' expected after true case of select operator");
-				tok.eat();
+				expect(T_COLON, "':' expected after true case of select operator");
 
 				auto* op = ast_alloc<AST_if>(A_SELECT);
 				op->cond     = lhs;
@@ -348,13 +400,60 @@ struct Parser {
 
 		return lhs;
 	}
+	
+	//    <expression>                     -> returns expression as AST*
+	// or <expression>,                    -> returns AST_expr_list* as AST* (single expression as expression list)
+	// or <expression>, <expression> [,]   -> returns AST_expr_list* as AST*
+	// ie. comma seperated list of expressions, with optional trailing comma followed by endtok
+	AST* expression_or_expr_list () {
+		
+		auto src = tok[0].src;
+
+		AST* expr = expression();
+
+		if (tok[0].type == T_COMMA) {
+			smallvec<AST*, 8> exprs;
+			exprs.push(expr);
+			
+			// allow for trailing comma
+			// loops until  ',' <endtok>  or  <endtok>
+			while (try_eat(T_COMMA) && is_expression(tok[0].type)) {
+				exprs.push( expression() );
+			}
+
+			auto* expr_list = ast_alloc<AST_expr_list>(A_EXPR_LIST);
+			expr_list->expressions = make_copy<AST*>(exprs);
+			expr_list->src = SourceRange::range(src, tok[-1].src);
+
+			return expr_list;
+		}
+		else {
+			return expr;
+		}
+	}
+
+	// lhs = rhs   or  lhs += rhs  etc.
+	AST_binop* assignop (AST* lhs_expr) {
+		assert(is_binary_assignemnt_op(tok[0].type));
+		
+		auto src = tok[0].src;
+
+		auto* op = ast_alloc<AST_binop>(A_ASSIGNOP);
+		op->op = tok2assignop(tok[0].type);
+		tok.eat();
+
+		op->lhs = lhs_expr;
+		op->rhs = expression_or_expr_list();
+				
+		op->src = SourceRange::range_with_arrow(op->lhs->src, src, op->rhs->src); // 'a = b' is the src range
+		return op;
+	}
 
 	//    <varname> :              -> variable declaration with inferred type (must be followed by  = <expression>  to infer the type from)
 	// or <varname> : <typename>   -> variable declaration with explicit type
-	AST_vardecl* var_decl (int allow_init=true) {
+	AST_vardecl* var_decl () {
 		if (!(tok[0].type == T_IDENTIFIER && tok[1].type == T_COLON))
 			SYNTAX_ERROR_AFTER(tok, "expected variable declaration");
-
 
 		auto* var = ast_alloc<AST_vardecl>(A_VARDECL);
 		var->ident = tok[0].src.text();
@@ -382,85 +481,7 @@ struct Parser {
 		}
 
 		var->src = SourceRange::range_with_arrow(ident_src, colon_src, tok[-1].src); // 'a :' or 'a : type' is the src range (with the arrow on the :)
-
-		if (tok[0].type == T_ASSIGN) {
-			if (!allow_init)
-				ERROR(tok[0].src, "vardecl initialization not allowed in struct (yet)");
-			tok.eat();
-
-			var->init = expression(0);
-		}
 		return var;
-	}
-
-	//    <expression>
-	// or <expression> = <expression>
-	// or <vardecl> = <expression>   ie.  <varname> : [typename] = <expression>
-	AST* decl_or_assignment_or_expression () {
-		if (tok[0].type == T_IDENTIFIER && tok[1].type == T_COLON) {
-			return var_decl();
-		}
-		else {
-			AST* expr = expression(0);
-
-			// lhs = rhs   or  lhs += rhs  etc.
-			if (is_binary_assignemnt_op(tok[0].type)) {
-				auto src = tok[0].src;
-
-				auto* op = ast_alloc<AST_binop>(A_ASSIGNOP);
-				op->op = tok2assignop(tok[0].type);
-				tok.eat();
-
-				op->lhs = expr;
-				op->rhs = expression(0);
-				
-				op->src = SourceRange::range_with_arrow(op->lhs->src, src, op->rhs->src); // 'a = b' is the src range
-				return op;
-			}
-			return expr;
-		}
-	}
-
-	//    <expression>
-	// or <argname> = <expression>
-	AST_callarg* call_arg (TokenType endtok) {
-		auto src = tok[0].src;
-
-		auto* arg = ast_alloc<AST_callarg>(A_CALLARG);
-		arg->ident = strview();
-
-		if (tok[0].type == T_IDENTIFIER && tok[1].type == T_ASSIGN) {
-			arg->ident = tok[0].src.text();
-			tok.eat();
-			tok.eat();
-		}
-
-		arg->expr = expression(0);
-		
-		arg->src = SourceRange::range(src, tok[-1].src); // 'arg = expr' is the src range
-		return arg;
-	}
-
-	// (<call_arg>, <call_arg> etc.)
-	arrview<AST_callarg*> call_args () {
-		assert(tok[0].type == T_PAREN_OPEN);
-		tok.eat();
-
-		auto arr = comma_seperated_list<AST_callarg*>(T_PAREN_CLOSE, "call argument list", [this] () {
-			return call_arg(T_PAREN_CLOSE);
-		});
-
-		tok.eat(); // T_PAREN_CLOSE
-		return arr;
-	}
-	// <call_arg>, <call_arg> etc.
-	arrview<AST_callarg*> return_args () {
-
-		auto arr = comma_seperated_list<AST_callarg*>(T_SEMICOLON, "return argument list", [this] () {
-			return call_arg(T_SEMICOLON);
-		});
-
-		return arr;
 	}
 
 	// return <return_args>;
@@ -470,21 +491,24 @@ struct Parser {
 		auto* ast = ast_alloc<AST_return>(A_RETURN);
 		tok.eat();
 
-		ast->args = return_args();
+		ast->args = comma_seperated_list<AST_callarg*>(T_SEMICOLON, "return argument list", [this] () { return call_arg(); });
 
 		ast->src = SourceRange::range(src, tok[-1].src); // 'return arg = expr, expr2' is the src range
-
-		eat_semicolon();
 		return ast;
+	}
+
+	// just a normal expression for now, but could enable more rules
+	AST* boolean_expression () {
+		return expression();
 	}
 
 	// parses  if <cond> {} elif <cond> {} elif <cond> else {} into a recursive if-else chain (else body points to new recursive if-else for elif)
 	// where each elif and else is optional (else = null)
-	AST* if_statement () {
+	AST_if* if_statement () {
 		auto* aif = ast_alloc<AST_if>(A_IF, tok[0]); 
 		tok.eat();
 
-		aif->cond       = expression(0);
+		aif->cond      = boolean_expression();
 
 		aif->if_body   = block();
 		aif->else_body = elif_statement();
@@ -509,7 +533,7 @@ struct Parser {
 		auto* loop = ast_alloc<AST_loop>(A_WHILE, tok[0]);
 		tok.eat();
 
-		loop->cond = expression(0);
+		loop->cond = boolean_expression();
 		loop->body = block();
 
 		return loop;
@@ -527,8 +551,8 @@ struct Parser {
 			SYNTAX_ERROR_AFTER(tok, "while expected after do block!");
 		tok.eat();
 
-		loop->cond = expression(0);
-		eat_semicolon();
+		loop->cond = boolean_expression();
+		expect(T_SEMICOLON, "';' expected");
 
 		return loop;
 	}
@@ -538,13 +562,13 @@ struct Parser {
 		auto* loop = ast_alloc<AST_loop>(A_FOR, tok[0]);
 		tok.eat();
 
-		loop->start = decl_or_assignment_or_expression();
-		eat_semicolon();
+		loop->start = basic_statement();
+		expect(T_SEMICOLON, "';' expected");
 
-		loop->cond  = expression(0);
-		eat_semicolon();
+		loop->cond  = boolean_expression();
+		expect(T_SEMICOLON, "';' expected");
 
-		loop->end   = decl_or_assignment_or_expression();
+		loop->end   = basic_statement();
 
 		loop->body = block();
 
@@ -557,43 +581,45 @@ struct Parser {
 		auto* struc = ast_alloc<AST_structdef>(A_STRUCTDEF);
 		tok.eat();
 		
-		if (tok[0].type != T_IDENTIFIER)
-			SYNTAX_ERROR_AFTER(tok, "struct identifer expected after struct keyword!");
-		struc->ident = tok[0].src.text();
-		tok.eat();
+		expect(T_IDENTIFIER, "struct identifer expected after struct keyword!");
 
+		struc->ident = tok[-1].src.text();
 		struc->src = SourceRange::range(src, tok[-1].src); // 'struct name' is the src range
 
 		smallvec<AST_vardecl*, 16> members;
 
-		if (tok[0].type != T_BLOCK_OPEN)
-			SYNTAX_ERROR_AFTER(tok, "'{' expected after struct identifier");
-		tok.eat();
+		expect(T_BLOCK_OPEN, "'{' expected after struct identifier");
 
 		while (tok[0].type != T_BLOCK_CLOSE) {
-			auto* s = var_decl(false);
-			if (s)
-				members.push(s);
-			eat_semicolon();
+			auto* var = var_decl();
+
+			if (tok[0].type == T_ASSIGN)
+				ERROR(tok[0].src, "vardecl initialization not allowed in struct (yet)");
+
+			if (var)
+				members.push(var);
+			expect(T_SEMICOLON, "';' expected");
 		}
 
 		struc->members = make_copy<AST_vardecl*>(members);
 
-		if (tok[0].type != T_BLOCK_CLOSE)
-			SYNTAX_ERROR_AFTER(tok, "syntax error, '}' expected");
-		tok.eat();
+		expect(T_BLOCK_CLOSE, "syntax error, '}' expected");
 		
 		return struc;
 	}
 	
 	AST_vardecl* funcdecl_arg () {
 		auto* decl = (AST_vardecl*)var_decl();
-
-		if (decl->init) {
+		
+		if (try_eat(T_ASSIGN)) {
 			// TOOD: implement at const-foldable expression for default args at the very least
 			// better yet allow things like  sqrt(5)  or even custom compile-time const functions to be called as well
 			// or just const values in general (const globals or const locally captured vars)
 			// the question is where the const folding happens -> wait until I get to actually implementing compile-time execution
+
+			// only expression, not expression_or_expr_list() since we are already in a comma-seperated-list
+			decl->init = expression();
+
 			if (decl->init->kind != A_LITERAL)
 				ERROR(decl->init->src, "only literals allowed as default argument values (for now)");
 			
@@ -601,18 +627,6 @@ struct Parser {
 		}
 
 		return decl;
-	}
-
-	arrview<AST_vardecl*> funcdecl_arglist () {
-		assert(tok[0].type == T_PAREN_OPEN);
-		tok.eat();
-
-		auto arr = comma_seperated_list<AST_vardecl*>(T_PAREN_CLOSE, "function declaration argument list", [this] () {
-			return funcdecl_arg();
-		});
-
-		tok.eat(); // T_PAREN_CLOSE
-		return arr;
 	}
 
 	//    func <funcname> (<arg_decl>, <arg_decl>, ...) <block>
@@ -628,20 +642,20 @@ struct Parser {
 		func->ident = tok[0].src.text();
 		tok.eat();
 
-		if (tok[0].type != T_PAREN_OPEN)
-			SYNTAX_ERROR_AFTER(tok, "'(' expected after function identifer!");
+		expect(T_PAREN_OPEN, "'(' expected for function argument list!");
+		func->args = comma_seperated_list<AST_vardecl*>(T_PAREN_CLOSE, "function declaration argument list", [this] () {
+			return funcdecl_arg();
+		});
+		
+		if (try_eat(T_ASSIGN)) {
+			// explicit return list
 
-		func->args = funcdecl_arglist();
-
-		// implicit (void) return list
-		if (tok[0].type != T_ASSIGN) {
-			// rets already empty
-		}
-		// explicit return list
-		else {
-			tok.eat();
-
-			func->rets = funcdecl_arglist();
+			expect(T_PAREN_OPEN, "'(' expected for function returns list!");
+			func->rets = comma_seperated_list<AST_vardecl*>(T_PAREN_CLOSE, "function declaration return list", [this] () {
+				return funcdecl_arg();
+			});
+		} else {
+			// implicit (void) return list
 		}
 
 		func->src = SourceRange::range(src, tok[-1].src); // 'func name (...) = (...)' is the src range
@@ -649,6 +663,30 @@ struct Parser {
 		func->body = block();
 
 		return func;
+	}
+
+	// var_decl or assignop or expression-statement
+	AST* basic_statement () {
+		// allow empty statements
+		if (tok[0].type == T_SEMICOLON) {
+			return nullptr; // no-op
+		}
+		else if (tok[0].type == T_IDENTIFIER && tok[1].type == T_COLON) {
+			auto* vardecl = var_decl();
+
+			if (try_eat(T_ASSIGN))
+				vardecl->init = expression_or_expr_list();
+
+			return vardecl;
+		}
+		else {
+			AST* expr = expression_or_expr_list();
+
+			if (is_binary_assignemnt_op(tok[0].type))
+				return assignop(expr);
+
+			return expr;
+		}
 	}
 
 	//    <block>
@@ -661,6 +699,7 @@ struct Parser {
 	// or <assignment_or_expression>;
 	// or ;   -> empty statement, which does nothing
 	AST* statement () {
+		// non-statments (not followed by ';')
 		switch (tok[0].type) {
 			case T_BLOCK_OPEN: 
 				return block();
@@ -674,46 +713,39 @@ struct Parser {
 				return do_while_loop();
 			case T_FOR:
 				return for_loop();
-
-			case T_RETURN: {
-				return return_statement();
-			}
-			case T_BREAK: {
-				auto* ast = ast_alloc<AST>(A_BREAK, tok[0]);
-				tok.eat();
-				eat_semicolon();
-				return ast;
-			}
-			case T_CONTINUE: {
-				auto* ast = ast_alloc<AST>(A_CONTINUE, tok[0]);
-				tok.eat();
-				eat_semicolon();
-				return ast;
-			}
 			
-			case T_STRUCT: {
+			case T_STRUCT:
 				return struct_def();
-			}
 
-			case T_FUNC: {
+			case T_FUNC:
 				return function_def();
-			}
-
-			// allow empty statements
-			case T_SEMICOLON: {
-				tok.eat();
-				return nullptr; // no-op
-			}
-
-			default: {
-				AST* statement = decl_or_assignment_or_expression();
-				eat_semicolon();
-				return statement;
-			}
 		}
+		
+		AST* statement;
+		// statments followed by ';'
+		switch (tok[0].type) {
+			case T_RETURN: {
+				statement = return_statement();
+			} break;
+			case T_BREAK: {
+				statement = ast_alloc<AST>(A_BREAK, tok[0]);
+				tok.eat();
+			} break;
+			case T_CONTINUE: {
+				statement = ast_alloc<AST>(A_CONTINUE, tok[0]);
+				tok.eat();
+			} break;
+			
+			default: {
+				statement = basic_statement();
+			} break;
+		}
+		
+		expect(T_SEMICOLON, "';' expected");
+		return statement;
 	}
 
-	AST* _block (TokenType endtok) {
+	AST_block* _block (TokenType endtok) {
 		auto* block = ast_alloc<AST_block>(A_BLOCK);
 
 		smallvec<AST*, 32> statements;
@@ -734,18 +766,14 @@ struct Parser {
 	//   <statement>
 	//   ...
 	// }
-	AST* block () {
+	AST_block* block () {
 		auto src = tok[0].src;
 		
-		if (tok[0].type != T_BLOCK_OPEN)
-			SYNTAX_ERROR_AFTER(tok, "'{' expected");
-		tok.eat();
+		expect(T_BLOCK_OPEN, "'{{' expected");
 
 		auto* block = _block(T_BLOCK_CLOSE);
-
-		if (tok[0].type != T_BLOCK_CLOSE)
-			SYNTAX_ERROR_AFTER(tok, "syntax error, '}' expected");
-		tok.eat();
+		
+		expect(T_BLOCK_CLOSE, "'}' expected");
 		
 		block->src = SourceRange::range(src, tok[-1].src); // '{ ... }' is the src range
 
@@ -755,7 +783,7 @@ struct Parser {
 	// <statement>
 	// <statement>
 	// ...
-	AST* file () {
+	AST_block* file () {
 		auto src = tok[0].src;
 
 		auto* block = _block(T_EOF);

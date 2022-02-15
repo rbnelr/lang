@@ -21,7 +21,7 @@ void set_options () {
 	options.print_ir   = 0;
 	options.print_code = 0;
 #else
-	options.print_ast  = 0;
+	options.print_ast  = 1;
 	options.print_ir   = 1;
 	options.print_code = 1;
 #endif

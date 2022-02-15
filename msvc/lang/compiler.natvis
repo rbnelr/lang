@@ -28,8 +28,8 @@
 		<DisplayString>{type,en} ({source})</DisplayString>
 	</Type>
 	
-	<Type Name="source_range">
-		<DisplayString>{start,[end-start]s}</DisplayString>
+	<Type Name="SourceRange">
+		<DisplayString>{start,[length]s}</DisplayString>
 	</Type>
 	
 	<Type Name="Value">

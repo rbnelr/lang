@@ -120,7 +120,7 @@ struct SemanticAnalysis {
 
 	std::vector<AST_funcdef*>   funcs_stack;
 
-	void semantic_analysis (AST* root) {
+	void semantic_analysis (AST_block* root) {
 		for (auto* f : builtin_funcs)
 			stack.declare_ident(f, f->ident);
 
@@ -147,6 +147,7 @@ struct SemanticAnalysis {
 	}
 	
 	// declare struct and func idents and resolve their members/args to enable use of structs/funcs before they are declared
+	// NOTE: don't declare the member or arg idents yet, since they are not local variables and the callargs/struct members are found through seperate means
 	void prescan_block (AST_block* block) {
 		// only funcs/structs in this scope
 		smallvec<AST_structdef*, 32> local_structs;
@@ -413,6 +414,59 @@ struct SemanticAnalysis {
 		}
 	}
 	
+	Typeref resolve_member_op (AST_binop* op, AST* lhs, AST* rhs) {
+		
+		if (!lhs->type.ty || lhs->type.ty->tclass != TY_STRUCT)
+			ERROR(lhs->src, "member operator '.' expects struct on the left-hand side");
+		if (rhs->kind != A_VAR)
+			ERROR(rhs->src, "member operator '.' expects member identifier on the right-hand side");
+			
+		auto find_member = [] (AST_structdef* struc, AST_var* memb) -> AST_vardecl* {
+			for (auto* strucmem : struc->members) {
+				if (strucmem->ident == memb->ident)
+					return strucmem;
+			}
+
+			ERROR(memb->src, "struct member not found");
+		};
+
+		auto* struc = (AST_structdef*)lhs->type.ty->decl;
+		auto* memb = (AST_var*)rhs;
+
+		memb->decl = find_member(struc, memb);
+		memb->type = Typeref::LValue(memb->decl->type.ty);
+
+		// a.b is a RValue if a is a RValue, b is always just a identifier referring to a member of the a struct refers to
+		Typeref ty;
+		ty.ty   = memb->type.ty;
+		ty.rval = lhs->type.rval;
+		return ty;
+	}
+			
+	void typecheck_assignment (AST_binop* op, AST* lhs, AST* rhs) {
+		if (rhs->type.ty == nullptr) {
+			// everything on the rhs of assignments except calls with void return should have a non-void type
+			assert(rhs->kind == A_CALL);
+
+			ERROR(op->src, "assignment: can't assign void to something"); // TODO: specify what is void
+		}
+
+		if (lhs->type.rval)
+			ERROR(op->src, "assignment: cannot assign to a RValue"); // TODO: specify what is RValue
+
+		if (op->op == OP_ASSIGN) {
+			// check if types match
+			if (lhs->type.ty != rhs->type.ty)
+				ERROR(op->src, "assignment: types do not match"); // specify both sides of the assignment (without 2 notes?)
+		}
+		else {
+			auto res_ty = typecheck_binary_op(op, lhs, rhs);
+			if (res_ty.ty != lhs->type.ty)
+				ERROR(op->src, "compount assignment: result type of operator is not the same as the lhs type");
+		}
+	}
+
+////
 	void resolve_vardecl (AST_vardecl* vardecl, bool is_arg=false) {
 
 		auto type_ident = vardecl->typeexpr;
@@ -635,22 +689,41 @@ struct SemanticAnalysis {
 			recurse(op->lhs);
 			recurse(op->rhs);
 
-			if (op->rhs->type.ty == nullptr) {
-				// everything on the rhs of assignments except calls with void return should have a non-void type
-				assert(op->rhs->kind == A_CALL);
+			if (op->lhs->kind == A_EXPR_LIST || op->rhs->kind == A_EXPR_LIST) {
+				auto get_elems = [] (AST* ast) -> arrview<AST*> {
+					if (ast->kind == A_EXPR_LIST) {
+						return ((AST_expr_list*)ast)->expressions;
+					}
+					else {
+						assert(ast->type.ty->tclass == TY_STRUCT);
+						auto memb = ((AST_structdef*)ast->type.ty->decl)->members;
+						return { (AST**)memb.data, memb.count };
+					}
+				};
+				auto l = get_elems(op->lhs);
+				auto r = get_elems(op->rhs);
 
-				ERROR(op->src, "assignment: can't assign void to something");
+				size_t count = std::min(l.count, r.count);
+				for (size_t i=0; i<count; ++i) {
+					
+					typecheck_assignment(op, l[i], r[i]);
+				}
+
+				if (l.count != r.count)
+					ERROR(op->src, "tuple assignment: cannot assign {} values to {} expressions", r.count, l.count);
 			}
+			else {
+				typecheck_assignment(op, op->lhs, op->rhs);
+			}
+		} break;
 
-			//if (op->lhs->kind != A_VAR)
-			//	ERROR("can only assign to variables, not arbitrary expressions", op->lhs->src);
-			if (op->lhs->type.rval)
-				ERROR(op->src, "cannot assign to a RValue");
+		case A_EXPR_LIST: {
+			auto* expr_list = (AST_expr_list*)ast;
 
-			// check if types match
-			if (op->lhs->type.ty != op->rhs->type.ty)
-				ERROR(op->src, "assignment: types do not match");
+			for (auto* expr: expr_list->expressions)
+				recurse(expr);
 
+			// TODO: create tuple type here?
 		} break;
 
 		case A_UNOP: {
@@ -675,29 +748,7 @@ struct SemanticAnalysis {
 				// Don't for recurse(op->rhs);
 				// since for '.' operator the rhs expected to be A_VAR, but identifier is not resolved like a normal var
 
-				if (!op->lhs->type.ty || op->lhs->type.ty->tclass != TY_STRUCT)
-					ERROR(op->lhs->src, "member operator '.' expects struct on the left-hand side");
-				if (op->rhs->kind != A_VAR)
-					ERROR(op->rhs->src, "member operator '.' expects member identifier on the right-hand side");
-			
-				auto find_member = [] (AST_structdef* struc, AST_var* memb) -> AST_vardecl* {
-					for (auto* strucmem : struc->members) {
-						if (strucmem->ident == memb->ident)
-							return strucmem;
-					}
-
-					ERROR(memb->src, "struct member not found");
-				};
-
-				auto* struc = (AST_structdef*)op->lhs->type.ty->decl;
-				auto* memb = (AST_var*)op->rhs;
-
-				memb->decl = find_member(struc, memb);
-				memb->type = Typeref::LValue(memb->decl->type.ty);
-
-				// a.b is a RValue if a is a RValue, b is always just a identifier referring to a member of the a struct refers to
-				op->type.ty   = memb->type.ty;
-				op->type.rval = op->lhs->type.rval;
+				op->type = resolve_member_op(op, op->lhs, op->rhs);
 			}
 		} break;
 
@@ -806,7 +857,12 @@ struct SemanticAnalysis {
 			for (auto* ret : fdef->rets)
 				stack.declare_ident(ret, ret->ident);
 
-			recurse(fdef->body);
+			// Don't just recurse into the body block, since that creates another scope, which would allow local vars to shadow args/rets, which is not what we want
+			
+			prescan_block(fdef->body); // can call functions before they are declared from anywhere inside the block
+
+			for (auto* n : fdef->body->statements)
+				recurse(n);
 
 			stack.reset_scope(func_scope);
 			funcs_stack.pop_back();

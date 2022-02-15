@@ -237,12 +237,12 @@ struct LLVM_gen {
 		struc->llvm_struct = llvm::StructType::create(ctx, elements, SR(struc->ident));
 	}
 
-	llvm::Value* codegen_unary (AST_unop* op, llvm::Value* operand) {
-		switch (op->operand->type.ty->tclass) {
+	llvm::Value* codegen_unary (OpType op, llvm::Value* operand, AST* operand_ast) {
+		switch (operand_ast->type.ty->tclass) {
 		case TY_INT: {
-			switch (op->op) {
+			switch (op) {
 				case OP_POSITIVE:    return operand; // no-op
-				case OP_NEGATE:      return build.CreateNeg (operand, "_neg");
+				case OP_NEGATE:      return build.CreateNeg(operand, "_neg");
 				case OP_BIT_NOT:     return build.CreateNot(operand, "_not");
 				//case OP_LOGICAL_NOT:
 				case OP_INC:         return build.CreateAdd(operand, llvm::ConstantInt::get(operand->getType(), 1), "_inc");
@@ -251,14 +251,14 @@ struct LLVM_gen {
 			}
 		}
 		case TY_BOOL: {
-			switch (op->op) {
+			switch (op) {
 				case OP_BIT_NOT:
 				case OP_LOGICAL_NOT: return build.CreateNot(operand, "_not");
 				INVALID_DEFAULT;
 			}
 		}
 		case TY_FLT: {
-			switch (op->op) {
+			switch (op) {
 				case OP_POSITIVE:    return operand; // no-op
 				case OP_NEGATE:      return build.CreateFNeg(operand, "_neg");
 				INVALID_DEFAULT;
@@ -267,12 +267,12 @@ struct LLVM_gen {
 		INVALID_DEFAULT;
 		}
 	}
-	llvm::Value* codegen_binop (AST_binop* op, llvm::Value* lhs, llvm::Value* rhs) {
-		assert(op->lhs->type.ty == op->rhs->type.ty);
+	llvm::Value* codegen_binop (OpType op, llvm::Value* lhs, llvm::Value* rhs, AST* lhs_ast, AST* rhs_ast) {
+		assert(lhs_ast->type.ty == rhs_ast->type.ty);
 		
-		switch (op->lhs->type.ty->tclass) {
+		switch (lhs_ast->type.ty->tclass) {
 		case TY_INT: {
-			switch (op->op) {
+			switch (op) {
 				case OP_ADD:        return build.CreateAdd (lhs, rhs, "_add");
 				case OP_SUB:        return build.CreateSub (lhs, rhs, "_sub");
 				case OP_MUL:        return build.CreateMul (lhs, rhs, "_mul");
@@ -294,7 +294,7 @@ struct LLVM_gen {
 			}
 		} break;
 		case TY_BOOL: {
-			switch (op->op) {
+			switch (op) {
 				case OP_BIT_AND:    return build.CreateAnd (lhs, rhs, "_and");
 				case OP_BIT_OR:     return build.CreateOr  (lhs, rhs, "_or");
 				case OP_BIT_XOR:    return build.CreateXor (lhs, rhs, "_xor");
@@ -310,7 +310,7 @@ struct LLVM_gen {
 			}
 		} break;
 		case TY_FLT: {
-			switch (op->op) {
+			switch (op) {
 				case OP_ADD:        return build.CreateFAdd(lhs, rhs, "_add");
 				case OP_SUB:        return build.CreateFSub(lhs, rhs, "_sub");
 				case OP_MUL:        return build.CreateFMul(lhs, rhs, "_mul");
@@ -554,20 +554,102 @@ struct LLVM_gen {
 			}
 		}
 
+		// Is explicitly handles during assignops
+		case A_EXPR_LIST: {
+			assert(false);
+			_UNREACHABLE;
+		}
+
 		case A_ASSIGNOP: {
 			auto* op = (AST_binop*)ast;
 
-			// eval lhs first (it's a lvalue, so a ptr)
-			Value lhs = codegen(op->lhs);
-			// eval rhs
-			llvm::Value* rhs = codegen_rval(op->rhs);
+			auto codegen_assignment = [this] (AST_binop* op, AST* lhs, AST* rhs) {
+				// eval lhs first (it's a lvalue, so a ptr)
+				Value lhs_val = codegen(lhs);
+				// eval rhs
+				llvm::Value* rhs_val = codegen_rval(rhs);
 
-			if (op->op != OP_ASSIGN) {
-				// eval binary operator and assign to lhs
-				rhs = codegen_binop(op, load_value(lhs), rhs);
+				if (op->op != OP_ASSIGN) {
+					// eval binary operator and assign to lhs
+					rhs_val = codegen_binop(op->op, load_value(lhs_val), rhs_val, lhs, rhs);
+				}
+				
+				store_value(lhs_val, rhs_val);
+			};
+
+			if (op->lhs->kind == A_EXPR_LIST || op->rhs->kind == A_EXPR_LIST) {
+
+				// a, b += c, d  not allowed
+				assert(op->op == OP_ASSIGN);
+				
+				smallvec<Value,        32> l;
+				smallvec<llvm::Value*, 32> r;
+				
+				// eval lhs first
+				if (op->lhs->kind == A_EXPR_LIST) {
+					auto exprs = ((AST_expr_list*)op->lhs)->expressions;
+					for (size_t i=0; i<exprs.count; ++i)
+						l.push( codegen(exprs[i]) );
+				}
+				else {
+					assert(op->lhs->type.ty->tclass == TY_STRUCT);
+					
+					auto members = ((AST_structdef*)op->lhs->type.ty->decl)->members;
+					
+					Value struct_val = codegen(op->lhs);
+					assert(!struct_val.rval);
+
+					for (size_t i=0; i<members.count; ++i) {
+						assert(members[i]->llvm_GEP_idx == i);
+
+						llvm::Value* indices[] = {
+							llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0),
+							llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), (unsigned)i),
+						};
+						llvm::Value* ptr = build.CreateInBoundsGEP(struct_val.type, struct_val.llvm_val, indices, SR(members[i]->ident));
+
+						l.push( Value::LValue(ptr, members[i]->llvm_type) );
+					}
+				}
+
+				// eval rhs
+				if (op->rhs->kind == A_EXPR_LIST) {
+					auto exprs = ((AST_expr_list*)op->rhs)->expressions;
+					for (size_t i=0; i<exprs.count; ++i)
+						r.push( codegen_rval(exprs[i]) );
+				}
+				else {
+					assert(op->rhs->type.ty->tclass == TY_STRUCT);
+					
+					llvm::Value* struct_val = codegen_rval(op->rhs);
+
+					auto members = ((AST_structdef*)op->rhs->type.ty->decl)->members;
+					for (size_t i=0; i<members.count; ++i) {
+						assert(members[i]->llvm_GEP_idx == i);
+						unsigned indices[] = { (unsigned)i };
+						r.push( build.CreateExtractValue(struct_val, indices, SR(members[i]->ident)) );
+					}
+				}
+
+				assert(l.count == r.count);
+
+				for (size_t i=0; i<l.count; ++i) {
+					store_value(l[i], r[i]);
+				}
 			}
-			
-			store_value(lhs, rhs);
+			else {
+				// eval lhs first (it's a lvalue, so a ptr)
+				Value lhs_val = codegen(op->lhs);
+				// eval rhs
+				llvm::Value* rhs_val = codegen_rval(op->rhs);
+
+				if (op->op != OP_ASSIGN) {
+					// eval binary operator and assign to lhs
+					rhs_val = codegen_binop(op->op, load_value(lhs_val), rhs_val, op->lhs, op->rhs);
+				}
+				
+				store_value(lhs_val, rhs_val);
+			}
 			return {};
 		}
 
@@ -578,7 +660,7 @@ struct LLVM_gen {
 			Value operand = codegen(op->operand);
 
 			llvm::Value* old_val = load_value(operand);
-			llvm::Value* result  = codegen_unary(op, old_val);
+			llvm::Value* result  = codegen_unary(op->op, old_val, op->operand);
 				
 			if (op->op == OP_INC || op->op == OP_DEC) {
 				// assign inc/decremented to var
@@ -657,7 +739,7 @@ struct LLVM_gen {
 				}
 				else {
 					assert(lhs.type && lhs.type->isStructTy());
-				
+					
 					llvm::Value* indices[] = {
 						llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0),
 						llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), memb->decl->llvm_GEP_idx),
@@ -669,11 +751,11 @@ struct LLVM_gen {
 			}
 
 			// eval lhs
-			llvm::Value* lhs = codegen_rval(op->lhs);
+			llvm::Value* lhs_val = codegen_rval(op->lhs);
 			// eval rhs
-			llvm::Value* rhs = codegen_rval(op->rhs);
+			llvm::Value* rhs_val = codegen_rval(op->rhs);
 			// eval binary operator
-			return Value::RValue(codegen_binop(op, lhs, rhs));
+			return Value::RValue(codegen_binop(op->op, lhs_val, rhs_val, op->lhs, op->rhs));
 		}
 
 		case A_BLOCK: {

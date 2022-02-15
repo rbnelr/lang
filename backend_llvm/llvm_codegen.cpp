@@ -4,7 +4,10 @@
 #include "common.hpp"
 #include "frontend/builtins.hpp"
 
-inline struct _IDFormStrbuf { char str[32]; } format_id (size_t id) {
+struct _IDFormStrbuf {
+	char str[32];
+};
+inline _IDFormStrbuf format_id (size_t id) {
 	_IDFormStrbuf buf; // fits any 64-bit int
 	auto len = llvm::format(".%" PRIu64, id).print(buf.str, ARRLEN(buf.str));
 	if (len > ARRLEN(buf.str)) {
@@ -381,7 +384,7 @@ struct LLVM_gen {
 	void declare_builtins () {
 		// TODO: do this lazily once they are actually called?
 
-		for (auto* builtin : builtin_funcs) {
+		for (auto* builtin : BUILTIN_FUNCS) {
 			declare_function(builtin);
 		}
 	}

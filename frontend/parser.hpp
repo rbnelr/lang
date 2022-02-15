@@ -314,8 +314,8 @@ struct Typeref {
 	AST_type* ty   = nullptr;
 	bool      rval = false;
 	
-	static Typeref LValue (AST_type* ty) { return { ty, false }; }
-	static Typeref RValue (AST_type* ty) { return { ty, true  }; }
+	static constexpr Typeref LValue (AST_type* ty) { return { ty, false }; }
+	static constexpr Typeref RValue (AST_type* ty) { return { ty, true  }; }
 };
 
 struct AST {

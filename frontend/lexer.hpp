@@ -165,14 +165,13 @@ struct Lexer {
 
 	Token*      cur_tok;
 	
-	static inline constexpr int LOOKBACK = 1;
-	// how many tokes are always valid relative to lookahead with peek(), eg. peek(LOOKAHEAD-1) is safe
-	static inline constexpr int LOOKAHEAD = 2;
-
-	static inline constexpr int WINDOW_SIZE = LOOKBACK + LOOKAHEAD; // how many buffered tokens are valid to access at any one point
+	static inline constexpr int LOOKBACK = 1;  // how many future tokens are safe to read
+	static inline constexpr int LOOKAHEAD = 2; // how many past   tokens are safe to read
+	
+	static inline constexpr int WINDOW_SIZE = LOOKBACK + LOOKAHEAD; // how many buffered tokens are valid to read at any one point
 	static inline constexpr int KEEP_TOKENS = WINDOW_SIZE -1; // how many tokens are kept in refill_buf() when reaching the end of the buffer
 
-	static inline constexpr int BUFSZ = 1024; // if  sizeof(Token) * BUFSZ  fits into a cpu cache level that should improve perf 
+	static inline constexpr int BUFSZ = 1024; // if  sizeof(Token) * BUFSZ  fits into a cpu cache level that may improve perf 
 	
 	Token buf[BUFSZ];
 
@@ -194,10 +193,9 @@ struct Lexer {
 		ZoneScoped;
 
 		Token* src = cur_tok - LOOKBACK;
-		int count = LOOKBACK + LOOKAHEAD - 1; // -1 since that one token was outside the window (that's what triggered refill_buf)
+		int count = KEEP_TOKENS; // -1 since that one token was outside the window (that's what triggered refill_buf)
 
-		assert(              buf+count <= buf+BUFSZ);
-		assert(src >= buf && src+count <= buf+BUFSZ);
+		assert(src >= buf && src+KEEP_TOKENS <= buf+BUFSZ);
 
 		memmove(buf, src, KEEP_TOKENS * sizeof(Token));
 

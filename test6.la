@@ -84,7 +84,7 @@ printf("{i}|{i}\n", a,b);
 //func do_thing () = (ret : Ret) {
 func do_thing () = (success : bool, message := "") {
 	t := timer();
-	
+
 	success = t % 2 != 0;
 	
 	if !success {

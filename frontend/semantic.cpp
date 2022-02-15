@@ -121,7 +121,7 @@ struct SemanticAnalysis {
 	std::vector<AST_funcdef*>   funcs_stack;
 
 	void semantic_analysis (AST_block* root) {
-		for (auto* f : builtin_funcs)
+		for (auto* f : BUILTIN_FUNCS)
 			stack.declare_ident(f, f->ident);
 
 		for (auto* t : BASIC_TYPES)

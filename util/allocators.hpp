@@ -280,7 +280,7 @@ struct arrview {
 	// copy ctor
 	DECLC arrview (arrview& r): data{r.data}, count{r.count} {}
 	// copy operator
-	DECL arrview& operator= (arrview& r) {
+	DECLC arrview& operator= (arrview& r) {
 		data = r.data;
 		count = r.count;
 		return *this;
@@ -288,13 +288,11 @@ struct arrview {
 	// move ctor
 	DECLC arrview (arrview&& r): data{r.data}, count{r.count} {}
 	// move operator
-	DECL arrview& operator= (arrview&& r) {
+	DECLC arrview& operator= (arrview&& r) {
 		data = r.data;
 		count = r.count;
 		return *this;
 	}
-
-	DECL ~arrview () {}
 
 	DECL T& operator[] (size_t idx) {
 		assert(idx < count);

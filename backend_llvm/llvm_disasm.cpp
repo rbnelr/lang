@@ -46,7 +46,7 @@ struct DisasmPrinter {
 			}
 		}
 
-		for (auto* bi : builtin_funcs)
+		for (auto* bi : BUILTIN_FUNCS)
 			symbols.push_back({ { bi->ident.data(), bi->ident.size() }, (const uint8_t*)bi->builtin_func_ptr });
 
 		std::sort(symbols.begin(), symbols.end(), [] (Symbol const& l, Symbol const& r) {

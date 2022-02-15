@@ -15,16 +15,19 @@ struct ErrorSource {
 	static inline int tab_spaces = 4;
 
 	void print (char const* filename, const char* col1, const char* col2) {
-		assert(src.length > 0);
-		assert(src.start_lineno > 0);
-
 		constexpr int CONSOLE_WIDTH = 80;
 		constexpr int MAX_LINE_LEN  = CONSOLE_WIDTH - 2; // need at max 4 additional chars to print ^... for src ranges on end of line and extending further
 
 		char source[CONSOLE_WIDTH+1] = {};
 		char arrow [CONSOLE_WIDTH+1] = {};
 
-		{
+		if (src.start == nullptr) {
+			strncpy(source, "<source null>", CONSOLE_WIDTH);
+		}
+		else {
+			assert(src.length > 0);
+			assert(src.start_lineno > 0);
+
 			// TODO: on lines longer than some amount (say 80 chars) don't print the entire line
 			// but instead print 80 chars of the line starting, such that the token is in the middle
 			// tokens longer than 80 chars are also cut off such that we only see the start of them

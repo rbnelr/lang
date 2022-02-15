@@ -685,10 +685,10 @@ struct Parser {
 	// var_decl or assignop or expression-statement
 	AST* basic_statement () {
 		// allow empty statements
-		if (tok[0].type == T_SEMICOLON) {
+		if (tok[0].type == T_SEMICOLON)
 			return nullptr; // no-op
-		}
-		else if (tok[0].type == T_IDENTIFIER && tok[1].type == T_COLON) {
+		
+		if (tok[0].type == T_IDENTIFIER && tok[1].type == T_COLON) {
 			auto* vardecl = var_decl();
 
 			if (try_eat(T_ASSIGN))
@@ -718,8 +718,11 @@ struct Parser {
 	AST* statement () {
 		// non-statments (not followed by ';')
 		switch (tok[0].type) {
+			// nested block
 			case T_BLOCK_OPEN: 
 				return block();
+
+			// control-flow structures
 
 			case T_IF:
 				return if_statement();
@@ -731,9 +734,11 @@ struct Parser {
 			case T_FOR:
 				return for_loop();
 			
+			// struct declaration
 			case T_STRUCT:
 				return struct_def();
-
+				
+			// function declaration
 			case T_FUNC:
 				return function_def();
 		}

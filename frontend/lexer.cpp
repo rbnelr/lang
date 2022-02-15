@@ -178,16 +178,17 @@ void Lexer::lex (Token* first_tok, Token* end_tok) {
 			}
 			
 			case '/': { // '//' or '/*'
-				// "//" if line comment begin, skip until newline or EOF
+
+				// "//" line comment begin, skip until newline or EOF
 				if (cur[1] == '/') {
 					cur+=2;
 
-					while (!is_newline_c(*cur) && *cur != '\0')
+					while (!(*cur == '\n' || *cur == '\r') && *cur != '\0')
 						cur++; // skip anything until newline or EOF
 
 					continue;
 				}
-				// "/*" if block comment begin, skip until end of block comment while keeping track of nested block comments
+				// "/*" block comment begin, skip until end of block comment while keeping track of nested block comments
 				else if (cur[1] == '*') {
 					cur+=2;
 
@@ -205,7 +206,7 @@ void Lexer::lex (Token* first_tok, Token* end_tok) {
 							cur += 2; // skip "*/"
 							depth--;
 						}
-						else if (is_newline_c(*cur)) {
+						else if (*cur == '\n' || *cur == '\r') {
 							newline();
 						}
 						else {
@@ -215,6 +216,7 @@ void Lexer::lex (Token* first_tok, Token* end_tok) {
 					continue;
 				}
 			} break;
+
 			case '*': { // '*/'
 				if (cur[1] == '/') {
 					SYNTAX_ERROR(get_source_range(cur, cur+2), "unexpected block comment close");
@@ -238,7 +240,7 @@ void Lexer::lex (Token* first_tok, Token* end_tok) {
 		// tok.source.length = LEN: avoid range check by not calling set_source_range_len()
 		#define SIMPLE_TOK(TYPE, LEN) {             \
 			tok.type = TYPE;                        \
-			tok.src.length = (uint16_t)LEN;      \
+			tok.src.length = (uint16_t)LEN;         \
 			cur += LEN;                             \
 			continue;                               \
 		}
@@ -250,7 +252,7 @@ void Lexer::lex (Token* first_tok, Token* end_tok) {
 				tok.src.length = 1;
 
 				// break would exit switch
-				// and we really want this to be in the switch to remove, since this removes one conditional from every token lexing)
+				// and we really want the EOF case to be in the switch rather than a if before it, since this removes one conditional from every token lexing)
 				goto L_exit; // end lexing loop
 			}
 
@@ -355,7 +357,7 @@ void Lexer::lex (Token* first_tok, Token* end_tok) {
 					if (*cur == '\0') {
 						SYNTAX_ERROR(get_source_range(cur, cur+1), "end of file in string literal");
 					}
-					else if (is_newline_c(*cur)) {
+					else if (*cur == '\n' || *cur == '\r') {
 						//SYNTAX_ERROR(get_source_range(cur, cur+1), "newline in string literal"); // Allow newlines?
 						newline();
 					}

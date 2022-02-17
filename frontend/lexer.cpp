@@ -379,7 +379,7 @@ void Lexer::lex (Token* first_tok, Token* end_tok) {
 			}
 
 			default: {
-				SYNTAX_ERROR(tok.src, "unknown token");
+				SYNTAX_ERROR(get_source_range(cur, cur+1), "unknown token");
 			}
 		}
 	}

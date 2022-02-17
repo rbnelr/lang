@@ -287,17 +287,17 @@ inline const char* OpType_str[] = {
 
 
 inline constexpr OpType tok2binop (TokenType tok) {
-	return (OpType)( tok + (OP_ADD - T_ADD) );
+	return (OpType)( (int)tok + ((int)OP_ADD - (int)T_ADD) );
 }
 inline constexpr OpType tok2unop (TokenType tok) {
 	switch (tok) {
 		case T_ADD: return OP_POSITIVE;
 		case T_SUB: return OP_NEGATE;
-		default:    return (OpType)( tok + (OP_BIT_NOT - T_BIT_NOT) );
+		default:    return (OpType)( (int)tok + ((int)OP_BIT_NOT - (int)T_BIT_NOT) );
 	}
 }
 inline constexpr OpType tok2assignop (TokenType tok) {
-	return (OpType)( tok + (OP_ASSIGN - T_ASSIGN) );
+	return (OpType)( (int)tok + ((int)OP_ASSIGN - (int)T_ASSIGN) );
 }
 
 

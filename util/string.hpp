@@ -6,6 +6,21 @@
 #include <format>
 
 namespace kiss {
+	// TODO: replace these with std::format as soon at it's ready 
+
+	// Printf that appends to a std::string
+	void vprints (std::string* s, char const* format, va_list vl);
+
+	// Printf that appends to a std::string
+	void prints (std::string* s, char const* format, ...);
+	
+	// Printf that outputs to a std::string
+	std::string vprints (char const* format, va_list vl);
+
+	// Printf that outputs to a std::string
+	std::string prints (char const* format, ...);
+
+
 	bool starts_with (std::string_view const& str, std::string_view const& substr);
 
 	// remove whitespace at front and back

@@ -129,7 +129,6 @@ struct DisasmPrinter {
 	void print_data_section (const uint8_t* data, size_t size) {
 		int width = 16;
 
-		size_t offs = 0;
 		for (size_t offs = 0; offs < size; offs += width) {
 			printf("%p %04" PRIx64 " | ", data + offs, offs);
 
@@ -167,8 +166,6 @@ struct DisasmPrinter {
 		// and I didn't wanna find out if I can get it to work somehow
 
 		auto untabbify = [&] () {
-			size_t tab_width = 8;
-
 			str_untab.clear();
 			
 			size_t i = 0;

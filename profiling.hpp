@@ -2,7 +2,7 @@
 #include "frontend/lexer.hpp"
 #include <random>
 
-#include <chrono>
+//#include <chrono>
 
 namespace profiling {
 	
@@ -96,8 +96,9 @@ void lex_file_whitespace (char const* filename, bool comments=true, size_t size 
 			int len = rand.uniform(4, 120);
 
 			str.append("//");
-
-			str.push_back( rand.uniform_char("Ka uDd ft^&3+ uagd \t") );
+			
+			for (int i=0; i<len; ++i)
+				str.push_back( rand.uniform_char("Ka uDd ft^&3+ uagd \t") );
 			
 			str.append("\n");
 		}
@@ -134,19 +135,19 @@ void lex_file_numbers (char const* filename, size_t size = MB * 64) {
 		auto k = rand.uniform(0, 5);
 		if (k <= 1) {
 			int num = rand.uniform(0, 6);
-			str.append(std::format("{}", num));
+			str.append(prints("%d", num));
 		}
 		else if (k <= 2) {
 			int num = rand.uniform(0, INT_MAX);
-			str.append(std::format("{}", num));
+			str.append(prints("%d", num));
 		}
 		else if (k <= 4) {
-			float num = (float)rand.uniform(0, 3000) / 1000.0f;
-			str.append(std::format("{}", num));
+			float num = rand.uniform(0.0f, 3.0f);
+			str.append(prints("%.3f", num));
 		}
 		else {
 			float num = rand.uniform(0.0f, (float)INT_MAX);
-			str.append(std::format("{}", num));
+			str.append(prints("%7.2f", num));
 		}
 		
 		int spaces = rand.uniform(1, 2);
@@ -225,23 +226,22 @@ void lex_file_realcode (char const* filename, size_t size = MB * 64) {
 
 _NOINLINE void profile_lexer (char const* filename) {
 	std::string file = kiss::load_text_file(filename);
-	
-	auto start = std::chrono::steady_clock::now();
 
-	//auto timer = Timer::start();
-	{
+	int repeat = 5;
+	
+	//auto start = std::chrono::steady_clock::now();
+	auto timer = Timer::start();
+	for (int i=0; i<repeat; ++i) {
 		Lexer lex{file.c_str()};
 
 		while (lex[0].type != T_EOF) {
 			lex.eat();
 		}
 	}
-	//float time = timer.end();
-	
-	auto end = std::chrono::steady_clock::now();
-	std::chrono::duration<float> dur = end - start;
-
-	auto time = dur.count();
+	float time = timer.end() / (float)repeat;
+	//auto end = std::chrono::steady_clock::now();
+	//std::chrono::duration<float> dur = end - start;
+	//auto time = dur.count() / (float)repeat;
 
 	printf("%30s: %8llu MB  in  %6.2f ms  ->  %6.2f MB/s\n", filename,
 		file.size() / MB,
@@ -250,7 +250,7 @@ _NOINLINE void profile_lexer (char const* filename) {
 }
 
 void lex_profile () {
-	bool create_files = 1;
+	bool create_files = 0;
 
 	if (create_files) {
 		lex_file_simple_tok ("prof_lex0_simple_toks.la");

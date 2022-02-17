@@ -18,7 +18,7 @@
 	#define _DBG_CLEAR(ptr, val, size) memset(ptr, val, size);
 #endif
 
-template <typename T, int N>
+template <typename T, size_t N>
 struct smallvec {
 	T*     data;
 	size_t count;

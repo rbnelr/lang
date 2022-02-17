@@ -29,7 +29,6 @@ inline void my_printf (const char* format, ...) {
 
 	const char* cur = format;
 
-	size_t i = 0;
 	while (*cur != '\0') {
 		if (*cur == '{') {
 			const char* start = ++cur;
@@ -49,10 +48,10 @@ inline void my_printf (const char* format, ...) {
 					throw RuntimeExcept{"runtime error: printf: expected type specifier"};
 				
 				switch (params[0]) {
-					case 'b': print( va_arg(varargs, bool       ) ); break;
-					case 'i': print( va_arg(varargs, int64_t    ) ); break;
-					case 'f': print( va_arg(varargs, double     ) ); break;
-					case 's': print( va_arg(varargs, char const*) ); break;
+					case 'b': print( (bool)va_arg(varargs, int        ) ); break;
+					case 'i': print(       va_arg(varargs, int64_t    ) ); break;
+					case 'f': print(       va_arg(varargs, double     ) ); break;
+					case 's': print(       va_arg(varargs, char const*) ); break;
 					default:
 						throw RuntimeExcept{"runtime error: printf: unknown type specifier"};
 				}
@@ -104,9 +103,6 @@ struct BuiltinFuncBuf {
 		func->src = SourceRange{}; // no source text to point to
 		func->ident = name;
 
-		int argi = 0;
-		int reti = 0;
-
 		auto get_args = [] (std::initializer_list<BuiltinArg>& args, AST_vardecl* out, AST_vardecl** out_ptrs) -> arrview<AST_vardecl*> {
 			size_t i = 0;
 
@@ -145,9 +141,9 @@ struct BuiltinFuncBuf {
 	}
 };
 
-inline BuiltinFuncBuf _printf    { "printf"   , my_printf, {{"format", pTY_STR},{"args"}}, {} };
-inline BuiltinFuncBuf _timer     { "timer"    , timer    , {}, {{"timestamp", pTY_INT}} };
-inline BuiltinFuncBuf _timer_end { "timer_end", timer_end, {{"start_timestamp", pTY_INT}},{{"period", pTY_FLT}} };
+inline BuiltinFuncBuf _printf    { "printf"   , (void*)my_printf, {{"format", pTY_STR},{"args"}}, {} };
+inline BuiltinFuncBuf _timer     { "timer"    , (void*)timer    , {}, {{"timestamp", pTY_INT}} };
+inline BuiltinFuncBuf _timer_end { "timer_end", (void*)timer_end, {{"start_timestamp", pTY_INT}},{{"period", pTY_FLT}} };
 
 inline AST_funcdef* BUILTIN_FUNCS[] = {
 	&_printf   .fdef,

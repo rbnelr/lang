@@ -20,15 +20,16 @@ union Value {
 
 inline void dbg_print (TypeClass tclass, Value const& val) {
 	switch (tclass) {
-		case TY_BOOL: case TY_INT:
+		case TY_BOOL: case TY_INT: {
 			printf("%lli", val.i);
-			break;
-		case TY_FLT:
+		} break;
+		case TY_FLT: {
 			printf("%f", val.f);
-			break;
+		} break;
 		case TY_STR: {
 			auto str = escape_string_capped(val.str);
 			printf("\"%s\"", str.c_str());
 		} break;
+		INVALID_DEFAULT;
 	}
 }

@@ -612,20 +612,6 @@ struct LLVM_gen {
 		case A_ASSIGNOP: {
 			auto* op = (AST_binop*)ast;
 
-			auto codegen_assignment = [this] (AST_binop* op, AST* lhs, AST* rhs) {
-				// eval lhs first (it's a lvalue, so a ptr)
-				Value lhs_val = codegen(lhs);
-				// eval rhs
-				llvm::Value* rhs_val = codegen_rval(rhs);
-
-				if (op->op != OP_ASSIGN) {
-					// eval binary operator and assign to lhs
-					rhs_val = codegen_binop(op->op, load_value(lhs_val), rhs_val, lhs, rhs);
-				}
-				
-				store_value(lhs_val, rhs_val);
-			};
-
 			if (op->lhs->kind == A_EXPR_LIST || op->rhs->kind == A_EXPR_LIST) {
 
 				// a, b += c, d  not allowed
@@ -772,7 +758,7 @@ struct LLVM_gen {
 			if (op->op == OP_MEMBER) {
 				assert(op->rhs->kind == A_VAR);
 
-				auto* struc = (AST_structdef*)op->lhs->type.ty->decl;
+				//auto* struc = (AST_structdef*)op->lhs->type.ty->decl;
 				auto* memb = (AST_var*)op->rhs;
 				assert(memb->decl != nullptr);
 
@@ -857,8 +843,6 @@ struct LLVM_gen {
 			// following code will be in cont block
 			begin_basic_block(cont_block);
 			
-			bool rval = aif->type.ty && aif->type.rval;
-
 			// normal if-else
 			if (aif->kind != A_SELECT) {
 				return {};

@@ -3,8 +3,13 @@
 #include "types.hpp"
 
 template <typename... Args>
-[[noreturn]] inline void SYNTAX_ERROR_AFTER (Lexer& tok, const char* format, Args... args) {
-	_ERROR("syntax error", SourceRange::after_tok(tok[-1].src), format, std::make_format_args(args...));
+[[noreturn]] _NOINLINE inline void SYNTAX_ERROR_AFTER (Lexer& tok, const char* format, ...) {
+	va_list vl;
+	va_start(vl, format);
+	auto str = vprints(format, vl);
+	va_end(vl);
+
+	_ERROR("syntax error", SourceRange::after_tok(tok[-1].src), std::move(str));
 }
 
 void dbg_print (AST* node, int depth) {
@@ -280,8 +285,10 @@ struct Parser {
 			case T_LITERAL_FLT:
 			case T_LITERAL_STR:
 				return true;
+
+			default:
+				return false;
 		}
-		return false;
 	}
 	AST* atom () {
 		switch (tok[0].type) {
@@ -716,8 +723,10 @@ struct Parser {
 	// or <assignment_or_expression>;
 	// or ;   -> empty statement, which does nothing
 	AST* statement () {
-		// non-statments (not followed by ';')
+		AST* statement;
 		switch (tok[0].type) {
+			
+		//// non-statments (not followed by ';')
 			// nested block
 			case T_BLOCK_OPEN: 
 				return block();
@@ -741,11 +750,8 @@ struct Parser {
 			// function declaration
 			case T_FUNC:
 				return function_def();
-		}
-		
-		AST* statement;
-		// statments followed by ';'
-		switch (tok[0].type) {
+
+		////statments followed by ';'
 			case T_RETURN: {
 				statement = return_statement();
 			} break;
@@ -831,7 +837,7 @@ void parse (AST_Module& modl, const char* src) {
 	modl.ast = parser.file();
 
 #if TRACY_ENABLE
-	auto str = std::format("AST nodes: {}", ast_nodes);
+	auto str = prints("AST nodes: %llu", ast_nodes);
 	ZoneText(str.data(), str.size());
 #endif
 

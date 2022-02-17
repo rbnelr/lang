@@ -11,6 +11,8 @@ struct ErrorSource {
 	const char*  errtype;
 	SourceRange  src;
 	std::string  msg;
+
+	//ErrorSource (const char* errtype, SourceRange src, std::string&& msg): errtype{errtype}, src{src}, msg{msg} {}
 	
 	static inline int tab_spaces = 4;
 
@@ -47,7 +49,7 @@ struct ErrorSource {
 
 			int range_start = (int) src.start_charno;
 			int range_end   = (int)(src.start_charno + src.length);
-			int range_arrow = (int)(src.start_charno + src.arrow);
+			int range_arrow = (int)(src.start_charno); //  + src.arrow
 
 			// fill up source with the source line truncated to CONSOLE_WIDTH characters and with tabs turned into spaces
 			// fill up arrow with the ^~~~ indicator of the src range, where it actually corresponds with the source in terms of tabs
@@ -108,6 +110,10 @@ struct CompilerExcept {
 	ErrorSource              err;
 	smallvec<ErrorSource, 8> notes;
 
+	CompilerExcept (ErrorSource err, std::initializer_list<ErrorSource> notes = {}): err{err}, notes{notes} {
+		
+	}
+
 	void print (char const* filename) {
 		err.print(filename, CONCOL_ERR, CONCOL_ERR_SRC);
 
@@ -116,17 +122,27 @@ struct CompilerExcept {
 	}
 };
 
-[[noreturn]] inline void _ERROR (const char* errtype, SourceRange const& src, const char* format, const std::format_args _Args) {
-	throw CompilerExcept{{ errtype, src, std::vformat(format, _Args) }};
+[[noreturn]] inline void _ERROR (const char* errtype, SourceRange const& src, std::string&& msg) {
+	throw CompilerExcept{{ errtype, src, std::move(msg) }};
 }
 
 template <typename... Args>
-[[noreturn]] inline void SYNTAX_ERROR (SourceRange const& src, const char* format, Args... args) {
-	_ERROR("syntax error", src, format, std::make_format_args(args...));
+[[noreturn]] _NOINLINE inline void SYNTAX_ERROR (SourceRange const& src, const char* format, ...) {
+	va_list vl;
+	va_start(vl, format);
+	auto str = vprints(format, vl);
+	va_end(vl);
+
+	_ERROR("syntax error", src, std::move(str));
 }
 template <typename... Args>
-[[noreturn]] inline void ERROR (SourceRange const& src, const char* format, Args... args) {
-	_ERROR("error", src, format, std::make_format_args(args...));
+[[noreturn]] _NOINLINE inline void ERROR (SourceRange const& src, const char* format, ...) {
+	va_list vl;
+	va_start(vl, format);
+	auto str = vprints(format, vl);
+	va_end(vl);
+
+	_ERROR("error", src, std::move(str));
 }
 
 struct RuntimeExcept {

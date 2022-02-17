@@ -229,8 +229,8 @@ inline constexpr const char* TokenType_char[] = {
 // use this to cut down on the size of this struct a little, since every Token and AST node inludes an instance of this
 // use these saturate functions to avoid wrap around if tokens ever are actually that long (TODO: not tested yet)
 
-inline size_t saturate16 (size_t x) { return x <= UINT32_MAX ? x : UINT32_MAX; }
-inline size_t saturate32 (size_t x) { return x <= UINT16_MAX ? x : UINT16_MAX; }
+//inline size_t saturate16 (size_t x) { return x <= UINT32_MAX ? x : UINT32_MAX; }
+//inline size_t saturate32 (size_t x) { return x <= UINT16_MAX ? x : UINT16_MAX; }
 
 struct SourceRange {
 	// first char as ptr into source (allows me to see things in debugger)
@@ -239,14 +239,14 @@ struct SourceRange {
 	// lineno of start character     (1-based to match common text editors)
 	uint32_t    start_lineno;
 
-	// char index of start character (0-based TODO: also 1-based?)
+	// char index of start character (0-based)
 	uint16_t    start_charno;
 
 	// lengh of string starting from start (saturated on overflow)
 	uint16_t    length;
 
-	// offset of source token relative to start (for binary operators etc.) to show up like ~~~~^~~~~
-	uint16_t    arrow;
+	//// offset of source token relative to start (for binary operators etc.) to show up like ~~~~^~~~~
+	//uint16_t    arrow;
 
 	strview text () const {
 		return strview(start, (size_t)length);
@@ -256,22 +256,25 @@ struct SourceRange {
 		SourceRange r;
 		r.start  = src.start + src.length;
 		r.start_lineno = src.start_lineno;
-		r.start_charno = (uint16_t)saturate16(src.start_charno + src.length);
+		//r.start_charno = (uint16_t)saturate16(src.start_charno + src.length);
+		r.start_charno = (uint16_t)(src.start_charno + src.length);
 		r.length = 1;
-		r.arrow = 0;
+		//r.arrow = 0;
 		return r;
 	}
 
 	static SourceRange range (SourceRange& a, SourceRange& b) {
 		SourceRange r = a;
-		r.length = (uint16_t)saturate16((size_t)(b.start - a.start) + b.length);
-		r.arrow  = 0;
+		//r.length = (uint16_t)saturate16((size_t)(b.start - a.start) + b.length);
+		r.length = (uint16_t)((size_t)(b.start - a.start) + b.length);
+		//r.arrow  = 0;
 		return r;
 	}
 	static SourceRange range_with_arrow (SourceRange& a, SourceRange& arrow, SourceRange& b) {
 		SourceRange r = a;
-		r.length = (uint16_t)saturate16((size_t)(b.start - a.start) + b.length);
-		r.arrow  = (uint16_t)saturate16((size_t)(arrow.start - a.start));
+		//r.length = (uint16_t)saturate16((size_t)(b.start - a.start) + b.length);
+		r.length = (uint16_t)((size_t)(b.start - a.start) + b.length);
+		//r.arrow  = (uint16_t)saturate16((size_t)(arrow.start - a.start));
 		return r;
 	}
 };
@@ -324,8 +327,7 @@ struct Lexer {
 		ZoneScoped;
 
 		Token* src = cur_tok - LOOKBACK;
-		int count = KEEP_TOKENS; // -1 since that one token was outside the window (that's what triggered refill_buf)
-
+		
 		assert(src >= buf && src+KEEP_TOKENS <= buf+BUFSZ);
 
 		memmove(buf, src, KEEP_TOKENS * sizeof(Token));
@@ -340,12 +342,15 @@ struct Lexer {
 	
 	void set_source_range_start (SourceRange* r, char const* start) {
 		r->start        = start;
-		r->start_lineno = (uint32_t)saturate32(cur_lineno                );
-		r->start_charno = (uint16_t)saturate16((size_t)(start - cur_line));
-		r->arrow        = 0;
+		//r->start_lineno = (uint32_t)saturate32(cur_lineno                );
+		//r->start_charno = (uint16_t)saturate16((size_t)(start - cur_line));
+		r->start_lineno = (uint32_t)(cur_lineno                );
+		r->start_charno = (uint16_t)((size_t)(start - cur_line));
+		//r->arrow        = 0;
 	}
 	void set_source_range_len (SourceRange* r, ptrdiff_t len) {
-		r->length       = (uint16_t)saturate16((size_t)len);
+		//r->length       = (uint16_t)saturate16((size_t)len);
+		r->length       = (uint16_t)((size_t)len);
 	}
 
 	SourceRange get_source_range (char const* start, char const* end) {

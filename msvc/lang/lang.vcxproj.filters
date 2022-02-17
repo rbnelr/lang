@@ -124,6 +124,7 @@
     <ClInclude Include="..\..\frontend\keyword_hash.hpp">
       <Filter>frontend</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\profiling.hpp" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="util">

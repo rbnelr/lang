@@ -268,6 +268,7 @@
     <ClInclude Include="..\..\frontend\lexer.hpp" />
     <ClInclude Include="..\..\frontend\types.hpp" />
     <ClInclude Include="..\..\options.hpp" />
+    <ClInclude Include="..\..\profiling.hpp" />
     <ClInclude Include="..\..\util\allocators.hpp" />
     <ClInclude Include="..\..\util\console_colors.hpp" />
     <ClInclude Include="..\..\util\file_io.hpp" />

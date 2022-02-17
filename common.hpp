@@ -27,6 +27,10 @@
 
 using namespace kiss;
 
+inline constexpr size_t KB = (size_t)1024;
+inline constexpr size_t MB = (size_t)1024 * 1024;
+inline constexpr size_t GB = (size_t)1024 * 1024 * 1024;
+inline constexpr size_t TB = (size_t)1024 * 1024 * 1024 * 1024;
 
 ////
 typedef std::string_view strview;

@@ -17,3 +17,6 @@ build_*/*
 
 tracy_traces/*
 *.tracy
+
+# don't include huge source files meant for profiling
+prof_*.la

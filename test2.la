@@ -45,7 +45,7 @@ fib_iter();
 func sqrt (square : int) = (sqrt : int) { 
 	sqrt = -1;
 	for i:=0; i<100; i++ {
-		if i*i == square {
+		if i*i == square {  
 			sqrt = i;
 			break;
 		}

@@ -244,7 +244,7 @@ void Lexer::lex (Token* first_tok, Token* end_tok) {
 			cur += LEN;                             \
 			continue;                               \
 		}
-		
+
 		switch (*cur) {
 
 			case '\0': {
@@ -269,35 +269,35 @@ void Lexer::lex (Token* first_tok, Token* end_tok) {
 			case '*':
 				if (cur[1] == '=') SIMPLE_TOK(T_MULEQ,      2)
 				else               SIMPLE_TOK(T_MUL,        1)
-
+			
 			case '/':
 				if (cur[1] == '=') SIMPLE_TOK(T_DIVEQ,      2)
 				else               SIMPLE_TOK(T_DIV,        1)
-
+			
 			case '%':
 				if (cur[1] == '=') SIMPLE_TOK(T_MODEQ,      2)
 				else               SIMPLE_TOK(T_MOD,        1)
-				
+			
 			case '&':
 				if (cur[1] == '&') SIMPLE_TOK(T_AND,        2)
 				else               SIMPLE_TOK(T_BIT_AND,    1)
-
+			
 			case '|':
 				if (cur[1] == '|') SIMPLE_TOK(T_OR,         2)
 				else               SIMPLE_TOK(T_BIT_OR,     1)
-
+			
 			case '<':
 				if (cur[1] == '=') SIMPLE_TOK(T_LESSEQ,     2)
 				else               SIMPLE_TOK(T_LESS,       1)
-
+			
 			case '>':
 				if (cur[1] == '=') SIMPLE_TOK(T_GREATEREQ,  2)
 				else               SIMPLE_TOK(T_GREATER,    1)
-
+			
 			case '!':
 				if (cur[1] == '=') SIMPLE_TOK(T_NOT_EQUALS, 2)
 				else               SIMPLE_TOK(T_NOT,        1)
-
+			
 			case '=':
 				if (cur[1] == '=') SIMPLE_TOK(T_EQUALS,     2)
 				else               SIMPLE_TOK(T_ASSIGN,     1)
@@ -317,7 +317,7 @@ void Lexer::lex (Token* first_tok, Token* end_tok) {
 			case '}':      SIMPLE_TOK(T_BLOCK_CLOSE,     1)
 			case '[':      SIMPLE_TOK(T_INDEX_OPEN,      1)
 			case ']':      SIMPLE_TOK(T_INDEX_CLOSE,     1)
-			
+
 			IDENT_START_CASES {
 				while (is_ident_c(*cur))
 					cur++; // find end of identifier

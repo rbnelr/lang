@@ -9,10 +9,12 @@
 
 #include "backend_llvm/llvm_backend.hpp"
 
+#include "profiling.hpp"
+
 #define TRACY_REPEAT 1000
 
 void set_options () {
-	options.filename  = "test_100k.la";
+	options.filename  = "test6.la";
 
 	options.optimized = 1;
 
@@ -61,19 +63,19 @@ bool compile () {
 				semantic_analysis(modl);
 			}
 
-			//{
-			//	ZoneScopedNC("backend", tracy::Color::Burlywood);
-			//
-			//	llvm::Module* llvm_modl = llvm_gen_module(modl);
-			//	defer( llvm_free_module(llvm_modl); );
-			//
-			//	//#ifndef TRACY_ENABLE
-			//	{
-			//		ZoneScopedN("llvm_jit_and_exec");
-			//		llvm_jit_and_exec(llvm_modl);
-			//	}
-			//	//#endif
-			//}
+			{
+				ZoneScopedNC("backend", tracy::Color::Burlywood);
+			
+				llvm::Module* llvm_modl = llvm_gen_module(modl);
+				defer( llvm_free_module(llvm_modl); );
+			
+				//#ifndef TRACY_ENABLE
+				{
+					ZoneScopedN("llvm_jit_and_exec");
+					llvm_jit_and_exec(llvm_modl);
+				}
+				//#endif
+			}
 		}
 		catch (CompilerExcept& ex) {
 			ex.print(modl.filename.c_str());
@@ -96,6 +98,7 @@ bool compile () {
 
 	return true;
 }
+
 
 _NOINLINE void fib (int n) {
 	int a = 0;
@@ -141,6 +144,9 @@ _NOINLINE void pascal_tri (int rows) {
 int main (int argc, const char** argv) {
 	//fib(50);
 	//pascal_tri(13);
+	
+	//profiling::lex_profile();
+	//return 0;
 
 	enable_console_ansi_color_codes();
 

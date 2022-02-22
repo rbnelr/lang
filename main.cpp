@@ -68,12 +68,12 @@ bool compile () {
 			
 				auto llvm_modl = llvm_gen_module(modl);
 				
-				//#ifndef TRACY_ENABLE
+				#ifndef TRACY_ENABLE
 				{
 					ZoneScopedN("llvm_jit_and_exec");
-					llvm_jit_and_exec(std::move(llvm_modl));
+					llvm_jit_and_exec(llvm_modl);
 				}
-				//#endif
+				#endif
 			}
 		}
 		catch (CompilerExcept& ex) {

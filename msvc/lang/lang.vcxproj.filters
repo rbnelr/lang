@@ -51,9 +51,6 @@
     <ClCompile Include="..\..\util\smhasher\MurmurHash3.cpp">
       <Filter>util\smhasher</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\llvm_test.cpp">
-      <Filter>backend\llvm</Filter>
-    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\..\common\tracy\Tracy.hpp">

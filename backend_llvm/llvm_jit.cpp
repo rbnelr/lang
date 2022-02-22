@@ -6,91 +6,25 @@
 #include "common.hpp"
 #include "frontend/builtins.hpp"
 
-void llmv_test (std::unique_ptr<llvm::Module> modl, std::unique_ptr<llvm::LLVMContext> ctx);
+using namespace llvm;
+using namespace llvm::orc;
 
 struct JIT {
 
-//// Resolver (why do I need this? possibly once I combine multiple modules?)
-	class Resolver : public llvm::JITSymbolResolver {
-	public:
+	llvm::ExitOnError     ExitOnErr;
 
-		// TODO: is there a way to simply declare my builtins as symbols so this entire Resolver class would become unnesassary?
-		//       or is this generally needed to link multiple modules together?
-		std::map<llvm::StringRef, llvm::JITTargetAddress> external_funcs;
+	Triple                         TT;
 
-		Resolver () {}
-		virtual ~Resolver() = default;
-		
-		// this seems to be called for function symbols that are not in the code
-		// which includes my builtin functions
-		// TODO: is there a way to simply declare my builtins as external (to be linked) functions?
+	std::unique_ptr<TargetMachine> TM;
 
-		/// Returns the fully resolved address and flags for each of the given
-		///        symbols.
-		///
-		/// This method will return an error if any of the given symbols can not be
-		/// resolved, or if the resolution process itself triggers an error.
-		virtual void lookup(const LookupSet &Symbols,
-							OnResolvedFunction OnResolved) {
-
-			std::map<llvm::StringRef, llvm::JITEvaluatedSymbol> results;
-
-			for (auto& Sym : Symbols) {
-				auto it = external_funcs.find(Sym);
-				if (it != external_funcs.end()) {
-					results.emplace(Sym, llvm::JITEvaluatedSymbol{
-						it->second,
-						llvm::JITSymbolFlags::Absolute | // TODO: do I need this?
-						llvm::JITSymbolFlags::Callable
-					});
-				}
-				else {
-					assert(false);
-				}
-			}
-
-			OnResolved(results);
-		}
-
-		// No idea what this is supposed to do, I always seem to be called with an empty LookupSet
-
-		/// Returns the subset of the given symbols that should be materialized by
-		/// the caller. Only weak/common symbols should be looked up, as strong
-		/// definitions are implicitly always part of the caller's responsibility.
-		virtual llvm::Expected<LookupSet>
-		getResponsibilitySet(const LookupSet &Symbols) {
-			LookupSet Result;
-			assert(Symbols.size() == 0);
-			return Result;
-		}
-
-		/// Specify if this resolver can return valid symbols with zero value.
-		//virtual bool allowsZeroSymbols() { return false; }
-
-	};
-	void register_builtins () {
-		for (auto& builtin : BUILTIN_FUNCS) {
-			resolver.external_funcs.emplace(SR(builtin->ident), (llvm::JITTargetAddress)builtin->builtin_func_ptr);
-		}
-	}
-
-////
-	llvm::ExitOnError ExitOnErr;
-
-	Resolver                             resolver;
-	SectionMemoryManager                 MM;
+	std::unique_ptr<LLJIT>         jit;
 	
-	llvm::RuntimeDyld                    dyld;
+	legacy::PassManager        mem2reg;
+	legacy::PassManager        optimize;
+	legacy::PassManager        MCgen;
 
-	llvm::Triple                         TT;
-
-	std::unique_ptr<llvm::TargetMachine> TM;
-
-	llvm::legacy::PassManager mem2reg;
-	llvm::legacy::PassManager optimize;
-	llvm::legacy::PassManager MCgen;
 	
-	JIT (): resolver{}, MM{}, dyld{MM, resolver} {
+	JIT () {
 		ZoneScoped;
 
 		// TODO: I can't pass -debug to my own app and expect LLVM to set this flag can I?
@@ -104,33 +38,60 @@ struct JIT {
 		//	llvm::setCurrentDebugTypes(dbg_types, ARRLEN(dbg_types));
 	#endif
 
-		llvm::InitializeNativeTarget();
-		llvm::InitializeNativeTargetAsmPrinter();
-		llvm::InitializeNativeTargetAsmParser();
-		llvm::InitializeNativeTargetDisassembler();
+		InitializeNativeTarget();
+		InitializeNativeTargetAsmPrinter();
+		InitializeNativeTargetAsmParser();
+		InitializeNativeTargetDisassembler();
 
-		register_builtins();
+		setup_jit();
 
-		auto triple_str = llvm::sys::getProcessTriple();
-		TT = llvm::Triple(triple_str);
-
-		llvm::orc::JITTargetMachineBuilder JTMB(TT);
-		
-		// This might be required to get normal calls in the code, but currently the relocation asserts with "Relocation type not implemented yet!"
-		JTMB.setCodeModel(llvm::CodeModel::Small);
-		//JTMB.setRelocationModel(llvm::Reloc::PIC_);
-
-		TM = llvm::cantFail( JTMB.createTargetMachine() );
-
-	////
 		// Opt level (for TM->addPassesToEmitMC() ???)
 		TM->setOptLevel(llvm::CodeGenOpt::Default);
 
 		setup_mem2reg();
 		setup_optimize();
 		//setup_MCgen();
+
+		register_builtins();
+	}
+
+	void setup_jit () {
+		ZoneScoped;
+
+		//auto triple_str = llvm::sys::getProcessTriple();
+		std::string triple_str = "x86_64-pc-windows-msvc-elf";
+		auto TT = Triple(triple_str);
+		
+		JITTargetMachineBuilder JTMB(TT);
+		JTMB.setCodeModel(CodeModel::Small);
+		JTMB.setRelocationModel(Reloc::PIC_);
+
+		TM = ExitOnErr(JTMB.createTargetMachine());
+
+		LLJITBuilder JB;
+		JB.setJITTargetMachineBuilder(std::move(JTMB));
+		JB.setObjectLinkingLayerCreator([&](ExecutionSession& ES, const Triple& TT) {
+			return std::make_unique<ObjectLinkingLayer>(ES, std::make_unique<jitlink::InProcessMemoryManager>());
+		});
+		jit = ExitOnErr(JB.create());
+	}
+
+	void register_builtins () {
+		ZoneScoped;
+
+		SymbolMap builtin_syms;
+		for (auto& bi : BUILTIN_FUNCS) {
+			auto name = jit->mangleAndIntern(SR(bi->ident));
+			auto symb  = JITEvaluatedSymbol{
+				(JITTargetAddress)bi->builtin_func_ptr,
+				JITSymbolFlags::Absolute | JITSymbolFlags::Callable
+			};
+			builtin_syms.insert({ name, symb });
+		}
+		jit->getMainJITDylib().define(absoluteSymbols(std::move(builtin_syms)));
 	}
 	
+
 	void setup_mem2reg () {
 		ZoneScoped;
 		
@@ -158,12 +119,12 @@ struct JIT {
 		optimize.add(llvm::createFlattenCFGPass()); //Flatten the control flow graph.
 	}
 
-	// TODO: why is the result stream part of the passes manager?
+	// TODO: why is the result-stream part of the passes manager?
 	// if this was not the case we could easily prepare the PassManager once,
 	// and compile with them multiple times
 	void setup_MCgen (llvm::raw_svector_ostream& ObjStream) {
 		ZoneScoped;
-
+		
 		llvm::MCContext* Ctx;
 		if (TM->addPassesToEmitMC(MCgen, Ctx, ObjStream)) {
 			ExitOnErr( llvm::make_error<llvm::StringError>(
@@ -172,8 +133,11 @@ struct JIT {
 			);
 		}
 	}
-		
+	
+
 	void run_mem2reg (llvm::Module* modl) {
+		ZoneScoped;
+
 		mem2reg.run(*modl);
 
 		if (options.print_ir) {
@@ -182,6 +146,8 @@ struct JIT {
 		}
 	}
 	void run_optimize (llvm::Module* modl) {
+		ZoneScoped;
+
 		optimize.run(*modl);
 		
 		if (options.print_ir) {
@@ -191,37 +157,33 @@ struct JIT {
 	}
 
 	void run_MCgen (llvm::Module* modl) {
-
-		llvm::SmallVector<char, 0> ObjBufferSV;
-		llvm::raw_svector_ostream ObjStream(ObjBufferSV);
+		ZoneScoped;
+		
+		// can't really do this upfront because of LLVM API weirdness
+		// SmallVector gets stored in raw_svector_ostream (which is not just a downcasted ref to SmallVector)
+		// then this has to be passed into addPassesToEmitMC
+		// later PassManager can be run, only after which MCgen_ObjBufferSV and ObjStream can go out of scope
+		// furthermore SmallVector then has to be _moved_ into SmallVectorMemoryBuffer to call addObjectFile
+		// what a mess of ownership and lifetimes for no apparent reason...
+		// > PassManager should not own its output buffer, especially not during setup, why not just pass it in when run?
+		//   and why should using a jitted buffer require taking ownership!? (and then destroying it)
+		llvm::SmallVector<char, 0> MCgen_ObjBufferSV;
+		llvm::raw_svector_ostream ObjStream( MCgen_ObjBufferSV );
 
 		setup_MCgen(ObjStream);
-		
+
 		MCgen.run(*modl);
 
-		llvm::SmallVectorMemoryBuffer ObjBuffer {
-			std::move(ObjBufferSV),
+		auto ObjBuffer = std::make_unique<llvm::SmallVectorMemoryBuffer>(
+			std::move(MCgen_ObjBufferSV),
 			modl->getModuleIdentifier() + "-jitted-objectbuffer"
-		};
-			
-		auto Obj = ExitOnErr(
-			llvm::object::ObjectFile::createObjectFile(ObjBuffer.getMemBufferRef())
 		);
 		
-		std::unique_ptr<llvm::RuntimeDyld::LoadedObjectInfo> loadedObj;
-		{
-			ZoneScopedN("dyld.loadObject()");
-			loadedObj = dyld.loadObject(*Obj);
-		}
-		
-		{
-			ZoneScopedN("dyld.finalizeWithMemoryManagerLocking()");
-			dyld.finalizeWithMemoryManagerLocking(); // calls resolveRelocations
-		}
+		ExitOnErr(jit->addObjectFile(std::move(ObjBuffer)));
 
-		if (options.print_code) {
-			print_llvm_disasm(TT, dyld, *Obj, *loadedObj, MM);
-		}
+		//if (options.print_code) {
+		//	print_llvm_disasm(TT, dyld, *Obj, *loadedObj, MM);
+		//}
 	}
 
 	void compile_and_load (llvm::Module* modl) {
@@ -244,7 +206,7 @@ struct JIT {
 		print_seperator("Execute JITed LLVM code:");
 
 		typedef void (*main_fp)();
-		auto fptr = (main_fp)dyld.getSymbol("main").getAddress();
+		auto fptr = (main_fp)ExitOnErr(jit->lookup("main")).getAddress();
 		if (fptr)
 			fptr();
 		else
@@ -259,18 +221,9 @@ struct JIT {
 	}
 };
 
-void llvm_jit_and_exec (Module modl) {
+void llvm_jit_and_exec (llvmModule& modl) {
 	ZoneScoped;
 
-	llmv_test(
-		std::unique_ptr<llvm::Module>(modl.modl),
-		std::unique_ptr<llvm::LLVMContext>(modl.ctx)
-	);
-
-	modl.modl = nullptr;
-	modl.ctx = nullptr;
-
-	//JIT jit {};
-	//jit.modl = std::move(modl);
-	//jit.jit_and_execute();
+	JIT jit {};
+	jit.jit_and_execute(modl.modl);
 }

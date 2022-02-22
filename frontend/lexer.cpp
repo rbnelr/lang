@@ -146,6 +146,8 @@ struct _Keyword {
 #include "keyword_hash.hpp"
 
 void Lexer::lex (Token* first_tok, Token* end_tok) {
+	ZoneScoped;
+
 	const char* cur = cur_char; // copy into local to help compiler avoid reloading this during the loop
 
 	Token* out_tok = first_tok;

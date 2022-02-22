@@ -20,7 +20,7 @@ inline _IDFormStrbuf format_id (size_t id) {
 
 #define PROFILE_DUPLICATE_FUNCS 0
 
-Module::~Module () {
+llvmModule::~llvmModule () {
 	if (modl) {
 		delete modl;
 		delete ctx;
@@ -1038,7 +1038,7 @@ struct LLVM_gen {
 	}
 };
 
-Module llvm_gen_module (AST_Module& modl) {
+llvmModule llvm_gen_module (AST_Module& modl) {
 	ZoneScoped;
 
 	LLVM_gen llvm_gen = {
@@ -1046,5 +1046,5 @@ Module llvm_gen_module (AST_Module& modl) {
 	};
 	llvm_gen.generate(modl.filename);
 
-	return Module( llvm_gen.ctx, llvm_gen.modl ); // pass ownership to caller
+	return llvmModule( llvm_gen.ctx, llvm_gen.modl ); // pass ownership to caller
 }

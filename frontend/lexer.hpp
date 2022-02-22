@@ -324,8 +324,6 @@ struct Lexer {
 	// copy visible window (LOOKBACK - LOOKAHEAD) from end of buffer to start of buffer
 	// and fill rest of buffer with new tokens
 	_NOINLINE void refill_buf () {
-		ZoneScoped;
-
 		Token* src = cur_tok - LOOKBACK;
 		
 		assert(src >= buf && src+KEEP_TOKENS <= buf+BUFSZ);

@@ -227,11 +227,13 @@ void lex_file_realcode (char const* filename, size_t size = MB * 64) {
 _NOINLINE void profile_lexer (char const* filename) {
 	std::string file = kiss::load_text_file(filename);
 
-	int repeat = 5;
+	int repeat = 20;
 	
 	//auto start = std::chrono::steady_clock::now();
 	auto timer = Timer::start();
 	for (int i=0; i<repeat; ++i) {
+		ZoneScopedN("profile_lexer");
+			
 		Lexer lex{file.c_str()};
 
 		while (lex[0].type != T_EOF) {
@@ -263,12 +265,12 @@ void lex_profile () {
 
 	print_seperator("profiling files");
 	
-	profile_lexer("prof_lex0_simple_toks.la");
-	profile_lexer("prof_lex1_whitespace_comm.la");
-	profile_lexer("prof_lex2_whitespace.la");
-	profile_lexer("prof_lex3_numbers.la");
-	profile_lexer("prof_lex4_identifiers.la");
-	profile_lexer("test_100k.la");
+	//profile_lexer("prof_lex0_simple_toks.la");
+	//profile_lexer("prof_lex1_whitespace_comm.la");
+	//profile_lexer("prof_lex2_whitespace.la");
+	//profile_lexer("prof_lex3_numbers.la");
+	//profile_lexer("prof_lex4_identifiers.la");
+	//profile_lexer("test_100k.la");
 	profile_lexer("prof_lex5_realcode.la");
 }
 

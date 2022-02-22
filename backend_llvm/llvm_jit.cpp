@@ -6,6 +6,8 @@
 #include "common.hpp"
 #include "frontend/builtins.hpp"
 
+void llmv_test (std::unique_ptr<llvm::Module> modl, std::unique_ptr<llvm::LLVMContext> ctx);
+
 struct JIT {
 
 //// Resolver (why do I need this? possibly once I combine multiple modules?)
@@ -84,7 +86,6 @@ struct JIT {
 
 	std::unique_ptr<llvm::TargetMachine> TM;
 
-	
 	llvm::legacy::PassManager mem2reg;
 	llvm::legacy::PassManager optimize;
 	llvm::legacy::PassManager MCgen;
@@ -116,9 +117,8 @@ struct JIT {
 		llvm::orc::JITTargetMachineBuilder JTMB(TT);
 		
 		// This might be required to get normal calls in the code, but currently the relocation asserts with "Relocation type not implemented yet!"
-		//JTMB.setCodeModel(llvm::CodeModel::Small);
-		
-		//JTMB.setRelocationModel(llvm::Reloc::Static);
+		JTMB.setCodeModel(llvm::CodeModel::Small);
+		//JTMB.setRelocationModel(llvm::Reloc::PIC_);
 
 		TM = llvm::cantFail( JTMB.createTargetMachine() );
 
@@ -259,9 +259,18 @@ struct JIT {
 	}
 };
 
-void llvm_jit_and_exec (llvm::Module* modl) {
+void llvm_jit_and_exec (Module modl) {
 	ZoneScoped;
 
-	JIT jit {};
-	jit.jit_and_execute(modl);
+	llmv_test(
+		std::unique_ptr<llvm::Module>(modl.modl),
+		std::unique_ptr<llvm::LLVMContext>(modl.ctx)
+	);
+
+	modl.modl = nullptr;
+	modl.ctx = nullptr;
+
+	//JIT jit {};
+	//jit.modl = std::move(modl);
+	//jit.jit_and_execute();
 }

@@ -55,6 +55,36 @@ func sqrt (square : int) = (sqrt : int) {
 
 sqrt(625); // 25^2
 
+func pascal_tri (rows : int) {
+	func get_cell (i : int, row : int) = (result : int) {
+		if i < 0 || i > row {
+			return 0;
+		}
+		if row == 0 {
+			return 1;
+		}
+		a := get_cell(i-1, row-1);
+		b := get_cell(i  , row-1);
+		
+		return a + b;
+	}
+	for row:=0; row < rows; row++ {
+
+		for i:=0; i < rows-1 - row; i++ {
+			printf("  ");
+		}
+
+		for i:=0; i<=row; i++ {
+			val := get_cell(i, row);
+			printf("{^3i} ", val);
+		}
+
+		printf("\n");
+	}
+}
+
+pascal_tri(13);
+
 /*
 func test (a : int, b : int) = (ret : int) {
 	//a := 5;

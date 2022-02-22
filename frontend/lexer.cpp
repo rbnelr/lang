@@ -166,14 +166,19 @@ void Lexer::lex (Token* first_tok, Token* end_tok) {
 	};
 
 	for (;;) {
+		// branchless fast path for single spaces between tokens
+		cur += *cur == ' ' ? 1 : 0;
+
 		switch (*cur) {
 			// skip whitespace
-			case '\n': case '\r': {
-				newline();
-				continue;
-			}
+
 			case ' ': case '\t': {
 				cur++;
+				continue;
+			}
+
+			case '\n': case '\r': {
+				newline();
 				continue;
 			}
 			

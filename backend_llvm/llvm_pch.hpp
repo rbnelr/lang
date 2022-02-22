@@ -50,8 +50,12 @@
 //#include "llvm/ExecutionEngine/Orc/RTDyldObjectLinkingLayer.h"
 #include "llvm/ExecutionEngine/SectionMemoryManager.h" // warning C4244: 'initializing': conversion from '_Ty' to '_Ty2', possible loss of data
 
+
+#include "llvm/ExecutionEngine/JITLink/JITLink.h"
+
 ////
 #include "llvm-c/Disassembler.h"
+
 
 #pragma warning(pop)
 

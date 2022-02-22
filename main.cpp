@@ -14,7 +14,7 @@
 #define TRACY_REPEAT 1000
 
 void set_options () {
-	options.filename  = "test6.la";
+	options.filename  = "test2.la";
 
 	options.optimized = 1;
 
@@ -66,13 +66,12 @@ bool compile () {
 			{
 				ZoneScopedNC("backend", tracy::Color::Burlywood);
 			
-				llvm::Module* llvm_modl = llvm_gen_module(modl);
-				defer( llvm_free_module(llvm_modl); );
-			
+				auto llvm_modl = llvm_gen_module(modl);
+				
 				//#ifndef TRACY_ENABLE
 				{
 					ZoneScopedN("llvm_jit_and_exec");
-					llvm_jit_and_exec(llvm_modl);
+					llvm_jit_and_exec(std::move(llvm_modl));
 				}
 				//#endif
 			}

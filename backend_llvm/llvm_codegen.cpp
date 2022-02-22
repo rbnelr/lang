@@ -20,19 +20,22 @@ inline _IDFormStrbuf format_id (size_t id) {
 
 #define PROFILE_DUPLICATE_FUNCS 0
 
-// NOTE: even though context is only used in  struct LLVM_gen
-// It actually needs to be kept around until the module is compiled (? or maybe even after that?) 
-// So just make it global for now, better approach would be to have a llvm context struct that contains a JIT compiler and JIT executor with independent lifetimes
-llvm::LLVMContext ctx;
-
+Module::~Module () {
+	if (modl) {
+		delete modl;
+		delete ctx;
+	}
+}
 
 struct LLVM_gen {
 	arrview<AST_funcdef*>   funcdefs;
 	arrview<AST_structdef*> structdefs;
 
-	llvm::Module* modl; // owned by caller
-	
-	llvm::IRBuilder<llvm::NoFolder> build{ctx};
+	llvm::LLVMContext* ctx  = new llvm::LLVMContext();
+	llvm::Module*      modl = new llvm::Module("<main>", *ctx);
+
+	typedef llvm::IRBuilder<llvm::NoFolder> Builder;
+	Builder build = Builder( *ctx );
 	
 	//std::unique_ptr<llvm::DIBuilder> di_build;
 
@@ -55,9 +58,6 @@ struct LLVM_gen {
 	
 	void generate (strview filename) {
 		ZoneScoped;
-
-		modl = new llvm::Module("<main>", ctx);
-		modl->setSourceFileName(SR(filename));
 
 		/*
 		di_build = std::make_unique<llvm::DIBuilder>(*modl);
@@ -87,7 +87,13 @@ struct LLVM_gen {
 
 		// declare functions declared in source
 		for (auto* funcdef : funcdefs) {
-			declare_function(funcdef);
+			
+			auto linkage = llvm::Function::InternalLinkage;
+			
+			if (funcdef->ident == "main")
+				linkage = llvm::Function::ExternalLinkage;
+
+			declare_function(funcdef, linkage);
 		}
 
 		// now that all callable functions are declared
@@ -182,8 +188,8 @@ struct LLVM_gen {
 
 	Value get_ret_struct_ptr (AST_funcdef* fdef, AST_vardecl* ret) {
 		llvm::Value* indices[] = {
-			llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0),
-			llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), ret->llvm_GEP_idx),
+			llvm::ConstantInt::get(llvm::Type::getInt32Ty(*ctx), 0),
+			llvm::ConstantInt::get(llvm::Type::getInt32Ty(*ctx), ret->llvm_GEP_idx),
 		};
 		auto* ptr = build.CreateInBoundsGEP(fdef->ret_struct->llvm_ty, fdef->llvm_ret_struct, indices, SR(ret->ident));
 
@@ -225,7 +231,7 @@ struct LLVM_gen {
 		// but in debug mode we actually want to keep all code to allow things like "set next statement"
 
 		// Create block that is unreachable
-		auto* block = llvm::BasicBlock::Create(ctx, "unreach");
+		auto* block = llvm::BasicBlock::Create(*ctx, "unreach");
 		begin_basic_block(block);
 	}
 	
@@ -233,10 +239,10 @@ struct LLVM_gen {
 	llvm::Type* map_type (Typeref& type) {
 		switch (type.ty->tclass) {
 			//case TY_VOID: return llvm::Type::getVoidTy(ctx);
-			case TY_BOOL: return llvm::Type::getInt1Ty(ctx);
-			case TY_INT:  return llvm::Type::getInt64Ty(ctx);
-			case TY_FLT:  return llvm::Type::getDoubleTy(ctx);
-			case TY_STR:  return llvm::Type::getInt8PtrTy(ctx);
+			case TY_BOOL: return llvm::Type::getInt1Ty(*ctx);
+			case TY_INT:  return llvm::Type::getInt64Ty(*ctx);
+			case TY_FLT:  return llvm::Type::getDoubleTy(*ctx);
+			case TY_STR:  return llvm::Type::getInt8PtrTy(*ctx);
 
 			case TY_STRUCT: {
 				assert(type.ty->decl && type.ty->decl->kind == A_STRUCTDEF);
@@ -272,7 +278,7 @@ struct LLVM_gen {
 			member->llvm_GEP_idx = idx++;
 		}
 
-		struc->llvm_ty = llvm::StructType::create(ctx, elements, SR(struc->ident));
+		struc->llvm_ty = llvm::StructType::create(*ctx, elements, SR(struc->ident));
 	}
 
 	llvm::Value* codegen_unary (OpType op, llvm::Value* operand, AST* operand_ast) {
@@ -385,15 +391,15 @@ struct LLVM_gen {
 		// TODO: do this lazily once they are actually called?
 
 		for (auto* builtin : BUILTIN_FUNCS) {
-			declare_function(builtin);
+			declare_function(builtin, llvm::Function::InternalLinkage);
 		}
 	}
 	
-	void declare_function (AST_funcdef* fdef) {
+	void declare_function (AST_funcdef* fdef, llvm::GlobalValue::LinkageTypes linkage) {
 		// returns
 		llvm::Type* ret_ty;
 		if (fdef->rets.count == 0)
-			ret_ty = llvm::Type::getVoidTy(ctx);
+			ret_ty = llvm::Type::getVoidTy(*ctx);
 		else if (fdef->rets.count == 1)
 			ret_ty = map_type(fdef->rets[0]->type);
 		else
@@ -430,11 +436,11 @@ struct LLVM_gen {
 	#if PROFILE_DUPLICATE_FUNCS
 		llvm::Function* func;
 		if (_is_builtin)
-			func = llvm::Function::Create(func_ty, llvm::Function::InternalLinkage, SR(fdef->ident), *modl);
+			func = llvm::Function::Create(func_ty, linkage, SR(fdef->ident), *modl);
 		else
-			func = llvm::Function::Create(func_ty, llvm::Function::InternalLinkage, llvm::Twine(std::format("_{}_", _dupl_func_i)) + SR(fdef->ident), *modl);
+			func = llvm::Function::Create(func_ty, linkage, llvm::Twine(std::format("_{}_", _dupl_func_i)) + SR(fdef->ident), *modl);
 	#else
-		auto* func = llvm::Function::Create(func_ty, llvm::Function::InternalLinkage, SR(fdef->ident), *modl);
+		auto* func = llvm::Function::Create(func_ty, linkage, SR(fdef->ident), *modl);
 	#endif
 
 		// set argument names
@@ -482,9 +488,9 @@ struct LLVM_gen {
 
 		//// 
 		// dedicated block for local variable alloca (so they are all grouped together)
-		alloca_block = llvm::BasicBlock::Create(ctx, "entry");
+		alloca_block = llvm::BasicBlock::Create(*ctx, "entry");
 
-		auto* entry_block = llvm::BasicBlock::Create(ctx, "entry.cont");
+		auto* entry_block = llvm::BasicBlock::Create(*ctx, "entry.cont");
 		alloca_block->insertInto(cur_fdef->llvm_func);
 		
 		begin_basic_block(entry_block);
@@ -561,14 +567,14 @@ struct LLVM_gen {
 			llvm::Value* val;
 			switch (lit->type.ty->tclass) {
 				case TY_BOOL:
-					val = llvm::ConstantInt::getBool(ctx, lit->value.b);
+					val = llvm::ConstantInt::getBool(*ctx, lit->value.b);
 					break;
 				case TY_INT:
-					val = llvm::ConstantInt::get(llvm::Type::getInt64Ty(ctx),
+					val = llvm::ConstantInt::get(llvm::Type::getInt64Ty(*ctx),
 						llvm::APInt(64, (uint64_t)lit->value.i, true));
 					break;
 				case TY_FLT:
-					val = llvm::ConstantFP::get(llvm::Type::getDoubleTy(ctx),
+					val = llvm::ConstantFP::get(llvm::Type::getDoubleTy(*ctx),
 						llvm::APFloat(lit->value.f));
 					break;
 				case TY_STR:
@@ -638,8 +644,8 @@ struct LLVM_gen {
 						assert(members[i]->llvm_GEP_idx == i);
 
 						llvm::Value* indices[] = {
-							llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0),
-							llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), (unsigned)i),
+							llvm::ConstantInt::get(llvm::Type::getInt32Ty(*ctx), 0),
+							llvm::ConstantInt::get(llvm::Type::getInt32Ty(*ctx), (unsigned)i),
 						};
 						llvm::Value* ptr = build.CreateInBoundsGEP(struct_val.type, struct_val.llvm_val, indices, SR(members[i]->ident));
 
@@ -716,8 +722,8 @@ struct LLVM_gen {
 
 				const char* name = op->op == OP_LOGICAL_AND ? "and" : "or";
 
-				auto* else_block = llvm::BasicBlock::Create(ctx, llvm::Twine(name) + id.str);
-				auto* cont_block = llvm::BasicBlock::Create(ctx, llvm::Twine("cont") + cid.str);
+				auto* else_block = llvm::BasicBlock::Create(*ctx, llvm::Twine(name) + id.str);
+				auto* cont_block = llvm::BasicBlock::Create(*ctx, llvm::Twine("cont") + cid.str);
 				
 				// eval lhs
 				llvm::Value* cond = codegen_rval(op->lhs);
@@ -727,12 +733,12 @@ struct LLVM_gen {
 				llvm::Value* short_circuit_result;
 				if (op->op == OP_LOGICAL_AND) {
 					// lhs == false  -->  short circuit to false
-					short_circuit_result = llvm::ConstantInt::getBool(llvm::Type::getInt1Ty(ctx), false);
+					short_circuit_result = llvm::ConstantInt::getBool(llvm::Type::getInt1Ty(*ctx), false);
 					build.CreateCondBr(cond, else_block, cont_block);
 				}
 				else {
 					// lhs == true  -->  short circuit to true
-					short_circuit_result = llvm::ConstantInt::getBool(llvm::Type::getInt1Ty(ctx), true);
+					short_circuit_result = llvm::ConstantInt::getBool(llvm::Type::getInt1Ty(*ctx), true);
 					build.CreateCondBr(cond, cont_block, else_block);
 				}
 
@@ -749,7 +755,7 @@ struct LLVM_gen {
 				// following code will be in cont block
 				begin_basic_block(cont_block);
 				
-				llvm::PHINode* result = build.CreatePHI(llvm::Type::getInt1Ty(ctx), 2,  llvm::Twine("_") + name);
+				llvm::PHINode* result = build.CreatePHI(llvm::Type::getInt1Ty(*ctx), 2,  llvm::Twine("_") + name);
 				result->addIncoming(short_circuit_result, phi_short_circuit_block);
 				result->addIncoming(rhs_result, phi_rhs_block);
 				return Value::RValue(result);
@@ -776,8 +782,8 @@ struct LLVM_gen {
 					assert(lhs.type && lhs.type->isStructTy());
 					
 					llvm::Value* indices[] = {
-						llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0),
-						llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), memb->decl->llvm_GEP_idx),
+						llvm::ConstantInt::get(llvm::Type::getInt32Ty(*ctx), 0),
+						llvm::ConstantInt::get(llvm::Type::getInt32Ty(*ctx), memb->decl->llvm_GEP_idx),
 					};
 					llvm::Value* ptr = build.CreateInBoundsGEP(lhs.type, lhs.llvm_val, indices, SR(memb->decl->ident));
 
@@ -809,9 +815,9 @@ struct LLVM_gen {
 			auto id  = format_id(if_count++);
 			auto cid = format_id(cont_count++);
 
-			auto* then_block =                  llvm::BasicBlock::Create(ctx, llvm::Twine("if") + id.str + ".then");
-			auto* else_block = aif->else_body ? llvm::BasicBlock::Create(ctx, llvm::Twine("if") + id.str + ".else") : nullptr;
-			auto* cont_block =                  llvm::BasicBlock::Create(ctx, llvm::Twine("cont") + cid.str       );
+			auto* then_block =                  llvm::BasicBlock::Create(*ctx, llvm::Twine("if") + id.str + ".then");
+			auto* else_block = aif->else_body ? llvm::BasicBlock::Create(*ctx, llvm::Twine("if") + id.str + ".else") : nullptr;
+			auto* cont_block =                  llvm::BasicBlock::Create(*ctx, llvm::Twine("cont") + cid.str       );
 				
 			Value              true_result,     false_result;
 			llvm::BasicBlock  *phi_then_block, *phi_else_block;
@@ -893,10 +899,10 @@ struct LLVM_gen {
 			auto id  = format_id(loop_count++);
 			auto cid = format_id(cont_count++);
 
-			auto* loop_cond_block = llvm::BasicBlock::Create(ctx, llvm::Twine("loop") + id.str + ".cond"); // loop->cond
-			auto* loop_body_block = llvm::BasicBlock::Create(ctx, llvm::Twine("loop") + id.str + ".body"); // loop->body
-			auto* loop_end_block  = llvm::BasicBlock::Create(ctx, llvm::Twine("loop") + id.str + ".end" ); // loop->end   need this block seperate from loop to allow for continue;
-			auto* cont_block      = llvm::BasicBlock::Create(ctx, llvm::Twine("cont") + cid.str         ); // code after loop
+			auto* loop_cond_block = llvm::BasicBlock::Create(*ctx, llvm::Twine("loop") + id.str + ".cond"); // loop->cond
+			auto* loop_body_block = llvm::BasicBlock::Create(*ctx, llvm::Twine("loop") + id.str + ".body"); // loop->body
+			auto* loop_end_block  = llvm::BasicBlock::Create(*ctx, llvm::Twine("loop") + id.str + ".end" ); // loop->end   need this block seperate from loop to allow for continue;
+			auto* cont_block      = llvm::BasicBlock::Create(*ctx, llvm::Twine("cont") + cid.str         ); // code after loop
 
 			// do-while is:               for & while are:
 			//                                                     
@@ -1032,7 +1038,7 @@ struct LLVM_gen {
 	}
 };
 
-llvm::Module* llvm_gen_module (AST_Module& modl) {
+Module llvm_gen_module (AST_Module& modl) {
 	ZoneScoped;
 
 	LLVM_gen llvm_gen = {
@@ -1040,8 +1046,5 @@ llvm::Module* llvm_gen_module (AST_Module& modl) {
 	};
 	llvm_gen.generate(modl.filename);
 
-	return llvm_gen.modl; // pass ownership to caller
-}
-void llvm_free_module (llvm::Module* modl) {
-	delete modl;
+	return Module( llvm_gen.ctx, llvm_gen.modl ); // pass ownership to caller
 }

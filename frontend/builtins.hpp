@@ -6,17 +6,118 @@
 
 #include "stdarg.h"
 
-inline void print (bool b) {
-	printf("%s", b ? "true":"false");
+struct _FormatOpt {
+	size_t pad_width;
+	char   pad_dir;  // only valid if pad_width > 0
+	char   pad_char; // only valid if pad_width > 0
+};
+
+inline void print (const char* str, size_t width, _FormatOpt& opt) {
+	size_t padl = 0;
+	size_t padr = 0;
+	if (opt.pad_width > width) {
+		size_t total_pad = opt.pad_width - width;
+		padl = total_pad / 2;
+		padr = total_pad - padl;
+	}
+	
+	for (size_t i=0; i<padl; ++i)
+		putc(opt.pad_char, stdout);
+
+	fputs(str, stdout);
+
+	for (size_t i=0; i<padr; ++i)
+		putc(opt.pad_char, stdout);
 }
-inline void print (int64_t i) {
-	printf("%" PRIi64, i);
+
+inline void print (int64_t i,       _FormatOpt& opt) {
+	char buf[64];
+	int len = snprintf(buf, ARRLEN(buf), "%" PRId64, i);
+	if (len >= ARRLEN(buf)) {
+		assert(false);
+		return; // should be impossible
+	}
+	
+	print(buf, len, opt);
 }
-inline void print (double f) {
-	printf("%f", f);
+inline void print (double f,        _FormatOpt& opt) {
+	char buf[64];
+	int len = snprintf(buf, ARRLEN(buf), "%f", f);
+	if (len >= ARRLEN(buf)) {
+		assert(false);
+		return; // should be impossible
+	}
+	
+	print(buf, len, opt);
 }
-inline void print (const char* str) {
-	printf("%s", str);
+inline void print (const char* str, _FormatOpt& opt) {
+	size_t len = strlen(str);
+	
+	print(str, len, opt);
+}
+
+inline bool _parse_int (const char*& str, size_t* out_int) {
+	const char* cur = str;
+
+	if (!(*cur >= '0' && *cur <= '9'))
+		return false;
+
+	size_t i = 0;
+	do {
+		int digit = *cur++ - '0';
+		i *= 10;
+		i += digit;
+	} while (*cur >= '0' && *cur <= '9');
+
+	*out_int = i;
+	str = cur;
+	return true;
+}
+
+inline _FormatOpt _get_format_padding (const char*& format) {
+	const char* cur = format;
+
+	_FormatOpt opt;
+	opt.pad_width = 0;
+	opt.pad_dir = '>';
+	opt.pad_char = ' ';
+
+	if (cur[0] == '}') return opt; // format string over
+	
+	if (cur[0] == '>' || cur[0] == '<' || cur[0] == '^') {
+		opt.pad_dir = *cur++;
+	}
+	
+	if (!(cur[0] > '0' && cur[0] <= '9')) {
+		opt.pad_char = *cur++;
+	}
+
+
+	if (!_parse_int(cur, &opt.pad_width)) {
+		assert(opt.pad_width == 0);
+		return opt;
+	}
+
+	format = cur; // only if width int appeared is padding char valid
+	return opt;
+}
+
+inline void _format (const char*& format, va_list vl) {
+	const char* cur = format;
+	
+	_FormatOpt opt = _get_format_padding(cur);
+
+	switch (*cur) {
+		case 'b': print( (bool)va_arg(vl, int        ) ? "true":"false", opt); break;
+		case 'i': print(       va_arg(vl, int64_t    )                 , opt); break;
+		case 'f': print(       va_arg(vl, double     )                 , opt); break;
+		case 's': print(       va_arg(vl, char const*)                 , opt); break;
+		default:
+			throw RuntimeExcept{"runtime error: printf: unknown type specifier"};
+	}
+	cur++;
+
+	format = cur;
 }
 
 inline void my_printf (const char* format, ...) {
@@ -24,40 +125,21 @@ inline void my_printf (const char* format, ...) {
 	return;
 #endif
 
-	va_list varargs;
-	va_start(varargs, format);
+	va_list vl;
+	va_start(vl, format);
 
 	const char* cur = format;
 
 	while (*cur != '\0') {
 		if (*cur == '{') {
-			const char* start = ++cur;
 
-			while (*cur != '}')
-				cur++;
-			const char* end = cur++;
-
-			strview params = strview(start, end - start);
-
-			//if (i >= varargc) {
-			//	// print null for % that access outside of the varargs
-			//	printf("null"); // cast away const, since unified args/rets force me to not use const in print_val
-			//}
-			//else {
-				if (params.size() != 1)
-					throw RuntimeExcept{"runtime error: printf: expected type specifier"};
-				
-				switch (params[0]) {
-					case 'b': print( (bool)va_arg(varargs, int        ) ); break;
-					case 'i': print(       va_arg(varargs, int64_t    ) ); break;
-					case 'f': print(       va_arg(varargs, double     ) ); break;
-					case 's': print(       va_arg(varargs, char const*) ); break;
-					default:
-						throw RuntimeExcept{"runtime error: printf: unknown type specifier"};
-				}
-			//}
-			continue;
-		} else {
+			_format(++cur, vl);
+			
+			if (*cur != '}')
+				throw RuntimeExcept{"runtime error: printf: expected '}' after '{'"};
+			cur++;
+		}
+		else {
 			if (cur[0] == '^' && cur[1] == '{') {
 				cur++; // ^{ escape sequence
 			}
@@ -66,7 +148,7 @@ inline void my_printf (const char* format, ...) {
 	}
 	// ignore varargs that are not printed (no error)
 
-	va_end(varargs);
+	va_end(vl);
 }
 
 inline int64_t timer () {

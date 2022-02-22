@@ -6,6 +6,7 @@
 #include "stdlib.h"
 #include "inttypes.h" // for PRIuMAX for size_t printf'ing
 
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>

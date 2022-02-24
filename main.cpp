@@ -13,27 +13,55 @@
 
 #define TRACY_REPEAT 1000
 
-void set_options () {
+void set_options (int argc, const char** argv) {
+#if 1
 	options.filename  = "test2.la";
 
 	options.optimized = 1;
 
-#ifdef NDEBUG
-	options.print_ast  = 0;
-	options.print_ir   = 0;
-	options.print_code = 0;
-#else
+#ifndef NDEBUG
 	options.print_ast  = 0;
 	options.print_ir   = 1;
 	options.print_code = 1;
 #endif
 	
 	options.disasm_print_symbols = true;
+	
+#else
+	if (argc <= 1) {
+		fprintf(stderr, "usage: <compiler> [-log ast] [-log ir] [-log code] <source filepath>\n");
+		exit(1);
+	}
+
+	int argi = 1;
+	while (argi < argc) {
+		const char* option = argv[argi++];
+
+		if (option[0] == '-') {
+			if (strcmp(option, "-log") == 0) {
+				if (argi >= argc) {
+					fprintf(stderr, "-log options needs argument like '-log <arg>' where <arg> is 'ast', 'ir' or 'code'\n");
+					exit(1);
+				}
+				const char* arg = argv[argi++];
+			
+				if      (strcmp(arg, "ast")  == 0) options.print_ast  = true;
+				else if (strcmp(arg, "ir")   == 0) options.print_ir   = true;
+				else if (strcmp(arg, "code") == 0) options.print_code = true;
+			}
+			else {
+				fprintf(stderr, "unknown option '%s'\n", option);
+				exit(1);
+			}
+		}
+		else {
+			options.filename = option;
+		}
+	}
+#endif
 }
 
 bool compile () {
-
-	set_options();
 
 	std::string tok;
 	{
@@ -68,12 +96,12 @@ bool compile () {
 			
 				auto llvm_modl = llvm_gen_module(modl);
 				
-				#ifndef TRACY_ENABLE
+				//#ifndef TRACY_ENABLE
 				{
 					ZoneScopedN("llvm_jit_and_exec");
 					llvm_jit_and_exec(llvm_modl);
 				}
-				#endif
+				//#endif
 			}
 		}
 		catch (CompilerExcept& ex) {
@@ -141,6 +169,8 @@ _NOINLINE void pascal_tri (int rows) {
 }
 
 int main (int argc, const char** argv) {
+	set_options(argc, argv);
+
 	//fib(50);
 	//pascal_tri(13);
 	

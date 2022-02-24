@@ -4,13 +4,13 @@
 struct Options {
 	std::string  filename;
 
-	bool         optimized;
+	bool         optimized  = 1;
 
-	bool         print_ast;
-	bool         print_ir;
-	bool         print_code;
+	bool         print_ast  = 0;
+	bool         print_ir   = 0;
+	bool         print_code = 0;
 	
-	bool         disasm_print_symbols;
+	bool         disasm_print_symbols = 1;
 };
 
 inline Options options;

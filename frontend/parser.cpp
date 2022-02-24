@@ -128,7 +128,7 @@ void dbg_print (AST* node, int depth) {
 			indent(depth); printf(")\n");
 			
 			indent(depth); printf("rets: (\n");
-			for (auto* ret : f->ret_struct->members)
+			for (auto* ret : f->rets)
 				dbg_print(ret, depth+1);
 			indent(depth); printf(")\n");
 

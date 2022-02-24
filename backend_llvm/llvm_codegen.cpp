@@ -442,6 +442,7 @@ struct LLVM_gen {
 	#else
 		auto* func = llvm::Function::Create(func_ty, linkage, SR(fdef->ident), *modl);
 	#endif
+		//func->addAttribute(0, llvm::Attribute::NoUnwind); // still get eh_frames
 
 		// set argument names
 		unsigned i = 0;

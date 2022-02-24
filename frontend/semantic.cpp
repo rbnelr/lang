@@ -18,7 +18,7 @@ template<> struct std::hash<ScopedIdentifer> {
 };
 
 struct IdentiferStack {
-	// scope_idx, identifer -> vardef or funcdef AST
+	// (scope_id, identifer) -> AST_vardecl* or AST_funcdef* or AST_type*
 	std::unordered_map<ScopedIdentifer, AST*> ident_map;
 	std::vector<strview>                      ident_stack;
 
@@ -30,12 +30,12 @@ struct IdentiferStack {
 		size_t ident_base;
 		// innermost scope that corresponds to a function
 		// to enfore functions only being able to access variables outside their scope
-		// TODO: allow to capture these variables
-		// (but they can access functions outside their scope)
+		// TODO: figure out a way for nested functions to capture variables in the future
 		size_t func_scope_id;
 	};
-	Scope cur_scope = {0,0};
+	Scope cur_scope = { 0,0 };
 
+	// call to open a new scope
 	Scope push_scope (bool func_scope=false) {
 		Scope old_scope = cur_scope;
 
@@ -48,6 +48,7 @@ struct IdentiferStack {
 
 		return old_scope;
 	}
+	// call to close the previously opened scope and remove all the contained idents
 	void reset_scope (Scope& old_scope) {
 		assert(scope_id > 0);
 
@@ -60,6 +61,7 @@ struct IdentiferStack {
 		cur_scope = old_scope;
 	}
 
+	// declare a identifer mapping to an AST node in the current scope
 	void declare_ident (AST* ast, strview const& ident) {
 		auto res = ident_map.try_emplace(ScopedIdentifer{ scope_id, ident }, ast);
 		if (!res.second)
@@ -69,6 +71,9 @@ struct IdentiferStack {
 		ident_stack.emplace_back(ident);
 	}
 
+	// resolve an identifier by looking for a (scope_id, identifer) key in the ident_map hashmap
+	// do this by trying multiple scope ids starting from the current scope and going down until reaching min_scope
+	// this enables variable shadowing and min_scope can be used to limit the search for only variables in the current function by using cur_scope.func_scope_id
 	AST* resolve_ident (SourceRange const& src, strview ident, size_t min_scope) {
 		assert(scope_id > 0);
 
@@ -82,6 +87,8 @@ struct IdentiferStack {
 		}
 		ERROR(src, "unknown identifer");
 	}
+
+	// resolve a variable identifier inside the current function
 	void resolve_var (AST_var* var) {
 		// min_scope = func_scope_id, functions can only access their own variables
 		AST* ast = resolve_ident(var->src, var->ident, cur_scope.func_scope_id);
@@ -91,7 +98,8 @@ struct IdentiferStack {
 
 		var->decl = (AST_vardecl*)ast;
 	}
-
+	
+	// resolve a function identifier from any relevant scope
 	void resolve_func_call (AST_call* call) {
 		// min_scope = 0, functions can call all functions visible to them
 		AST* ast = resolve_ident(call->src, call->ident, 0);
@@ -101,7 +109,8 @@ struct IdentiferStack {
 
 		call->fdef = ast;
 	}
-
+	
+	// resolve a type identifier from any relevant scope
 	AST_type* resolve_type (SourceRange const& ident_src) {
 		// min_scope = 0, functions can call all types visible to them
 		AST* ast = resolve_ident(ident_src, ident_src.text(), 0);

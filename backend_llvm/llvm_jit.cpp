@@ -16,14 +16,22 @@ struct JIT {
 	Triple                         TT;
 
 	std::unique_ptr<TargetMachine> TM;
-
-	std::unique_ptr<LLJIT>         jit;
+	std::unique_ptr<DataLayout> DL;
 	
 	legacy::PassManager        mem2reg;
 	legacy::PassManager        optimize;
 	legacy::PassManager        MCgen;
 
+	std::unique_ptr<ExecutionSession> ES;
 	
+	std::unique_ptr<MangleAndInterner> Mangle;
+
+	std::unique_ptr<ObjectLinkingLayer> LL;
+
+	JITDylib* MainJD;
+	ResourceTrackerSP RT;
+
+
 	JIT () {
 		ZoneScoped;
 
@@ -58,37 +66,49 @@ struct JIT {
 	void setup_jit () {
 		ZoneScoped;
 
-		//auto triple_str = llvm::sys::getProcessTriple();
-		std::string triple_str = "x86_64-pc-windows-msvc-elf";
-		auto TT = Triple(triple_str);
+		auto TT = Triple("x86_64-pc-windows-msvc-elf");
 		
-		JITTargetMachineBuilder JTMB(TT);
-		JTMB.setCodeModel(CodeModel::Small);
-		JTMB.setRelocationModel(Reloc::PIC_);
+		{
+			JITTargetMachineBuilder JTMB(TT);
+			JTMB.setCodeModel(CodeModel::Small);
+			JTMB.setRelocationModel(Reloc::PIC_);
 
-		TM = ExitOnErr(JTMB.createTargetMachine());
+			TM = ExitOnErr(JTMB.createTargetMachine());
+		}
 
-		LLJITBuilder JB;
-		JB.setJITTargetMachineBuilder(std::move(JTMB));
-		JB.setObjectLinkingLayerCreator([&](ExecutionSession& ES, const Triple& TT) {
-			return std::make_unique<ObjectLinkingLayer>(ES, std::make_unique<jitlink::InProcessMemoryManager>());
-		});
-		jit = ExitOnErr(JB.create());
+		{
+			auto MM = std::make_unique<jitlink::InProcessMemoryManager>();
+			auto SSP = std::make_shared<SymbolStringPool>();
+			auto PageSize = ExitOnErr(sys::Process::getPageSize());
+		
+
+			auto EPC = std::make_unique<SelfExecutorProcessControl>(std::move(SSP), TT, PageSize, std::move(MM));
+			ES = std::make_unique<ExecutionSession>(std::move(EPC));
+		}
+
+		DL = std::make_unique<DataLayout>(TM->createDataLayout()); // need to copy DL here (we can't simplt assign since DL does not have a default ctor)
+		Mangle = std::make_unique<MangleAndInterner>(*ES, *DL);
+
+		LL = std::make_unique<ObjectLinkingLayer>(*ES, ES->getExecutorProcessControl().getMemMgr());
+
+		MainJD = &ES->createBareJITDylib("<main>");
+
+		RT = MainJD->getDefaultResourceTracker();
 	}
 
 	void register_builtins () {
 		ZoneScoped;
-
+		
 		SymbolMap builtin_syms;
 		for (auto& bi : BUILTIN_FUNCS) {
-			auto name = jit->mangleAndIntern(SR(bi->ident));
+			auto name = Mangle->operator()(SR(bi->ident));
 			auto symb  = JITEvaluatedSymbol{
 				(JITTargetAddress)bi->builtin_func_ptr,
 				JITSymbolFlags::Absolute | JITSymbolFlags::Callable
 			};
 			builtin_syms.insert({ name, symb });
 		}
-		jit->getMainJITDylib().define(absoluteSymbols(std::move(builtin_syms)));
+		MainJD->define(absoluteSymbols(std::move(builtin_syms)));
 	}
 	
 
@@ -160,13 +180,13 @@ struct JIT {
 		ZoneScoped;
 		
 		// can't really do this upfront because of LLVM API weirdness
-		// SmallVector gets stored in raw_svector_ostream (which is not just a downcasted ref to SmallVector)
+		// SmallVector gets stored in raw_svector_ostream (which is not just a downcasted ref to SmallVector btw)
 		// then this has to be passed into addPassesToEmitMC
 		// later PassManager can be run, only after which MCgen_ObjBufferSV and ObjStream can go out of scope
 		// furthermore SmallVector then has to be _moved_ into SmallVectorMemoryBuffer to call addObjectFile
 		// what a mess of ownership and lifetimes for no apparent reason...
 		// > PassManager should not own its output buffer, especially not during setup, why not just pass it in when run?
-		//   and why should using a jitted buffer require taking ownership!? (and then destroying it)
+		//   and why should using a jitted buffer require taking ownership!? (it's just memory, right? why steal and then destroy it?)
 		llvm::SmallVector<char, 0> MCgen_ObjBufferSV;
 		llvm::raw_svector_ostream ObjStream( MCgen_ObjBufferSV );
 
@@ -178,20 +198,18 @@ struct JIT {
 			std::move(MCgen_ObjBufferSV),
 			modl->getModuleIdentifier() + "-jitted-objectbuffer"
 		);
-		
-		ExitOnErr(jit->addObjectFile(std::move(ObjBuffer)));
 
-		//if (options.print_code) {
-		//	print_llvm_disasm(TT, dyld, *Obj, *loadedObj, MM);
-		//}
+	#ifndef NDEBUG
+		llvm::DebugFlag = 1;
+	#endif
+		
+		LL->add(RT, std::move(ObjBuffer));
 	}
 
 	void compile_and_load (llvm::Module* modl) {
 		ZoneScoped;
 		
-		auto DL = TM->createDataLayout();
-
-		modl->setDataLayout(DL);
+		modl->setDataLayout(*DL);
 		
 		run_mem2reg(modl);
 
@@ -206,7 +224,11 @@ struct JIT {
 		print_seperator("Execute JITed LLVM code:");
 
 		typedef void (*main_fp)();
-		auto fptr = (main_fp)ExitOnErr(jit->lookup("main")).getAddress();
+
+		auto str = Mangle->operator()("main");
+		auto lookup = ExitOnErr(ES->lookup({ MainJD }, str));
+		auto fptr = (main_fp)lookup.getAddress();
+
 		if (fptr)
 			fptr();
 		else

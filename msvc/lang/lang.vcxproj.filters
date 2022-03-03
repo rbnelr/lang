@@ -18,9 +18,6 @@
     <ClCompile Include="..\..\backend_llvm\llvm_jit.cpp">
       <Filter>backend\llvm</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\backend_llvm\win32_mmap.cpp">
-      <Filter>backend\llvm</Filter>
-    </ClCompile>
     <ClCompile Include="..\..\frontend\parser.cpp">
       <Filter>frontend</Filter>
     </ClCompile>
@@ -51,6 +48,7 @@
     <ClCompile Include="..\..\util\smhasher\MurmurHash3.cpp">
       <Filter>util\smhasher</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\win32_mmap.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\..\common\tracy\Tracy.hpp">
@@ -100,10 +98,7 @@
     <ClInclude Include="..\..\util\file_io.hpp">
       <Filter>util</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\util\macro_stuff.hpp">
-      <Filter>util</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\util\macros.hpp">
+    <ClInclude Include="..\..\util\util.hpp">
       <Filter>util</Filter>
     </ClInclude>
     <ClInclude Include="..\..\util\string.hpp">
@@ -125,6 +120,7 @@
       <Filter>frontend</Filter>
     </ClInclude>
     <ClInclude Include="..\..\profiling.hpp" />
+    <ClInclude Include="..\..\platform_layer.hpp" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="util">

@@ -1,4 +1,5 @@
 #pragma once
+#include "common.hpp"
 
 #include <inttypes.h>
 
@@ -60,10 +61,7 @@
 ////
 #include "llvm-c/Disassembler.h"
 
-
 #pragma warning(pop)
-
-#include "common.hpp"
 
 _FORCEINLINE llvm::StringRef SR (std::string_view sv) {
 	return { sv.data(), sv.size() };

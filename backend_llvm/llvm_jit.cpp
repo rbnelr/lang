@@ -1,6 +1,5 @@
 #include "llvm_pch.hpp"
 #include "llvm_backend.hpp"
-#include "llvm_sec_mem_manager.hpp"
 #include "llvm_disasm.hpp"
 
 #include "common.hpp"
@@ -31,32 +30,148 @@ struct JIT {
 	JITDylib* MainJD;
 	ResourceTrackerSP RT;
 
-	class MyPlugin : public ObjectLinkingLayer::Plugin {
+	LoadedSections sections;
+
+	class MemoryManager : public jitlink::JITLinkMemoryManager {
 	public:
-		// The modifyPassConfig callback gives us a chance to inspect the
-		// MaterializationResponsibility and target triple for the object being
-		// linked, then add any JITLink passes that we would like to run on the
-		// link graph. A pass is just a function object that is callable as
-		// Error(jitlink::LinkGraph&). In this case we will add two passes
-		// defined as lambdas that call the printLinkerGraph method on our
-		// plugin: One to run before the linker applies fixups and another to
-		// run afterwards.
+		LoadedSections& sections;
+
+		MemoryManager (LoadedSections& sections) : sections{ sections } {}
+
+		using Protect = sys::Memory::ProtectionFlags;
+
+		enum AllocType {
+			ReadExec,
+			ReadOnly,
+			ReadWrite,
+		};
+		static constexpr MmapProtect ALLOC_TYPE_PROT[] = {
+			MMAP_READ | MMAP_EXEC ,
+			MMAP_READ             ,
+			MMAP_READ | MMAP_WRITE,
+		};
+		static AllocType map_alloc_type (Protect prot) {
+			switch (prot) {
+				case Protect::MF_READ | Protect::MF_EXEC:  return ReadExec;
+				case Protect::MF_READ:                     return ReadOnly;
+				case Protect::MF_READ | Protect::MF_WRITE: return ReadWrite;
+					INVALID_DEFAULT;
+			}
+		}
+
+		struct AllocBlock {
+			void* ptr;
+			size_t size;
+		};
+
+		// Local class for allocation.
+		class Alloc : public jitlink::JITLinkMemoryManager::Allocation {
+		public:
+
+			AllocBlock block = {}; // single allocation for all
+			AllocBlock segments[3] = {}; // seperated into 3 types of protection flags
+
+			MutableArrayRef<char> getWorkingMemory (Protect Seg) override {
+				auto type = map_alloc_type(Seg);
+				return { (char*)segments[type].ptr, segments[type].size };
+			}
+
+			JITTargetAddress getTargetMemory (Protect Seg) override {
+				auto type = map_alloc_type(Seg);
+				return pointerToJITTargetAddress(segments[type].ptr);
+			}
+
+			void finalizeAsync (FinalizeContinuation OnFinalize) override {
+				OnFinalize(applyProtections());
+			}
+
+			Error deallocate () override {
+				mmap_pages_free(block.ptr);
+				return Error::success();
+			}
+
+			Error applyProtections () {
+				for (int i = 0; i < 3; ++i) {
+					auto prot = ALLOC_TYPE_PROT[i];
+
+					mmap_pages_protect(segments[i].ptr, segments[i].size, prot);
+					//return errorCodeToError(EC);
+
+					if (prot & MMAP_EXEC)
+						mmap_invalidate_instruction_cache(segments[i].ptr, segments[i].size);
+				}
+				return Error::success();
+			}
+
+		};
+
+		Expected<std::unique_ptr<Allocation>> allocate (
+			const jitlink::JITLinkDylib* JD,
+			const SegmentsRequestMap& Request) override {
+
+			// Compute the total number of pages to allocate.
+			size_t total_size = 0;
+			for (auto& KV : Request) {
+				const auto& Seg = KV.second;
+
+				if (Seg.getAlignment() > mmap_page_size.page_size)
+					return make_error<StringError>("Cannot request higher than page alignment", inconvertibleErrorCode());
+
+				total_size = alignTo(total_size, mmap_page_size.page_size);
+				total_size += Seg.getContentSize() + Seg.getZeroFillSize();
+			}
+
+			Alloc alloc = {};
+
+			// alloc pages and remember actual allocated size
+			alloc.block.ptr = mmap_pages_alloc(total_size, &alloc.block.size, MMAP_READ | MMAP_WRITE);
+			assert(alloc.block.ptr != nullptr);
+			//	return make_error<StringError>("mmap_pages_alloc failed", 0);
+
+			char* cur = (char*)alloc.block.ptr;
+
+			// Allocate segment memory from the slab.
+			for (auto& KV : Request) {
+				auto type = map_alloc_type((sys::Memory::ProtectionFlags)KV.first);
+
+				auto content_size = KV.second.getContentSize();
+				auto zero_fill_size = KV.second.getZeroFillSize();
+				size_t size = content_size + zero_fill_size;
+
+				char* ptr = cur;
+				size_t alloc_size = alignTo(content_size + zero_fill_size, mmap_page_size.page_size);
+
+				assert(ptr + size <= (char*)alloc.block.ptr + alloc.block.size && "Mapping exceeds allocation");
+
+				// Zero out the zero-fill memory.
+				memset(ptr + content_size, 0, zero_fill_size);
+
+				assert(alloc.segments[type].size == 0);
+				alloc.segments[type] = { ptr, alloc_size };
+
+				if (options.print_disasm)
+					sections.segments.push_back({ ALLOC_TYPE_PROT[type], ptr, size, alloc_size });
+
+				cur += alloc_size;
+			}
+
+			return std::unique_ptr<Allocation>(new Alloc(alloc));
+		}
+	};
+
+	class LinkerPlugin : public ObjectLinkingLayer::Plugin {
+	public:
+		LoadedSections& sections;
+
+		LinkerPlugin (LoadedSections& sections) : sections{ sections } {}
+
 		void modifyPassConfig(MaterializationResponsibility& MR,
-			jitlink::LinkGraph& LG,
-			jitlink::PassConfiguration& Config) override {
+			jitlink::LinkGraph& LG, jitlink::PassConfiguration& Config) override {
 
-			outs() << "MyPlugin -- Modifying pass config for " << LG.getName() << " ("
-				<< LG.getTargetTriple().str() << "):\n";
+			assert(options.print_disasm); // LinkerPlugin only needed when we actually want disasm
 
-			// Print sections, symbol names and addresses, and any edges for the
-			// associated blocks at the 'PostPrune' phase of JITLink (after
-			// dead-stripping, but before addresses are allocated in the target
-			// address space. See llvm/docs/JITLink.rst).
-			//
-			// Experiment with adding the 'printGraph' pass at other points in the
-			// pipeline. E.g. PrePrunePasses, PostAllocationPasses, and
-			// PostFixupPasses.
-			Config.PostPrunePasses.push_back(printGraph);
+			Config.PrePrunePasses .push_back([=] (jitlink::LinkGraph& G) { return pre_prune (G); });
+			Config.PostFixupPasses.push_back([=] (jitlink::LinkGraph& G) { return post_fixup(G); });
 		}
 
 		void notifyLoaded(MaterializationResponsibility& MR) override {
@@ -81,7 +196,8 @@ struct JIT {
 		}
 
 	private:
-		static void printBlockContent(jitlink::Block& B) {
+
+		void printBlockContent(jitlink::Block& B) {
 			constexpr JITTargetAddress LineWidth = 16;
 
 			if (B.isZeroFill()) {
@@ -108,9 +224,50 @@ struct JIT {
 			if (EndAddr % LineWidth != 0)
 				outs() << "\n";
 		}
+		
+		// Make all symbols live so that they do not get removed by the linker so we can get their final addresses after linking
+		// so we can print disassembly
+		// NOTE: The link graph data is freed after linking, so there is no worry that symbols take up any space permanently
+		// TODO: ^Though I do not know 100% that this won't cause more data to be included in the resulting sections
+		//       We _may_ want to make sure to only mark desired symbols as live, like functions
+		Error pre_prune (jitlink::LinkGraph& G) {
+			
+			for (auto& S : G.sections()) {
+				for (auto* Sym : S.symbols()) {
+					Sym->setLive(true);
+				}
+			}
+			
+			//print_graph(G);
 
-		static Error printGraph(jitlink::LinkGraph& G) {
+			return Error::success();
+		}
 
+		Error post_fixup (jitlink::LinkGraph& G) {
+			for (auto& S : G.sections()) {
+
+				// add a symbol for the STUBS section
+				strview name = { S.getName().data(), S.getName().size() };
+				if (name == "$__STUBS" && S.blocks_size() > 0) {
+					auto& B = *S.blocks().begin();
+					sections.symbols.push_back({ (void*)B->getAddress(), "_STUBS" });
+				}
+
+				for (auto* Sym : S.symbols()) {
+					if (Sym->hasName()) {
+						auto sr = Sym->getName();
+						// need std::string since, link graph symbols strings seem to be deallocated before I want to print the disasm
+						sections.symbols.push_back({ (void*)Sym->getAddress(), std::string(sr.data(), sr.size()) });
+					}
+				}
+			}
+
+			//print_graph(G);
+
+			return Error::success();
+		}
+
+		void print_graph (jitlink::LinkGraph& G) {
 			DenseSet<jitlink::Block*> BlocksAlreadyVisited;
 			
 			outs() << "Graph \"" << G.getName() << "\"\n";
@@ -164,10 +321,6 @@ struct JIT {
 					outs() << "\n";
 				}
 			}
-
-
-
-			return Error::success();
 		}
 	};
 
@@ -208,7 +361,7 @@ struct JIT {
 	void setup_jit () {
 		ZoneScoped;
 
-		auto TT = Triple("x86_64-pc-windows-msvc-elf");
+		TT = Triple("x86_64-pc-windows-msvc-elf");
 
 		{
 			JITTargetMachineBuilder JTMB(TT);
@@ -224,7 +377,7 @@ struct JIT {
 		}
 
 		{
-			auto MM = std::make_unique<jitlink::InProcessMemoryManager>();
+			auto MM = std::make_unique<MemoryManager>(sections);
 			auto SSP = std::make_shared<SymbolStringPool>();
 			auto PageSize = ExitOnErr(sys::Process::getPageSize());
 
@@ -237,7 +390,9 @@ struct JIT {
 		Mangle = std::make_unique<MangleAndInterner>(*ES, *DL);
 
 		LL = std::make_unique<ObjectLinkingLayer>(*ES, ES->getExecutorProcessControl().getMemMgr());
-		//LL->addPlugin(std::make_unique<MyPlugin>());
+
+		if (options.print_disasm)
+			LL->addPlugin(std::make_unique<LinkerPlugin>(sections));
 
 		MainJD = &ES->createBareJITDylib("<main>");
 
@@ -345,16 +500,48 @@ struct JIT {
 		auto ObjBuffer = std::make_unique<llvm::SmallVectorMemoryBuffer>(
 			std::move(MCgen_ObjBufferSV),
 			modl->getModuleIdentifier() + "-jitted-objectbuffer"
-		);
+			);
 
 	#ifndef NDEBUG
 		llvm::DebugFlag = 0;
 	#endif
 
+		//obj_test(*ObjBuffer);
+
 		LL->add(RT, std::move(ObjBuffer));
 	}
 
-	void compile (llvm::Module* modl) {
+	/*
+	void obj_test (llvm::MemoryBufferRef ObjBuffer) {
+
+		print_seperator("Symbols");
+
+		auto Obj = object::ObjectFile::createObjectFile(ObjBuffer);
+		if (!Obj)
+			return;
+
+		for (auto& sym : (*Obj)->symbols()) {
+			auto nameErr = sym.getName();
+			if (!nameErr) continue; // skip on error
+			auto name = *nameErr;
+			
+			void* addr = nullptr;
+			auto addrErr = sym.getAddress();
+			if (addrErr) addr = (void*)*addrErr;
+			
+			uint64_t val = 0;
+			auto valErr = sym.getValue();
+			if (valErr) val = *valErr;
+
+			object::SectionRef sec = {};
+			auto secErr = sym.getSection();
+			if (secErr) sec = **secErr;
+
+			printf("%20.*s: %p, %llu\n", (int)name.size(),name.data(), addr, val);
+		}
+	}*/
+
+	void compile (llvm::Module * modl) {
 		ZoneScoped;
 
 		modl->setDataLayout(*DL);
@@ -373,9 +560,13 @@ struct JIT {
 	void load () {
 		ZoneScoped;
 
+		// during lookup is actually when linking happens and the original ObjBuffer is deleted
 		auto str = Mangle->operator()("main");
 		auto lookup = ExitOnErr(ES->lookup({ MainJD }, str));
 		main = (main_fp)lookup.getAddress();
+
+		if (options.print_disasm)
+			print_llvm_disasm(TT, sections);
 	}
 
 	void execute () {
@@ -389,7 +580,7 @@ struct JIT {
 			assert(false);
 	}
 
-	void jit_and_execute (llvm::Module* modl) {
+	void jit_and_execute (llvm::Module * modl) {
 		ZoneScoped;
 
 		compile(modl);

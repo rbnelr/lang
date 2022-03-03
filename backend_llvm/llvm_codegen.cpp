@@ -579,7 +579,7 @@ struct LLVM_gen {
 						llvm::APFloat(lit->value.f));
 					break;
 				case TY_STR:
-					val = build.CreateGlobalStringPtr(lit->value.str, llvm::Twine("strlit.") + format_id(strlit_count++).str);
+					val = build.CreateGlobalStringPtr(lit->value.str, llvm::Twine("strlit") + format_id(strlit_count++).str);
 					break;
 				INVALID_DEFAULT;
 			}

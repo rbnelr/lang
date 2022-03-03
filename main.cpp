@@ -20,12 +20,13 @@ void set_options (int argc, const char** argv) {
 	options.optimized = 1;
 
 #ifndef NDEBUG
-	options.print_ast  = 0;
-	options.print_ir   = 1;
-	options.print_code = 1;
+	options.print_ast         = 0;
+	options.print_ir          = 1;
+	options.print_disasm      = 1;
 #endif
 	
-	options.disasm_print_symbols = true;
+	options.disasm_symbols    = 1;
+	options.disasm_code_bytes = 1;
 	
 #else
 	if (argc <= 1) {
@@ -45,9 +46,9 @@ void set_options (int argc, const char** argv) {
 				}
 				const char* arg = argv[argi++];
 			
-				if      (strcmp(arg, "ast")  == 0) options.print_ast  = true;
-				else if (strcmp(arg, "ir")   == 0) options.print_ir   = true;
-				else if (strcmp(arg, "code") == 0) options.print_code = true;
+				if      (strcmp(arg, "ast")    == 0) options.print_ast    = true;
+				else if (strcmp(arg, "ir")     == 0) options.print_ir     = true;
+				else if (strcmp(arg, "disasm") == 0) options.print_disasm = true;
 			}
 			else {
 				fprintf(stderr, "unknown option '%s'\n", option);

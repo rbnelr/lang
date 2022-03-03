@@ -1,132 +1,75 @@
 #include "llvm_pch.hpp"
 #include "llvm_disasm.hpp"
-#include "llvm_sec_mem_manager.hpp"
 #include "frontend/builtins.hpp"
 
 #include <regex>
 
-
 struct DisasmPrinter {
 	LLVMDisasmContextRef DCR;
+	LoadedSections& sections;
+	
+	size_t code_bytes_len = 10; // 0 to not print code bytes
 
-	DisasmPrinter (llvm::Triple const& TT) {
+	bool print_strlit = true;
+	int strlit_maxlen = 20;
+	
+	DisasmPrinter (llvm::Triple const& TT, LoadedSections& sections): sections{sections} {
 		DCR = LLVMCreateDisasm(TT.str().c_str(), NULL, 0, NULL, NULL);
 
 		LLVMSetDisasmOptions(DCR,
 			LLVMDisassembler_Option_UseMarkup |
-			LLVMDisassembler_Option_AsmPrinterVariant
+			LLVMDisassembler_Option_AsmPrinterVariant |
+
+			LLVMDisassembler_Option_SetInstrComments
+			//LLVMDisassembler_Option_PrintImmHex // doesn't work?
 		);
+
+		for (auto* bi : BUILTIN_FUNCS)
+			sections.symbols.push_back({ (void*)bi->builtin_func_ptr, std::string(bi->ident) });
+		
+		sections.sort_symbols();
+		
+	#if 1
+		print_seperator("Symbols:");
+		for (auto& sym : sections.symbols) {
+			printf("%24s: %p\n", sym.name.c_str(), sym.addr);
+		}
+	#endif
 	}
 	~DisasmPrinter () {
 		LLVMDisasmDispose(DCR);
 	}
 
-	struct Symbol {
-		llvm::StringRef name;
-		const uint8_t*  addr;
-	};
-	std::vector<Symbol> symbols;
-
-	void handle_symbols (llvm::RuntimeDyld& dyld, llvm::object::ObjectFile& obj) {
-		print_seperator("Symbols", '-');
-
-		for (auto& sym : obj.symbols()) {
-			auto getname = sym.getName();
-			if (!getname) continue; // skip on error
-
-			auto name = getname.get();
-			auto eval_sym = dyld.getSymbol(name);
-			auto addr = (const uint8_t*)eval_sym.getAddress();
-
-			if (options.disasm_print_symbols)
-				printf("%-16.*s : %p\n", (int)name.size(), name.data(), addr);
-
-			if (addr != nullptr) {
-				symbols.push_back({ name, addr });
-			}
-		}
-
-		for (auto* bi : BUILTIN_FUNCS)
-			symbols.push_back({ { bi->ident.data(), bi->ident.size() }, (const uint8_t*)bi->builtin_func_ptr });
-
-		std::sort(symbols.begin(), symbols.end(), [] (Symbol const& l, Symbol const& r) {
-			return std::less<uintptr_t>()((uintptr_t)l.addr, (uintptr_t)r.addr);
-		});
-	}
-
-	void print_disasm (
-			llvm::RuntimeDyld& dyld,
-			llvm::object::ObjectFile& obj,
-			llvm::RuntimeDyld::LoadedObjectInfo& loadedObj,
-			SectionMemoryManager& sec_mem) {
-
+	void print_disasm () {
+		
 		print_seperator("Disassembly:");
 
-		handle_symbols(dyld, obj);
-		
-		for (auto& alloc : sec_mem.allocators)
-		for (auto& sec : alloc.sections) {
-
-			size_t reported_size;
-
-			// Search section list for the one with the name (with a proper LLVM API our SectionMemoryManager would know about this already)
-			// TODO: copy and modify LLVM backend?
-			auto find_section = [&] () {
-				// HACK: Any way to query which Sections exist in the RuntimeDyld is not made public for some reason
-				// This is despite the fact that I can ask for Section addresses and (bogus) sizes by section ID
-				// so exposing things by section ID yet not exposing the SectionRef -> sectionID mapping is just nonsensical imho
-				// Since I can't find a way to easily access info about the section and I think I should be able to (deriving etc. all are not possible)
-				// I'm just going to hack it with a pointer cast, sue me.
-				using Map = llvm::RuntimeDyld::LoadedObjectInfo::ObjSectionToIDMap;
-				auto& ObjSectionToID = *(Map*)((char*)&loadedObj + sizeof(loadedObj) - sizeof(Map));
-
-				for (auto& sec2ID : ObjSectionToID) {
-					//auto sec_getname = sec2ID.first.getName();
-					auto sec_id = sec2ID.second;
-
-					auto loadAddr = dyld.getSectionLoadAddress(sec_id);
-					reported_size = dyld.getSectionContent(sec_id).size();
-
-					if (sec.ptr == (void*)loadAddr) {
-						return sec2ID.first;
-					}
-				}
-
-				assert(false);
-				return llvm::object::SectionRef{};
-			};
-
-			llvm::object::SectionRef secref = find_section();
-
-			auto getname = secref.getName();
-			if (!getname) continue; // skip on error
-
-			auto name = getname.get();
-
-			print_seperator(strview{ name.data(), name.size() }, '-');
-			printf(";; OS alloc size       : %8llu\n"
-			       ";; LLVM alloc size     : %8llu\n"
-			       ";; LLVM reported size  : %8llu\n", sec.alloc_size, sec.sec_size, reported_size);
+		for (auto& seg : sections.segments) {
 			
-			auto data = (const uint8_t*)sec.ptr;
-			auto size = sec.sec_size;
+			printf("\n");
+			print_seperator(prints("%s (size: %llu)", seg.get_name(), seg.size), '-');
 			
-			if (size == 0) {
+			if (seg.size == 0) {
 				printf("<empty>\n");
 				return;
 			}
 			else {
-				if (secref.isText()) {
-					print_code_section(data, size);
+				if (seg.type & MMAP_EXEC) {
+					print_code_section((uint8_t*)seg.addr, seg.size);
 				}
 				else {
-					print_data_section(data, size);
+					print_data_section((uint8_t*)seg.addr, seg.size);
 				}
 			}
+
 		}
 	}
 
-	void print_data_section (const uint8_t* data, size_t size) {
+	// Print data sections like:
+	// <loaded addr>    <offs>  <hex bytes>                          <char bytes>
+	// 000001A6F5431000 0000 |  46696262 6f6e6163 693a207b 697d207b  Fibbonaci: {i} {
+	// 000001A6F5431010 0010 |  697d0020 7b697d00 0a007371 7274287b  i}. {i}...sqrt({
+	void print_data_section (uint8_t* data, size_t size) {
 		int width = 16;
 
 		for (size_t offs = 0; offs < size; offs += width) {
@@ -153,109 +96,202 @@ struct DisasmPrinter {
 		}
 	}
 
-	void print_code_section (const uint8_t* data, size_t size) {
-		size_t offs = 0;
-		size_t remain = size;
+	// Print code sections like:
+	// <loaded addr>    <offs>  <hex bytes>                    <disasm code>                       <comment with addr info>
+	//                        @main:
+	// 000001A6F5430000 0000 |  48 83 EC 28                    sub    rsp, 40                      #
+	// 000001A6F5430004 0004 |  E8 27 00 00 00                 call   39                           # @fib_iter
+	void print_code_section (uint8_t* data, size_t size) {
 		
-		size_t cbytes_len = 10; // 0 to not print code bytes
+		// TODO: This is totally x64 specific! But ideally the disasm library would just provide enough info so it wouldn't be x64-specific
 
-		char str[64];
-		llvm::SmallString<64> str_untab;
-		// turn  "\tmov\trax, 8"  into  "mov     rax, 8"
-		// because printing this on the console with printf width specifiers does not work as expected
-		// and I didn't wanna find out if I can get it to work somehow
+		struct InstructionStr {
+			uint8_t*     ptr;
+			size_t       length;
+			std::string  str;
+			std::string  comment;
+		};
+		std::vector<InstructionStr> disasm;
+		
+		int next_label = 0;
+		struct Label {
+			uint8_t* addr;
+			int      id;
+		};
+		std::vector<Label> labels;
 
-		auto untabbify = [&] () {
-			str_untab.clear();
-			
-			size_t i = 0;
+		// extract destination address from "rip + <offs>" "call <offs>" or "jmp <offs>"
+		auto print_comment = [&] (char* str, uint8_t* rip_base) -> std::string {
 
-			while (str[i] == '\t') i++; // skip inital tabs
+			auto after_substr = [] (char* str, strview* out_substr) -> const char* {
+				strview strs[] = {
+					"rip +",
+					"call",
+					"jmp", "je", "jz", "jne", "jge", "jg", "jle", "jl",
+				};
 
-			while (str[i] != '\0') {
-				if (str[i] == '\t') {
-					size_t spaces = 8 - (i % 8);
-					for (size_t j=0; j<spaces; ++j) {
-						str_untab.push_back(' '); // align to next multiple of tab_width chars
+				for (auto substr : strs) {
+					for (int i=0; str[i] != '\0'; ++i) {
+						if (starts_with(&str[i], substr)) {
+							char const* cur = &str[i + substr.size()];
+							if (*cur < 'a' || *cur > 'z') { // exclude "jle" when matching "jl"
+								while (*cur == ' ' || *cur == '\t') cur++;
+							
+								*out_substr = substr;
+								return cur;
+							}
+						}
 					}
 				}
+				return nullptr;
+			};
+
+			strview substr;
+			auto offs_str = after_substr(str, &substr);
+			if (!offs_str) return {};
+
+			uint64_t rip_offs = (uint64_t)atoll(offs_str);
+			if (rip_offs == 0)
+				return {};
+
+			auto* ptr = rip_base + rip_offs;
+
+			LoadedSections::Symbol sym = {};
+
+			for (auto& Symbol : sections.symbols) {
+				if (ptr < Symbol.addr)
+					break;
+				sym = Symbol;
+			}
+			if (sym.addr == nullptr)
+				return {};
+
+			//printf(" %p", ptr);
+				
+			int sym_offs = (int)(ptr - (uint8_t*)sym.addr);
+
+			if (sym_offs == 0) {
+				if (print_strlit && starts_with(sym.name, ".Lstrlit.")) {
+					auto str = escape_string_capped((char*)ptr, strlit_maxlen);
+					return prints("\"%s\"", str.c_str());
+				}
 				else {
-					str_untab.push_back(str[i]);
+					return prints("@%.*s", (int)sym.name.size(), sym.name.data());
 				}
-				i++;
 			}
+			else {
+				if (substr[0] == 'j') {
+					// is a jump to a label
+					auto id = next_label++;
+					labels.push_back({ ptr, id });
 
-			str_untab.push_back('\0');
+					return prints(".L%d", id);
+				}
+				else {
+					return prints("@%.*s %+d", (int)sym.name.size(), sym.name.data(), sym_offs);
+				}
+			}
 		};
+		
+		char strbuf[64];
 
-		auto print_comment = [&] () {
-			char* int_str = nullptr;
+		uint8_t* instr = data;
 
-			for (int i=0; i<ARRLEN(str) && str[i] != '\0'; ++i) {
-				if (str[i] == ' ' && str[i+1] >= '0' && str[i+1] <= '9') {
-					int_str = &str[i+1];
-					break;
-				}
-			}
+		auto end = data + size;
 
-			if (int_str == nullptr)
-				return;
-
-			uint64_t val = (uint64_t)atoll(int_str);
+		while (instr < end) {
+			size_t instr_bytes = LLVMDisasmInstruction(DCR, instr, end - instr, (uint64_t)instr, strbuf, ARRLEN(strbuf));
 			
-			printf(" 0x%llx", val);
+			assert(instr_bytes > 0); // should always disassemble correctly as long as we pass valid bytes into LLVMDisasmInstruction
+			assert(strnlen(strbuf, ARRLEN(strbuf)) < ARRLEN(strbuf)-1); // make sure string is actually null terminated
+			
+			if (instr_bytes == 0)
+				break;
 
-			auto* ptr = (const uint8_t*)val;
-			for (auto& sym : symbols) {
-				if (sym.addr == ptr) {
-					printf(" @%.*s", (int)sym.name.size(), sym.name.data());
-					break;
-				}
-			}
-		};
+			auto str = untabbify(strbuf);
+			auto comment = print_comment(strbuf, instr + instr_bytes);
 
-		auto cur_sym = symbols.begin();
+			disasm.push_back({ instr, instr_bytes, std::move(str), std::move(comment) });
 
-		// prints string indented by a few spaces
-		while (size_t sz = LLVMDisasmInstruction(DCR, (uint8_t*)&data[offs], remain, offs, str, ARRLEN(str))) {
-			while (cur_sym != symbols.end() && cur_sym->addr < data + offs) {
+			instr += instr_bytes;
+		}
+		
+		std::stable_sort(labels.begin(), labels.end(), [] (Label const& l, Label const& r) {
+			return std::less<uintptr_t>()((uintptr_t)l.addr, (uintptr_t)r.addr);
+		});
+
+		auto cur_sym = sections.symbols.begin();
+		auto cur_lbl = labels.begin();
+
+		for (auto& instr : disasm) {
+			uint64_t offs = instr.ptr - data;
+
+			while (cur_sym != sections.symbols.end() && cur_sym->addr < instr.ptr) cur_sym++;
+			while (cur_sym != sections.symbols.end() && cur_sym->addr == instr.ptr) {
+				if (ansi_color_supported) fputs(ANSI_COLOR_GREEN, stdout);
+				printf("\n---------------------- @%.*s:\n", (int)cur_sym->name.size(), cur_sym->name.data());
 				cur_sym++;
 			}
-			if (cur_sym != symbols.end() && cur_sym->addr == data + offs) {
-				printf("\n                       @%.*s:\n",
-					(int)cur_sym->name.size(), cur_sym->name.data());
+
+			while (cur_lbl != labels.end() && cur_lbl->addr < instr.ptr) cur_lbl++;
+			while (cur_lbl != labels.end() && cur_lbl->addr == instr.ptr) {
+				if (ansi_color_supported) fputs(ANSI_COLOR_BOLD_BLUE, stdout);
+				printf("                       .L%d:\n", cur_lbl->id);
+				cur_lbl++;
 			}
 			
-			printf("%p %04" PRIX64 " |  ", data + offs, offs);
+			if (ansi_color_supported) fputs(ANSI_COLOR_BOLD_BLACK, stdout);
+			printf("%p %04" PRIX64 " |  ", instr.ptr, offs);
 
-			if (cbytes_len > 0) {
-				for (size_t i=0; i<sz; ++i)
-					printf("%02X ", data[offs+i]);
-				for (size_t i=sz; i<cbytes_len; ++i)
+			if (options.disasm_code_bytes > 0) {
+				for (size_t i=0; i<instr.length; ++i)
+					printf("%02X ", instr.ptr[i]);
+				for (size_t i=instr.length; i<code_bytes_len; ++i)
 					printf("   ");
 			}
-
-			untabbify();
 			
-			printf(" %-35s #", str_untab.data());
+			if (ansi_color_supported) fputs(ANSI_COLOR_RESET, stdout);
+			printf("%-34s", instr.str.c_str());
 
-			print_comment();
-
+			if (!instr.comment.empty()) {
+				if (ansi_color_supported) fputs(ANSI_COLOR_BOLD_BLACK, stdout);
+				printf(" # %s", instr.comment.c_str());
+			}
 			printf("\n");
-
-			offs += sz;
-			remain -= sz;
 		}
+		
+		if (ansi_color_supported) fputs(ANSI_COLOR_RESET, stdout);
+	}
+	
+	// turn  "\tmov\trax, 8"  into  "mov     rax, 8"
+	// because printing this on the console with printf width specifiers does not work as expected
+	// and I didn't wanna find out if I can get it to work somehow
+	std::string untabbify (const char* str) {
+		std::string out;
+		out.reserve(32);
+			
+		size_t i = 0;
+
+		while (str[i] == '\t') i++; // skip inital tabs
+
+		while (str[i] != '\0') {
+			if (str[i] == '\t') {
+				size_t spaces = 8 - (i % 8);
+				for (size_t j=0; j<spaces; ++j) {
+					out.push_back(' '); // align to next multiple of tab_width chars
+				}
+			}
+			else {
+				out.push_back(str[i]);
+			}
+			i++;
+		}
+
+		return out;
 	}
 };
 
-void print_llvm_disasm (
-		llvm::Triple const& TT,
-		llvm::RuntimeDyld& dyld,
-		llvm::object::ObjectFile& obj,
-		llvm::RuntimeDyld::LoadedObjectInfo& loadedObj,
-		SectionMemoryManager& sec_mem) {
-
-	DisasmPrinter printer { TT };
-	printer.print_disasm(dyld, obj, loadedObj, sec_mem);
+void print_llvm_disasm (llvm::Triple const& TT, LoadedSections& sections) {
+	DisasmPrinter printer { TT, sections };
+	printer.print_disasm();
 }

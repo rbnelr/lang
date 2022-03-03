@@ -1,16 +1,12 @@
 #pragma once
 #include <vector>
 #include <stdlib.h>
-#include "macro_stuff.hpp"
+#include "util/util.hpp"
 
 #include "Tracy.hpp"
 
 #define aligned_memalloc(size, align) _aligned_malloc(size, align)
 #define aligned_free(ptr)             _aligned_free(ptr)
-
-#define _DBG_MAGIC_NONALLOC 0xcc
-#define _DBG_MAGIC_UNINIT   0xcd
-#define _DBG_MAGIC_FREED    0xdd
 
 #ifdef NDEBUG
 	#define _DBG_CLEAR(ptr, val, size)

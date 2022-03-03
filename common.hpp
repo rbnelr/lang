@@ -13,25 +13,21 @@
 #include <unordered_map>
 #include <exception>
 
-#include "util/macros.hpp"
+#include "util/util.hpp"
 #include "util/string.hpp"
 #include "util/file_io.hpp"
 #include "util/console_colors.hpp"
 #include "util/timer.hpp"
 #include "util/smhasher/MurmurHash2.h"
-#include "util/macro_stuff.hpp"
 #include "util/allocators.hpp"
+
+#include "platform_layer.hpp"
 
 #include "Tracy.hpp"
 
 #include "options.hpp"
 
 using namespace kiss;
-
-inline constexpr size_t KB = (size_t)1024;
-inline constexpr size_t MB = (size_t)1024 * 1024;
-inline constexpr size_t GB = (size_t)1024 * 1024 * 1024;
-inline constexpr size_t TB = (size_t)1024 * 1024 * 1024 * 1024;
 
 ////
 typedef std::string_view strview;

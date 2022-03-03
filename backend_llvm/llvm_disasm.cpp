@@ -16,12 +16,12 @@ struct DisasmPrinter {
 	DisasmPrinter (llvm::Triple const& TT, LoadedSections& sections): sections{sections} {
 		DCR = LLVMCreateDisasm(TT.str().c_str(), NULL, 0, NULL, NULL);
 
-		LLVMSetDisasmOptions(DCR,
-			LLVMDisassembler_Option_UseMarkup |
-			LLVMDisassembler_Option_AsmPrinterVariant |
+		LLVMSetDisasmOptions(DCR, 0
+			| LLVMDisassembler_Option_UseMarkup
+			| LLVMDisassembler_Option_AsmPrinterVariant
 
-			LLVMDisassembler_Option_SetInstrComments
-			//LLVMDisassembler_Option_PrintImmHex // doesn't work?
+			//| LLVMDisassembler_Option_SetInstrComments // only comment I saw was no very useful:  movsd  xmm6, qword ptr [rip + 4074]    # xmm6 = mem[0],zero
+			//| LLVMDisassembler_Option_PrintImmHex // doesn't work?
 		);
 
 		for (auto* bi : BUILTIN_FUNCS)
@@ -243,7 +243,7 @@ struct DisasmPrinter {
 			if (ansi_color_supported) fputs(ANSI_COLOR_BOLD_BLACK, stdout);
 			printf("%p %04" PRIX64 " |  ", instr.ptr, offs);
 
-			if (options.disasm_code_bytes > 0) {
+			if (options.disasm_code_bytes) {
 				for (size_t i=0; i<instr.length; ++i)
 					printf("%02X ", instr.ptr[i]);
 				for (size_t i=instr.length; i<code_bytes_len; ++i)
@@ -251,7 +251,7 @@ struct DisasmPrinter {
 			}
 			
 			if (ansi_color_supported) fputs(ANSI_COLOR_RESET, stdout);
-			printf("%-34s", instr.str.c_str());
+			printf("%-36s", instr.str.c_str());
 
 			if (!instr.comment.empty()) {
 				if (ansi_color_supported) fputs(ANSI_COLOR_BOLD_BLACK, stdout);

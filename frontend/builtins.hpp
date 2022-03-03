@@ -12,7 +12,7 @@ struct _FormatOpt {
 	char   pad_char; // only valid if pad_width > 0
 };
 
-inline void print (const char* str, size_t width, _FormatOpt& opt) {
+inline _NOINLINE void print (const char* str, size_t width, _FormatOpt& opt) {
 	size_t padl = 0;
 	size_t padr = 0;
 	if (opt.pad_width > width) {
@@ -102,24 +102,6 @@ inline _FormatOpt _get_format_padding (const char*& format) {
 	return opt;
 }
 
-inline void _format (const char*& format, va_list vl) {
-	const char* cur = format;
-	
-	_FormatOpt opt = _get_format_padding(cur);
-
-	switch (*cur) {
-		case 'b': print( (bool)va_arg(vl, int        ) ? "true":"false", opt); break;
-		case 'i': print(       va_arg(vl, int64_t    )                 , opt); break;
-		case 'f': print(       va_arg(vl, double     )                 , opt); break;
-		case 's': print(       va_arg(vl, char const*)                 , opt); break;
-		default:
-			throw RuntimeExcept{"runtime error: printf: unknown type specifier"};
-	}
-	cur++;
-
-	format = cur;
-}
-
 inline void my_printf (const char* format, ...) {
 #ifdef TRACY_ENABLE  // disable prints for profiling
 	return;
@@ -132,8 +114,18 @@ inline void my_printf (const char* format, ...) {
 
 	while (*cur != '\0') {
 		if (*cur == '{') {
+			cur++;
 
-			_format(++cur, vl);
+			_FormatOpt opt = _get_format_padding(cur);
+
+			switch (*cur++) {
+				case 'b': print( (bool)va_arg(vl, int        ) ? "true":"false", opt); break;
+				case 'i': print(       va_arg(vl, int64_t    )                 , opt); break;
+				case 'f': print(       va_arg(vl, double     )                 , opt); break;
+				case 's': print(       va_arg(vl, char const*)                 , opt); break;
+				default:
+					throw RuntimeExcept{"runtime error: printf: unknown type specifier"};
+			}
 			
 			if (*cur != '}')
 				throw RuntimeExcept{"runtime error: printf: expected '}' after '{'"};

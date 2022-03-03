@@ -248,9 +248,33 @@ struct JIT {
 
 				// add a symbol for the STUBS section
 				strview name = { S.getName().data(), S.getName().size() };
-				if (name == "$__STUBS" && S.blocks_size() > 0) {
-					auto& B = *S.blocks().begin();
-					sections.symbols.push_back({ (void*)B->getAddress(), "_STUBS" });
+				if (name == "$__STUBS") {
+					// $__STUBS section contains 1 block for each external linked function
+					// Those blocks represent the function stub, ie. jmp <4 bytes to GOT entry>
+					// the block contains 1 edge whose target is the GOT entry symbol
+					// the GOT entry symbol is associated with 1 block of whic the target symbol is the actual external function symbol
+					// ex:
+					// GOT_Sym  = Stub_Sec->blocks[i]->edges[0]->TargetSymbol
+					// func_Sym = GOT_Sym->block->edges[0]->TargetSymbol
+					// func_Sym->Name = "printf"
+
+					if (S.blocks_size() > 0) {
+						auto* B = *S.blocks().begin();
+						sections.symbols.push_back({ (void*)B->getAddress(), "_STUBS" });
+					}
+
+					for (auto* B : S.blocks()) {
+						if (B->edges_size() < 1) continue;
+						auto& GOT_Sym = B->edges().begin()->getTarget();
+						
+						if (GOT_Sym.getBlock().edges_size() < 1) continue;
+						auto& func_Sym = GOT_Sym.getBlock().edges().begin()->getTarget();
+						
+						if (!func_Sym.hasName()) continue;
+
+						auto sr = func_Sym.getName();
+						sections.symbols.push_back({ (void*)B->getAddress(), std::string(sr.data(), sr.size()) });
+					}
 				}
 
 				for (auto* Sym : S.symbols()) {

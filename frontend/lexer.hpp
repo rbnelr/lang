@@ -293,7 +293,8 @@ constexpr size_t _tok_sz = sizeof(Token);
 // This lexer uses fills a fixed size buffer of tokens and allows you to consume tokens with eat()
 // and view a small windows of past and future tokens with operator[]
 struct Lexer {
-	const char* cur_char;
+	const char* source_cur;
+	const char* source_end;
 	const char* cur_line;
 	size_t      cur_lineno;
 
@@ -309,10 +310,13 @@ struct Lexer {
 	
 	Token buf[BUFSZ];
 
-	Lexer (const char* src) {
-		cur_char = src;
+	// source needs to be properly null terminated, but if a null bytes appears in the middle of the source (before source.size())
+	// we will throw an error on the '\0' char
+	Lexer (strview source) {
+		source_cur = source.data();
+		source_end = source.data() + source.size();
 		
-		cur_line = cur_char;
+		cur_line = source_cur;
 		cur_lineno = 1;
 
 		cur_tok = &buf[0];

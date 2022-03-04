@@ -69,7 +69,7 @@ printf("{i}\n", 1 - 5 * 2);
 h := 0;
 printf("{i} {i} {i} {i} {i} {i}\n", h++, h++, h++, h--, h--, h);
 
-printf("---------------\n");
+printf("-1-------------\n");
 k := 6;
 
 // error: post inc/decrement can only operate on variables.
@@ -87,7 +87,7 @@ printf("{i}\n", k);
 printf("\n");
 
 //// Scoped variables
-printf("---------------\n");
+printf("-2-------------\n");
 
 {
 	p := -3;
@@ -95,7 +95,7 @@ printf("---------------\n");
 }
 //printf("outer: {}\n", p); // error: unknown variable.
 
-printf("---------------\n");
+printf("-3-------------\n");
 
 p := -4;
 printf("outer: {i}\n", p);
@@ -106,13 +106,13 @@ printf("outer: {i}\n", p);
 }
 printf("outer: {i}\n", p);
 
-printf("---------------\n");
+printf("-4-------------\n");
 
 for i:=0; i<2; i++ {}
 //printf("access i after loop: {}\n", i); // error: unknown variable.
 
 //// Comparisons and booleans
-printf("---------------\n");
+printf("-5-------------\n");
 
 //printf("{}\n", null + 1); // error: types do not match.
 //printf("{}\n", null > 1); // error: types do not match.
@@ -130,7 +130,7 @@ printf("5 >= 5            : {b}\n", 5 >= 5         );
 printf("5 > 5             : {b}\n", 5 > 5          );
 printf("2>3 == 3>4        : {b}\n", 2>3 == 3>4     );
 
-printf("---------------\n");
+printf("-6-------------\n");
 
 { //// ifs
 	a := true;
@@ -167,7 +167,7 @@ printf("---------------\n");
 	}
 }
 
-printf("---------------\n");
+printf("-7-------------\n");
 
 
 { //// ternary
@@ -191,7 +191,7 @@ printf("---------------\n");
 
 //for "hello World" {}  error: ; expected
 
-printf("---------------\n");
+printf("-8-------------\n");
 
 //for i:=0; i<10; break {}  // syntax error: number or variable expected.
 
@@ -226,14 +226,14 @@ printf("\n");
 	printf("\n");
 }
 
-printf("---------------\n");
+printf("-9-------------\n");
 
 for i:=0; i<5*2; i++ {
 	printf("foo ");
 }
 
 printf("\n");
-printf("---------------\n");
+printf("-10------------\n");
 
 for y:=0; y<4; y++ {
 	for x:=0; x<4; x++ {
@@ -243,7 +243,7 @@ for y:=0; y<4; y++ {
 }
 
 printf("\n");
-printf("---------------\n");
+printf("-11------------\n");
 
 // 
 sqr := 625; // 25^2
@@ -263,7 +263,7 @@ for i:=0; i<10; i++ {
 	printf("{i} is even\n", i);
 }
 
-printf("---------------\n");
+printf("-12------------\n");
 
 {
 	printf("simple_loop:\n");

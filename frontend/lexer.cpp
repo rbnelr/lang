@@ -148,7 +148,7 @@ struct _Keyword {
 void Lexer::lex (Token* first_tok, Token* end_tok) {
 	ZoneScoped;
 
-	const char* cur = cur_char; // copy into local to help compiler avoid reloading this during the loop
+	const char* cur = source_cur; // copy into local to help compiler avoid reloading this during the loop
 
 	Token* out_tok = first_tok;
 
@@ -233,10 +233,8 @@ void Lexer::lex (Token* first_tok, Token* end_tok) {
 
 		// non-whitespace character outside of comment -> start of a token
 
-		if (out_tok >= end_tok) {
-			cur_char = cur;
-			break; // end lexing loop
-		}
+		if (out_tok >= end_tok)
+			goto L_exit; // end lexing loop
 		
 		const char* start = cur;
 
@@ -257,6 +255,9 @@ void Lexer::lex (Token* first_tok, Token* end_tok) {
 			case '\0': {
 				tok.type = T_EOF;
 				tok.src.length = 1;
+
+				if (cur != source_end)
+					SYNTAX_ERROR(get_source_range(cur, cur+1), "null byte in source file");
 
 				// break would exit switch
 				// and we really want the EOF case to be in the switch rather than a if before it, since this removes one conditional from every token lexing)
@@ -392,7 +393,7 @@ void Lexer::lex (Token* first_tok, Token* end_tok) {
 	}
 	L_exit:
 
-	cur_char = cur;
+	source_cur = cur;
 }
 
 #undef SIMPLE_TOK

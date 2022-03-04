@@ -91,7 +91,7 @@ struct LLVM_gen {
 			auto linkage = llvm::Function::InternalLinkage;
 			
 			if (funcdef->ident == "main")
-				linkage = llvm::Function::ExternalLinkage;
+				linkage = llvm::Function::ExternalLinkage; // need this to be able to actually call it later when JITed
 
 			declare_function(funcdef, linkage);
 		}
@@ -381,9 +381,8 @@ struct LLVM_gen {
 		llvm::raw_svector_ostream OS(msg);
 
 		if (verifyFunction(*fdef->llvm_func, &OS)) {
-			fprintf(stderr, ">>> LLVM error: %.*s\n", (int)msg.str().size(), msg.str().data());
-			fflush(stderr);
-			//throw CompilerExcept{ "LLVM: error!", fdef->src_tok->source };
+			auto str = msg.str();
+			ERROR(fdef->src, "LLVM error: %.*s\n", (int)str.size(), str.data());
 		}
 	}
 	
@@ -442,7 +441,10 @@ struct LLVM_gen {
 	#else
 		auto* func = llvm::Function::Create(func_ty, linkage, SR(fdef->ident), *modl);
 	#endif
-		//func->addAttribute(0, llvm::Attribute::NoUnwind); // still get eh_frames
+		func->addFnAttr(llvm::Attribute::NoUnwind); // don't need exception data when compiling
+		assert(!func->hasFnAttribute(llvm::Attribute::UWTable));
+		
+		func->setCallingConv(llvm::CallingConv::Win64);
 
 		// set argument names
 		unsigned i = 0;

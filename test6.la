@@ -72,9 +72,15 @@ a, b = b, a;
 
 printf("{i}|{i}\n", a,b);
 
+//c := a, b;
+//
+//a, b = a;
+//a = a, b;
+
+printf("{i}|{i}\n", a,b);
+
 // not allowed
 //a, b += b, a;
-//printf("{i}|{i}\n", a,b);
 
 
 //struct Ret {

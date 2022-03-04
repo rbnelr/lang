@@ -74,9 +74,6 @@
     <ClInclude Include="..\..\frontend\builtins.hpp">
       <Filter>frontend</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\frontend\errors.hpp">
-      <Filter>frontend</Filter>
-    </ClInclude>
     <ClInclude Include="..\..\frontend\parser.hpp">
       <Filter>frontend</Filter>
     </ClInclude>
@@ -121,6 +118,7 @@
     </ClInclude>
     <ClInclude Include="..\..\profiling.hpp" />
     <ClInclude Include="..\..\platform_layer.hpp" />
+    <ClInclude Include="..\..\errors.hpp" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="util">

@@ -1,8 +1,8 @@
 #include "common.hpp"
 
 #include "options.hpp"
+#include "errors.hpp"
 
-#include "frontend/errors.hpp"
 #include "frontend/lexer.hpp"
 #include "frontend/parser.hpp"
 #include "frontend/semantic.hpp"
@@ -64,10 +64,10 @@ void set_options (int argc, const char** argv) {
 
 bool compile () {
 
-	std::string tok;
+	std::string source;
 	{
 		ZoneScopedN("load_text_file");
-		if (!load_text_file(options.filename.c_str(), &tok)) {
+		if (!load_text_file(options.filename.c_str(), &source)) {
 			fprintf(stderr, "file not found!\n");
 			return false;
 		}
@@ -88,7 +88,7 @@ bool compile () {
 			{
 				ZoneScopedNC("frontend", tracy::Color::CadetBlue);
 
-				parse(modl, tok.c_str());
+				parse(modl, source);
 				semantic_analysis(modl);
 			}
 

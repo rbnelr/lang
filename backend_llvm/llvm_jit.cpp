@@ -10,8 +10,6 @@ using namespace llvm::orc;
 
 struct JIT {
 
-	llvm::ExitOnError     ExitOnErr;
-
 	Triple                         TT;
 
 	std::unique_ptr<TargetMachine> TM;
@@ -392,25 +390,21 @@ struct JIT {
 			JTMB.setCodeModel(CodeModel::Small);
 			JTMB.setRelocationModel(Reloc::PIC_);
 
-			// still get eh_frames
-			//TargetOptions O = JTMB.getOptions();
-			//O.ExceptionModel = ExceptionHandling::None;
-			//JTMB.setOptions(O);
+			 // with nounwind on all my functions I don't get eh_frames anymore, but still set this anyway, can't hurt I guess
+			JTMB.getOptions().ExceptionModel = ExceptionHandling::None;
 
-			TM = ExitOnErr(JTMB.createTargetMachine());
+			TM = ThrowOnErr(JTMB.createTargetMachine());
 		}
 
 		{
 			auto MM = std::make_unique<MemoryManager>(sections);
 			auto SSP = std::make_shared<SymbolStringPool>();
-			auto PageSize = ExitOnErr(sys::Process::getPageSize());
 
-
-			auto EPC = std::make_unique<SelfExecutorProcessControl>(std::move(SSP), TT, PageSize, std::move(MM));
+			auto EPC = std::make_unique<SelfExecutorProcessControl>(std::move(SSP), TT, mmap_page_size.page_size, std::move(MM));
 			ES = std::make_unique<ExecutionSession>(std::move(EPC));
 		}
 
-		DL = std::make_unique<DataLayout>(TM->createDataLayout()); // need to copy DL here (we can't simplt assign since DL does not have a default ctor)
+		DL = std::make_unique<DataLayout>(TM->createDataLayout()); // need to copy DL here (we can't simply assign since DL does not have a default ctor)
 		Mangle = std::make_unique<MangleAndInterner>(*ES, *DL);
 
 		LL = std::make_unique<ObjectLinkingLayer>(*ES, ES->getExecutorProcessControl().getMemMgr());
@@ -473,12 +467,8 @@ struct JIT {
 		ZoneScoped;
 
 		llvm::MCContext* Ctx;
-		if (TM->addPassesToEmitMC(MCgen, Ctx, ObjStream)) {
-			ExitOnErr(llvm::make_error<llvm::StringError>(
-				"Target does not support MC emission",
-				llvm::inconvertibleErrorCode())
-			);
-		}
+		if (TM->addPassesToEmitMC(MCgen, Ctx, ObjStream))
+			throw RuntimeExcept("Target does not support MC emission");
 	}
 
 
@@ -524,46 +514,14 @@ struct JIT {
 		auto ObjBuffer = std::make_unique<llvm::SmallVectorMemoryBuffer>(
 			std::move(MCgen_ObjBufferSV),
 			modl->getModuleIdentifier() + "-jitted-objectbuffer"
-			);
+		);
 
 	#ifndef NDEBUG
 		llvm::DebugFlag = 0;
 	#endif
 
-		//obj_test(*ObjBuffer);
-
 		LL->add(RT, std::move(ObjBuffer));
 	}
-
-	/*
-	void obj_test (llvm::MemoryBufferRef ObjBuffer) {
-
-		print_seperator("Symbols");
-
-		auto Obj = object::ObjectFile::createObjectFile(ObjBuffer);
-		if (!Obj)
-			return;
-
-		for (auto& sym : (*Obj)->symbols()) {
-			auto nameErr = sym.getName();
-			if (!nameErr) continue; // skip on error
-			auto name = *nameErr;
-			
-			void* addr = nullptr;
-			auto addrErr = sym.getAddress();
-			if (addrErr) addr = (void*)*addrErr;
-			
-			uint64_t val = 0;
-			auto valErr = sym.getValue();
-			if (valErr) val = *valErr;
-
-			object::SectionRef sec = {};
-			auto secErr = sym.getSection();
-			if (secErr) sec = **secErr;
-
-			printf("%20.*s: %p, %llu\n", (int)name.size(),name.data(), addr, val);
-		}
-	}*/
 
 	void compile (llvm::Module * modl) {
 		ZoneScoped;
@@ -584,9 +542,9 @@ struct JIT {
 	void load () {
 		ZoneScoped;
 
-		// during lookup is actually when linking happens and the original ObjBuffer is deleted
+		// linking actually happens during lookup (and the original ObjBuffer, LinkGraph etc. are deleted)
 		auto str = Mangle->operator()("main");
-		auto lookup = ExitOnErr(ES->lookup({ MainJD }, str));
+		auto lookup = ThrowOnErr(ES->lookup({ MainJD }, str));
 		main = (main_fp)lookup.getAddress();
 
 		if (options.print_disasm)

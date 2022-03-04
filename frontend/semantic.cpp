@@ -703,6 +703,10 @@ struct SemanticAnalysis {
 			recurse(op->rhs);
 
 			if (op->lhs->kind == A_EXPR_LIST || op->rhs->kind == A_EXPR_LIST) {
+				
+				if (op->op != OP_ASSIGN)
+					ERROR(op->src, "compound assigment not allowed with tuple syntax");
+
 				auto get_elems = [] (AST* ast) -> arrview<AST*> {
 					if (ast->kind == A_EXPR_LIST) {
 						return ((AST_expr_list*)ast)->expressions;

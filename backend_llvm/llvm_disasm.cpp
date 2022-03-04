@@ -28,13 +28,6 @@ struct DisasmPrinter {
 			sections.symbols.push_back({ (void*)bi->builtin_func_ptr, std::string(bi->ident) });
 		
 		sections.sort_symbols();
-		
-	#if 1
-		print_seperator("Symbols:");
-		for (auto& sym : sections.symbols) {
-			printf("%24s: %p\n", sym.name.c_str(), sym.addr);
-		}
-	#endif
 	}
 	~DisasmPrinter () {
 		LLVMDisasmDispose(DCR);
@@ -43,6 +36,13 @@ struct DisasmPrinter {
 	void print_disasm () {
 		
 		print_seperator("Disassembly:");
+
+	#if 0
+		print_seperator("Symbols:", '-');
+		for (auto& sym : sections.symbols) {
+			printf("%24s: %p\n", sym.name.c_str(), sym.addr);
+		}
+	#endif
 
 		for (auto& seg : sections.segments) {
 			

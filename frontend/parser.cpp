@@ -825,7 +825,7 @@ struct Parser {
 	}
 };
 
-void parse (AST_Module& modl, const char* src) {
+void parse (AST_Module& modl, strview src) {
 	ZoneScoped;
 	
 #if TRACY_ENABLE

@@ -472,4 +472,4 @@ struct AST_Module {
 
 void dbg_print (AST* node, int depth=0);
 
-void parse (AST_Module& modl, const char* src);
+void parse (AST_Module& modl, strview src);

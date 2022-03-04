@@ -1,6 +1,6 @@
 #pragma once
 #include "common.hpp"
-#include "lexer.hpp"
+#include "frontend/lexer.hpp"
 
 inline constexpr char const* CONCOL_ERR      = "\x1b[0;1;31m";
 inline constexpr char const* CONCOL_ERR_SRC  = "\x1b[0;1;37m";
@@ -110,9 +110,7 @@ struct CompilerExcept {
 	ErrorSource              err;
 	smallvec<ErrorSource, 8> notes;
 
-	CompilerExcept (ErrorSource err, std::initializer_list<ErrorSource> notes = {}): err{err}, notes{notes} {
-		
-	}
+	CompilerExcept (ErrorSource err, std::initializer_list<ErrorSource> notes = {}): err{err}, notes{notes} {}
 
 	void print (char const* filename) {
 		err.print(filename, CONCOL_ERR, CONCOL_ERR_SRC);
@@ -147,6 +145,12 @@ template <typename... Args>
 
 struct RuntimeExcept {
 	const char* errstr;
+	std::string errstr_storage;
+
+	// Construct with simple string literal
+	RuntimeExcept (const char* str): errstr_storage{}, errstr{str} {}
+	// Construct with owned std::string
+	RuntimeExcept (std::string&& str): errstr_storage{std::move(errstr)}, errstr{errstr_storage.c_str()} {}
 
 	void print () {
 		if (ansi_color_supported) fputs(CONCOL_ERR, stderr);

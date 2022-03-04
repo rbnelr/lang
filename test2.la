@@ -44,7 +44,6 @@ func fib_iter () {
 fib_iter();
 */
 
-/*
 func sqrt (square : int) = (sqrt : int) { 
 	sqrt = -1;
 	for i:=0; i<100; i++ {
@@ -57,7 +56,6 @@ func sqrt (square : int) = (sqrt : int) {
 }
 
 sqrt(625); // 25^2
-*/
 
 func pascal_tri (rows : int) {
 	func get_cell (i : int, row : int) = (result : int) {
@@ -73,7 +71,7 @@ func pascal_tri (rows : int) {
 		return a + b;
 	}
 	for row:=0; row < rows; row++ {
-
+ 
 		for i:=0; i < rows-1 - row; i++ {
 			printf("  ");
 		}
@@ -87,15 +85,15 @@ func pascal_tri (rows : int) {
 	}
 }
 
-// pascal_tri(13);
-for i:=0; i<=13; i++ {
-	start := timer();
-	
-	pascal_tri(i);
-	
-	dur := timer_end(start);
-	printf("pascal_tri({i}): {f} ms\n\n", i, dur * 1000.0);
-}
+pascal_tri(13);
+//for i:=0; i<=13; i++ {
+//	start := timer();
+//	
+//	pascal_tri(i);
+//	
+//	dur := timer_end(start);
+//	printf("pascal_tri({i}): {f} ms\n\n", i, dur * 1000.0);
+//}
 
 /*
 func test (a : int, b : int) = (ret : int) {

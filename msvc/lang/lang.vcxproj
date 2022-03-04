@@ -318,9 +318,9 @@
     <ClInclude Include="..\..\backend_llvm\llvm_pch.hpp" />
     <ClInclude Include="..\..\backend_llvm\llvm_sec_mem_manager.hpp" />
     <ClInclude Include="..\..\common.hpp" />
+    <ClInclude Include="..\..\errors.hpp" />
     <ClInclude Include="..\..\frontend\basic_types.hpp" />
     <ClInclude Include="..\..\frontend\builtins.hpp" />
-    <ClInclude Include="..\..\frontend\errors.hpp" />
     <ClInclude Include="..\..\frontend\keyword_hash.hpp" />
     <ClInclude Include="..\..\frontend\parser.hpp" />
     <ClInclude Include="..\..\frontend\semantic.hpp" />

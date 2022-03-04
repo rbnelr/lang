@@ -8,13 +8,13 @@
 #ifdef __GNUC__ // GCC 4.8+, Clang, Intel and other compilers compatible with GCC (-std=c++0x or above)
 	#define _ASSUME(cond) if (!(cond)) __builtin_unreachable()
 	#define _UNREACHABLE __builtin_unreachable()
-	#define _FORCEINLINE __attribute__((always_inline)) inline
+	#define _FORCEINLINE __attribute__((always_inline)) inline // added inline keyword after always_inline because MSVC __forceinline has inline implicitly
 	#define _NOINLINE    __attribute__((noinline))
 
 #elif defined(_MSC_VER) // MSVC
 	#define _ASSUME(cond) __assume(cond)
 	#define _UNREACHABLE  __assume(false)
-	#define _FORCEINLINE  __forceinline
+	#define _FORCEINLINE  __forceinline // make sure to not type _FORCEINLINE inline, since you'll get a warning
 	#define _NOINLINE     __declspec(noinline)
 #else
 	#define _ASSUME(cond)

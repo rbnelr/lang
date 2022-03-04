@@ -63,7 +63,7 @@
 
 #pragma warning(pop)
 
-_FORCEINLINE inline llvm::StringRef SR (std::string_view sv) {
+_FORCEINLINE llvm::StringRef SR (std::string_view sv) {
 	return { sv.data(), sv.size() };
 }
 
@@ -75,8 +75,14 @@ _FORCEINLINE inline llvm::StringRef SR (std::string_view sv) {
 	OS << err;
 	throw RuntimeExcept{ std::move(str) };
 }
+
+_FORCEINLINE void ThrowOnErr (llvm::Error&& err) {
+	if (err)
+		ThrowErr(std::move(err));
+}
+
 template <typename T>
-_FORCEINLINE inline T ThrowOnErr (llvm::Expected<T>&& E) {
+_FORCEINLINE T ThrowOnErr (llvm::Expected<T>&& E) {
 	if (E) return std::move(*E);
 
 	ThrowErr(E.takeError());

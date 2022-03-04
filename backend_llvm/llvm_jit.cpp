@@ -377,7 +377,7 @@ struct JIT {
 		register_builtins();
 	}
 	~JIT () {
-		RT->remove();
+		ThrowOnErr(RT->remove());
 	}
 
 	void setup_jit () {
@@ -429,7 +429,7 @@ struct JIT {
 			};
 			builtin_syms.insert({ name, symb });
 		}
-		MainJD->define(absoluteSymbols(std::move(builtin_syms)));
+		ThrowOnErr(MainJD->define(absoluteSymbols(std::move(builtin_syms))));
 	}
 
 
@@ -520,7 +520,7 @@ struct JIT {
 		llvm::DebugFlag = 0;
 	#endif
 
-		LL->add(RT, std::move(ObjBuffer));
+		ThrowOnErr(LL->add(RT, std::move(ObjBuffer)));
 	}
 
 	void compile (llvm::Module * modl) {

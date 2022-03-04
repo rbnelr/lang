@@ -144,17 +144,14 @@ template <typename... Args>
 }
 
 struct RuntimeExcept {
-	const char* errstr;
-	std::string errstr_storage;
+	std::string errstr;
 
-	// Construct with simple string literal
-	RuntimeExcept (const char* str): errstr_storage{}, errstr{str} {}
-	// Construct with owned std::string
-	RuntimeExcept (std::string&& str): errstr_storage{std::move(errstr)}, errstr{errstr_storage.c_str()} {}
+	RuntimeExcept (const char* str): errstr{str} {}
+	RuntimeExcept (std::string&& str): errstr{std::move(str)} {}
 
 	void print () {
 		if (ansi_color_supported) fputs(CONCOL_ERR, stderr);
-		fprintf(stderr, "%s.\n", errstr);
+		fprintf(stderr, "%s.\n", errstr.c_str());
 		if (ansi_color_supported) fputs(ANSI_COLOR_RESET, stderr);
 
 		fflush(stderr);

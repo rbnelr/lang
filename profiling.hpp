@@ -265,12 +265,12 @@ void lex_profile () {
 
 	print_seperator("profiling files");
 	
-	//profile_lexer("prof_lex0_simple_toks.la");
-	//profile_lexer("prof_lex1_whitespace_comm.la");
-	//profile_lexer("prof_lex2_whitespace.la");
-	//profile_lexer("prof_lex3_numbers.la");
-	//profile_lexer("prof_lex4_identifiers.la");
-	//profile_lexer("test_100k.la");
+	profile_lexer("prof_lex0_simple_toks.la");
+	profile_lexer("prof_lex1_whitespace_comm.la");
+	profile_lexer("prof_lex2_whitespace.la");
+	profile_lexer("prof_lex3_numbers.la");
+	profile_lexer("prof_lex4_identifiers.la");
+	profile_lexer("test_100k.la");
 	profile_lexer("prof_lex5_realcode.la");
 }
 

@@ -33,7 +33,14 @@ void dbg_print (AST* node, int depth) {
 			std::string str(vardecl->ident);
 			printf(" %s (\n", str.c_str()); // , Type_str[var->valtype]
 			
-			dbg_print(vardecl->init, depth+1);
+			indent(depth); printf(")\n");
+		} break;
+
+		case A_FUNCARG: { auto* arg = (AST_func_arg*)node;
+			printf("(\n");
+
+			dbg_print(arg->decl, depth+1);
+			dbg_print(arg->init, depth+1);
 
 			indent(depth); printf(")\n");
 		} break;
@@ -68,10 +75,11 @@ void dbg_print (AST* node, int depth) {
 			indent(depth); printf(")\n");
 		} break;
 
-		case A_EXPR_LIST: { auto* expr_list = (AST_expr_list*)node;
+		case A_TUPLE:
+		case A_VARDECL_LIST: { auto* list = (AST_list*)node;
 			printf(" (\n");
-			for (auto* expr : expr_list->expressions)
-				dbg_print(expr, depth+1);
+			for (auto* e : list->elements)
+				dbg_print(e, depth+1);
 			indent(depth); printf(")\n");
 		} break;
 			
@@ -106,7 +114,7 @@ void dbg_print (AST* node, int depth) {
 			indent(depth); printf(")\n");
 		} break;
 
-		case A_STRUCTDEF: { auto* struc = (AST_structdef*)node;
+		case A_STRUCTDECL: { auto* struc = (AST_structdef*)node;
 			
 			printf(" (\n");
 			for (auto* n : struc->members)
@@ -115,7 +123,7 @@ void dbg_print (AST* node, int depth) {
 			
 		} break;
 
-		case A_FUNCDEF: { auto* f = (AST_funcdef*)node;
+		case A_FUNCDECL: { auto* f = (AST_funcdef*)node;
 			std::string str(f->ident);
 			printf(" %s\n", str.c_str());
 
@@ -265,6 +273,8 @@ struct Parser {
 		return call;
 	}
 	AST_var* single_var () {
+		assert(tok[0].type == T_IDENTIFIER);
+
 		auto* var = ast_alloc<AST_var>(A_VAR, tok[0]);
 		var->ident = tok[0].src.text();
 		tok.eat();
@@ -414,31 +424,63 @@ struct Parser {
 	// or <expression>,                    -> returns AST_expr_list* as AST* (single expression as expression list)
 	// or <expression>, <expression> [,]   -> returns AST_expr_list* as AST*
 	// ie. comma seperated list of expressions, with optional trailing comma followed by endtok
-	AST* expression_or_expr_list () {
+	AST* expression_or_expr_list (arrview<Token> list_start = {}) {
 		
 		auto src = tok[0].src;
-
+		
 		AST* expr = expression();
 
-		if (tok[0].type == T_COMMA) {
-			smallvec<AST*, 8> exprs;
-			exprs.push(expr);
-			
-			// allow for trailing comma
-			// loops until  ',' <endtok>  or  <endtok>
-			while (try_eat(T_COMMA) && is_expression(tok[0].type)) {
-				exprs.push( expression() );
-			}
+		if (tok[0].type == T_EQUALS || tok[0].type == T_SEMICOLON)
+			return expr; // single expression
 
-			auto* expr_list = ast_alloc<AST_expr_list>(A_EXPR_LIST);
-			expr_list->expressions = make_copy<AST*>(exprs);
-			expr_list->src = SourceRange::range(src, tok[-1].src);
+		smallvec<AST*, 32> list;
+		list.push(expr);
 
-			return expr_list;
+		while (tok[0].type != T_EQUALS && tok[0].type != T_SEMICOLON) {
+			list.push( expression() );
+
+			if (!try_eat(T_COMMA))
+				break;
 		}
-		else {
+
+		make_copy<AST*>(list);
+
+		comma_seperated_list<AST*>(T_PAREN_CLOSE, [this] () { return call_arg(); });
+		//while (tok[0].type == T_IDENTIFIER && tok[1].type == T_COMMA) {
+		//	list.push(tok[0]);
+		//	tok.eat();
+		//	tok.eat();
+		//
+		//	//if (!try_eat(T_COMMA))
+		//	//	break;
+		//}
+		
+		//if (tok[0].type == T_COMMA || list_start.count > 0) {
+		//	smallvec<AST*, 16> exprs;
+		//
+		//	for (auto& tok : list_start) {
+		//		auto* var = ast_alloc<AST_var>(A_VAR, tok);
+		//		var->ident = tok.src.text();
+		//		exprs.push(var);
+		//	}
+		//
+		//	exprs.push(expr);
+		//	
+		//	// allow for trailing comma
+		//	// loops until  a, b <non-comma>  or  a, b, <non-expression>
+		//	while (try_eat(T_COMMA) && is_expression(tok[0].type)) {
+		//		exprs.push( expression() );
+		//	}
+		//
+		//	auto* expr_list = ast_alloc<AST_list>(A_EXPR_LIST);
+		//	expr_list->elements = make_copy<AST*>(exprs);
+		//	expr_list->src = SourceRange::range(src, tok[-1].src);
+		//
+		//	return expr_list;
+		//}
+		//else {
 			return expr;
-		}
+		//}
 	}
 
 	// lhs = rhs   or  lhs += rhs  etc.
@@ -458,39 +500,60 @@ struct Parser {
 		return op;
 	}
 
-	//    <varname> :              -> variable declaration with inferred type (must be followed by  = <expression>  to infer the type from)
-	// or <varname> : <typename>   -> variable declaration with explicit type
-	AST_vardecl* var_decl () {
-		if (!(tok[0].type == T_IDENTIFIER && tok[1].type == T_COLON))
-			SYNTAX_ERROR_AFTER(tok, "expected variable declaration");
-
-		auto* var = ast_alloc<AST_vardecl>(A_VARDECL);
-		var->ident = tok[0].src.text();
+	//    var <varname>                -> variable declaration with inferred type (must be followed by  = <expression>  to infer the type from)
+	// or var <varname> : <typename>   -> variable declaration with explicit type
+	AST* var_decl () {
+		//smallvec<AST*, 16> vars;
+		//
+		//for (auto& tok : list) {
+		//	auto* decl = ast_alloc<AST_vardecl>(A_VARDECL);
+		//	decl->ident = tok.src.text();
+		//
+		//	vars.push(decl);
+		//}
 		
-		auto ident_src = tok[0].src;
-		auto colon_src = tok[1].src;
+		auto src = tok[0].src;
 
-		tok.eat(); // T_IDENTIFER
-		tok.eat(); // T_COLON
+		if (tok[0].type == T_VAR) // T_VAR optional (func arg lists do not need var)
+			tok.eat();
+		
+
+
+		auto* decl = ast_alloc<AST_vardecl>(A_VARDECL);
+		decl->ident = tok[0].src.text();
+		
+		expect(T_IDENTIFIER, "expected variable identifier");
+		
+		smallvec<AST*, 32> list;
+		
+		while (tok[0].type == T_IDENTIFIER) {
+			list.push( tok[0] );
+			tok.eat();
+
+			if (!try_eat(T_COMMA))
+				break;
+		}
 		
 		// type specifier
-		if (tok[0].type == T_IDENTIFIER) {
+		if (tok[0].type == T_COLON) {
+			tok.eat();
+
 			// ident specifies type, but these identifiers can only be matched to AST_Type's in the later phase
 			// leave later phase to find this on it's own
-			
-			var->typeexpr = tok[0].src;
-			tok.eat();
+			decl->typeexpr = tok[0].src;
+			expect(T_IDENTIFIER, "expected type identifier");
 		}
 		else {
 			// no type identifier, type will have to be inferred from initialization
 			
-			if (tok[0].type != T_ASSIGN)
-				SYNTAX_ERROR_AFTER(tok, "\neither specify type during variable declaration with \"<var> : <type>;\""
-				                        "\nor let type be inferred with \"<var> := <expr>;\"");
+			// TODO: re-add error for  [var a, b;] syntax while supporting [var a, b = ...;]
+			//if (tok[0].type != T_ASSIGN)
+			//	SYNTAX_ERROR_AFTER(tok, "\neither specify type during variable declaration with \"var <name> : <type>;\""
+			//	                        "\nor let type be inferred with \"var <name> = <expr>;\"");
 		}
 
-		var->src = SourceRange::range_with_arrow(ident_src, colon_src, tok[-1].src); // 'a :' or 'a : type' is the src range (with the arrow on the :)
-		return var;
+		decl->src = SourceRange::range_with_arrow(src, ident_src, tok[-1].src); // 'a' or 'a : type' is the src range (with the arrow on the a)
+		return decl;
 	}
 
 	// return <return_args>;
@@ -587,7 +650,7 @@ struct Parser {
 	AST* struct_def () {
 		auto src = tok[0].src;
 
-		auto* struc = ast_alloc<AST_structdef>(A_STRUCTDEF);
+		auto* struc = ast_alloc<AST_structdef>(A_STRUCTDECL);
 		tok.eat();
 		
 		expect(T_IDENTIFIER, "struct identifer expected after struct keyword!");
@@ -600,7 +663,8 @@ struct Parser {
 		expect(T_BLOCK_OPEN, "'{' expected after struct identifier");
 
 		while (tok[0].type != T_BLOCK_CLOSE) {
-			auto* var = var_decl();
+			auto* var = (AST_vardecl*)var_decl();
+			assert(var->kind == A_VARDECL);
 
 			if (tok[0].type == T_ASSIGN)
 				ERROR(tok[0].src, "vardecl initialization not allowed in struct (yet)");
@@ -617,8 +681,14 @@ struct Parser {
 		return struc;
 	}
 	
-	AST_vardecl* funcdecl_arg () {
-		auto* decl = (AST_vardecl*)var_decl();
+	AST_func_arg* funcdecl_arg () {
+		auto* arg = ast_alloc<AST_func_arg>(A_FUNCARG);
+		
+		auto ident_tok = tok[0].src;
+		auto colon_tok = tok[1].src;
+
+		arg->decl = (AST_vardecl*)var_decl();
+		assert(arg->decl->kind == A_VARDECL);
 		
 		if (try_eat(T_ASSIGN)) {
 			// TOOD: implement at const-foldable expression for default args at the very least
@@ -627,15 +697,17 @@ struct Parser {
 			// the question is where the const folding happens -> wait until I get to actually implementing compile-time execution
 
 			// only expression, not expression_or_expr_list() since we are already in a comma-seperated-list
-			decl->init = expression();
+			arg->init = expression();
 
-			if (decl->init->kind != A_LITERAL)
-				ERROR(decl->init->src, "only literals allowed as default argument values (for now)");
+			if (arg->init->kind != A_LITERAL)
+				ERROR(arg->init->src, "only literals allowed as default argument values (for now)");
 			
-			assert(decl->init->type.ty && decl->init->type.rval);
+			assert(arg->init->type.ty && arg->init->type.rval);
 		}
 
-		return decl;
+		arg->src = SourceRange::range_with_arrow(ident_tok, colon_tok, tok[-1].src);
+
+		return arg;
 	}
 
 	//    func <funcname> (<arg_decl>, <arg_decl>, ...) <block>
@@ -643,7 +715,7 @@ struct Parser {
 	AST* function_def () {
 		auto src = tok[0].src;
 
-		auto* func = ast_alloc<AST_funcdef>(A_FUNCDEF);
+		auto* func = ast_alloc<AST_funcdef>(A_FUNCDECL);
 		tok.eat();
 		
 		if (tok[0].type != T_IDENTIFIER)
@@ -652,7 +724,7 @@ struct Parser {
 		tok.eat();
 
 		expect(T_PAREN_OPEN, "'(' expected for function argument list!");
-		func->args = comma_seperated_list<AST_vardecl*>(T_PAREN_CLOSE, [this] () { return funcdecl_arg(); });
+		func->args = comma_seperated_list<AST_func_arg*>(T_PAREN_CLOSE, [this] () { return funcdecl_arg(); });
 		expect(T_PAREN_CLOSE, "expected ')' after function declaration argument list!");
 		
 		if (try_eat(T_ASSIGN)) {
@@ -661,15 +733,20 @@ struct Parser {
 			auto rets_src = tok[0].src;
 			
 			expect(T_PAREN_OPEN, "'(' expected for function returns list!");
-			func->rets = comma_seperated_list<AST_vardecl*>(T_PAREN_CLOSE, [this] () { return funcdecl_arg(); });
+			func->rets = comma_seperated_list<AST_func_arg*>(T_PAREN_CLOSE, [this] () { return funcdecl_arg(); });
 			expect(T_PAREN_CLOSE, "expected ')' after function declaration return list!");
 
 			if (func->rets.count > 1) {
 				// Create struct for return values
-				func->ret_struct = ast_alloc<AST_structdef>(A_STRUCTDEF);
+				func->ret_struct = ast_alloc<AST_structdef>(A_STRUCTDECL);
 				func->ret_struct->src = SourceRange::range(rets_src, tok[-1].src);
 				func->ret_struct->ident = format("%.*s.Result", (int)func->ident.size(), func->ident.data());
-				func->ret_struct->members = func->rets;
+				
+				auto* arr = g_allocator.alloc_array<AST_vardecl*>(func->rets.count);
+				for (size_t i=0; i<func->rets.count; ++i) {
+					arr[i] = func->rets[i]->decl;
+				}
+				func->ret_struct->members = arrview<AST_vardecl*>(arr, func->rets.count);
 
 				// Create type for return struct
 				func->ret_struct_ty = ast_alloc<AST_type>(A_TYPE);
@@ -695,22 +772,18 @@ struct Parser {
 		if (tok[0].type == T_SEMICOLON)
 			return nullptr; // no-op
 		
-		if (tok[0].type == T_IDENTIFIER && tok[1].type == T_COLON) {
-			auto* vardecl = var_decl();
+		AST* expr;
 
-			if (try_eat(T_ASSIGN))
-				vardecl->init = expression_or_expr_list();
+		// variable declaration
+		if (tok[0].type == T_VAR)
+			expr = var_decl();
+		else 
+			expr = expression_or_expr_list();
 
-			return vardecl;
-		}
-		else {
-			AST* expr = expression_or_expr_list();
+		if (is_binary_assignemnt_op(tok[0].type))
+			return assignop(expr);
 
-			if (is_binary_assignemnt_op(tok[0].type))
-				return assignop(expr);
-
-			return expr;
-		}
+		return expr;
 	}
 
 	//    <block>
@@ -731,8 +804,15 @@ struct Parser {
 			case T_BLOCK_OPEN: 
 				return block();
 
-			// control-flow structures
+			// struct declaration
+			case T_STRUCT:
+				return struct_def();
+				
+			// function declaration
+			case T_FUNC:
+				return function_def();
 
+			// control-flow structures
 			case T_IF:
 				return if_statement();
 
@@ -742,14 +822,6 @@ struct Parser {
 				return do_while_loop();
 			case T_FOR:
 				return for_loop();
-			
-			// struct declaration
-			case T_STRUCT:
-				return struct_def();
-				
-			// function declaration
-			case T_FUNC:
-				return function_def();
 
 		////statments followed by ';'
 			case T_RETURN: {

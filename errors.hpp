@@ -92,12 +92,21 @@ struct ErrorSource {
 		}
 
 		if (ansi_color_supported) fputs(col1, stderr);
-		fprintf(stderr, "%s:%u:%u: %s: %s.\n", filename, src.start_lineno+1, src.start_charno, errtype, msg.c_str());
+		fprintf(stderr, "%s:%u:%u: %s: %s.\n", filename, src.start_lineno, src.start_charno, errtype, msg.c_str());
+
+		bool prefix_lineno = true;
+
+		int lineno_w = 0;
+		if (prefix_lineno) {
+			if (ansi_color_supported) fputs(ANSI_COLOR_BOLD_BLACK, stderr);
+			lineno_w = fprintf(stderr, "%3d | ", src.start_lineno);
+		}
 
 		if (ansi_color_supported) fputs(col2, stderr);
 		fprintf(stderr, "%s\n", source);
 
 		if (ansi_color_supported) fputs(col1, stderr);
+		for (int i=0; i<lineno_w; ++i) fputs(" ", stderr);
 		fprintf(stderr, "%s\n", arrow);
 
 		if (ansi_color_supported) fputs(ANSI_COLOR_RESET, stderr);

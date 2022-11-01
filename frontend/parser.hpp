@@ -143,80 +143,62 @@ inline unsigned bt_assoc (TokenType tok) {
 	return (bool)BINARY_OP_ASSOCIATIVITY[tok - T_ADD];
 }
 
+#define _ASTKinds \
+	X( A_TYPE              ) \
+	\
+	X( A_BLOCK             ) \
+	X( A_TUPLE             ) \
+	X( A_VARDECL_LIST      ) \
+	\
+	/* values */			 \
+	X( A_LITERAL           ) \
+	\
+	X( A_VARDECL           ) \
+	X( A_VAR               ) \
+	\
+	X( A_STRUCTDECL        ) \
+	\
+	X( A_VARARGS           ) \
+	X( A_FUNCARG           ) \
+	X( A_FUNCDECL          ) \
+	\
+	X( A_CALLARG           ) \
+	X( A_CALL              ) \
+	\
+	/* flow control */		 \
+	X( A_IF                ) \
+	\
+	X( A_WHILE             ) \
+	X( A_DO_WHILE          ) \
+	X( A_FOR               ) \
+	\
+	X( A_RETURN            ) \
+	X( A_BREAK             ) \
+	X( A_CONTINUE          ) \
+	\
+	X( A_UNOP              ) \
+	X( A_BINOP             ) \
+	X( A_ASSIGNOP          ) \
+	/* ternary operator */	 \
+	X( A_SELECT            ) \
+
+#define X(ENUM) ENUM,
 // called "kind" instead of "type" to avoid confusion with types in the actual language, which we also need to store
 enum ASTKind : uint8_t {
-	A_TYPE,
-
-	A_BLOCK,
-	A_EXPR_LIST,
-
-	// values
-	A_LITERAL,
-
-	A_VARDECL,
-	A_VAR,
-
-	A_VARARGS,
-
-	A_STRUCTDEF,
-
-	A_FUNCDEF,
-
-	A_CALLARG,
-	A_CALL,
-
-	// flow control
-	A_IF,
-
-	A_WHILE,
-	A_DO_WHILE,
-	A_FOR,
-
-	A_RETURN,
-	A_BREAK,
-	A_CONTINUE,
-
-	A_UNOP,
-	A_BINOP,
-	A_ASSIGNOP,
-	// ternary operator
-	A_SELECT,
+	_ASTKinds
 };
+#undef X
+
+#define X(ENUM) STRINGIFY(ENUM),
 inline const char* ASTKind_str[] = {
-	"A_TYPE",
-
-	"A_BLOCK",
-	"A_EXPR_LIST",
-
-	"A_LITERAL",
-
-	"A_VARDECL",
-	"A_VAR",
-
-	"A_VARARGS",
-
-	"A_STRUCTDEF",
-
-	"A_FUNCDEF",
-
-	"A_CALLARG",
-	"A_CALL",
-
-	"A_IF",
-
-	"A_WHILE",
-	"A_DO_WHILE",
-	"A_FOR",
-
-	"A_RETURN",
-	"A_BREAK",
-	"A_CONTINUE",
-
-	"A_UNOP",
-	"A_BINOP",
-	"A_ASSIGNOP",
-	"A_SELECT",
+	_ASTKinds
 };
+#undef X
+
+#undef _ASTKinds
+
+#define _OpTypes \
+	
 
 enum OpType : uint8_t {
 	OP_ASSIGN=0, // used for =
@@ -350,39 +332,77 @@ inline T* ast_alloc (ASTKind kind, Token& tok) {
 	return ast;
 }
 
+// a '{}' block or a whole file
 struct AST_block : public AST {
 	arrview<AST*> statements;
 };
 
+// literal tokens,  '5', '7.4', 'true', '"hello"'
 struct AST_literal : public AST {
 	Value        value;
 };
 
+// pre or postfix operator '-expr' 'expr++'
 struct AST_unop : public AST {
 	OpType       op;
 	AST*         operand   = nullptr;
 };
+// 'a * b'
 struct AST_binop : public AST {
 	OpType       op;
 	AST*         lhs       = nullptr;
 	AST*         rhs       = nullptr;
 };
 
-struct AST_expr_list : public AST {
-	arrview<AST*> expressions;
+// for tuples or declaration lists
+struct AST_list : public AST {
+	arrview<AST*> elements;
 };
 
-struct AST_vardecl;
-// TODO: either a variable identifier or a struct member identifer
-//       could split these into seperate AST types if desired
+struct AST_vardecl : public AST {
+	strview      ident;
+
+	SourceRange  typeexpr; // TODO: parse this into a AST_typeexpr and store that here instead ?
+
+	enum VarType {
+		LOCAL,
+		ARG,
+		RET,
+	};
+	VarType      vartype      = LOCAL; // for IR gen
+	
+	llvm::Type*  llvm_type    = nullptr;
+	llvm::Value* llvm_value   = nullptr;
+	unsigned     llvm_GEP_idx = 0; // only for struct members
+};
+
+// 'x' identifier referring to a variable found in expressions
 struct AST_var : public AST {
 	strview      ident;
 	AST_vardecl* decl = nullptr;
 };
 
+/*
+if cond {
+	<a>
+} elif cond2 {
+	<b>
+} else {
+	<c>
+}
+turns into nested binary ifs like:
+
+if{ cond = cond,
+	if_body   = <a>,
+	else_body = if{ cond = cond2,
+		if_body   = <b>,
+		else_body = <c>,
+	}
+}
+*/
 struct AST_if : public AST {
 	AST*         cond      = nullptr;
-	// bodies are AST* instead of AST_block* if/else bodies can be blocks or expressions or chained ifs (if-elif-else)
+	// bodies are AST* instead of AST_block* as if/else bodies can be blocks or expressions or chained ifs (if-elif-else)
 	AST*         if_body   = nullptr;
 	AST*         else_body = nullptr;
 };
@@ -393,25 +413,6 @@ struct AST_loop : public AST {
 	AST_block*   body      = nullptr;
 };
 
-struct AST_vardecl : public AST {
-	strview      ident;
-
-	SourceRange  typeexpr; // TODO: parse this into a AST_typeexpr and store that here instead ?
-
-	AST*         init         = nullptr;   // initialization during declaration
-
-	enum VarType {
-		LOCAL,
-		ARG,
-		RET,
-	};
-	VarType      vartype      = LOCAL; // for IR gen, is this variable a function argument?
-	
-	llvm::Type*  llvm_type    = nullptr;
-	llvm::Value* llvm_value   = nullptr;
-	unsigned     llvm_GEP_idx = 0; // only for struct members
-};
-
 struct AST_structdef : public AST {
 	strview      ident;
 	
@@ -420,20 +421,25 @@ struct AST_structdef : public AST {
 	llvm::StructType*  llvm_ty = nullptr;
 };
 
+struct AST_func_arg : public AST {
+	AST_vardecl* decl;
+	AST*         init = nullptr;
+};
+
 struct AST_funcdef : public AST {
 	strview      ident;
 	
-	arrview<AST_vardecl*> args;
-	arrview<AST_vardecl*> rets; // Duplicated in ret_struct->members
+	arrview<AST_func_arg*> args;
+	arrview<AST_func_arg*> rets; // Duplicated in ret_struct->members
 
-	AST_structdef* ret_struct     = nullptr;
-	AST_type*      ret_struct_ty  = nullptr;
+	AST_structdef* ret_struct       = nullptr;
+	AST_type*      ret_struct_ty    = nullptr;
 
-	AST_block*   body             = nullptr;
+	AST_block*     body             = nullptr;
 	
-	void*        builtin_func_ptr = nullptr;
+	void*          builtin_func_ptr = nullptr;
 
-	llvm::Function* llvm_func     = nullptr;
+	llvm::Function* llvm_func       = nullptr;
 	llvm::Value*    llvm_ret_struct = nullptr;
 };
 
@@ -443,6 +449,7 @@ struct AST_callarg : public AST {
 
 	AST_vardecl* decl       = nullptr;
 };
+// 'func(arg, arg2)' a called function
 struct AST_call : public AST {
 	strview      ident;
 
@@ -457,9 +464,12 @@ struct AST_call : public AST {
 	arrview<AST*> resolved_args;
 };
 
+// a return statement
 struct AST_return : public AST {
 	arrview<AST_callarg*> args;
 };
+
+// breaks
 
 struct AST_Module {
 	std::string filename;

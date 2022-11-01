@@ -245,7 +245,7 @@ struct LLVM_gen {
 			case TY_STR:  return llvm::Type::getInt8PtrTy(*ctx);
 
 			case TY_STRUCT: {
-				assert(type.ty->decl && type.ty->decl->kind == A_STRUCTDEF);
+				assert(type.ty->decl && type.ty->decl->kind == A_STRUCTDECL);
 				auto* struc = (AST_structdef*)type.ty->decl;
 
 				// handle out-of order struct dependencies
@@ -400,7 +400,7 @@ struct LLVM_gen {
 		if (fdef->rets.count == 0)
 			ret_ty = llvm::Type::getVoidTy(*ctx);
 		else if (fdef->rets.count == 1)
-			ret_ty = map_type(fdef->rets[0]->type);
+			ret_ty = map_type(fdef->rets[0]->decl->type);
 		else
 			ret_ty = fdef->ret_struct->llvm_ty;
 
@@ -409,23 +409,23 @@ struct LLVM_gen {
 		bool vararg = false;
 		
 		for (auto* arg : fdef->args) {
-			if (arg->kind == A_VARARGS) {
+			if (arg->decl->kind == A_VARARGS) {
 				vararg = true;
 				break;
 			}
 			else {
-				auto* ty = map_type(arg->type);
+				auto* ty = map_type(arg->decl->type);
 
 				// Always pass structs by reference for now
-				if (arg->type.ty->tclass == TY_STRUCT) {
-					arg->llvm_type = ty;
+				if (arg->decl->type.ty->tclass == TY_STRUCT) {
+					arg->decl->llvm_type = ty;
 					ty = ty->getPointerTo();
 				}
 				
 				args_ty.push_back(ty);
 			}
 
-			arg->vartype = AST_vardecl::ARG;
+			arg->decl->vartype = AST_vardecl::ARG;
 		}
 
 		auto* func_ty = llvm::FunctionType::get(ret_ty, args_ty, vararg);
@@ -449,10 +449,10 @@ struct LLVM_gen {
 		// set argument names
 		unsigned i = 0;
 		for (auto* arg : fdef->args) {
-			if (arg->kind == A_VARARGS)
+			if (arg->decl->kind == A_VARARGS)
 				break;
-			arg->llvm_value = func->getArg(i++);
-			arg->llvm_value->setName(SR(arg->ident));
+			arg->decl->llvm_value = func->getArg(i++);
+			arg->decl->llvm_value->setName(SR(arg->decl->ident));
 		}
 
 		fdef->llvm_func = func;
@@ -504,25 +504,25 @@ struct LLVM_gen {
 			if (fdef->rets.count == 1) {
 				auto ret = fdef->rets[0];
 				
-				ret->llvm_type = map_type(ret->type);
-				ret->llvm_value = tmp_build.CreateAlloca(ret->llvm_type, nullptr, SR("ret"));
+				ret->decl->llvm_type = map_type(ret->decl->type);
+				ret->decl->llvm_value = tmp_build.CreateAlloca(ret->decl->llvm_type, nullptr, SR("ret"));
 
-				ret->vartype = AST_vardecl::RET;
+				ret->decl->vartype = AST_vardecl::RET;
 			}
 			else {
 				fdef->llvm_ret_struct = tmp_build.CreateAlloca(fdef->ret_struct->llvm_ty, nullptr, SR("ret"));
 			
-				for (auto* ret : fdef->ret_struct->members) {
-					assert(ret->kind != A_VARARGS);
+				for (auto* ret : fdef->rets) {
+					assert(ret->decl->kind != A_VARARGS);
 					
 					if (ret->init) {
-						Value ptr = get_ret_struct_ptr(fdef, ret);
+						Value ptr = get_ret_struct_ptr(fdef, ret->decl);
 						llvm::Value* val = codegen_rval(ret->init);
 
 						store_value(ptr, val);
 					}
 				
-					ret->vartype = AST_vardecl::RET;
+					ret->decl->vartype = AST_vardecl::RET;
 				}
 			}
 		}
@@ -554,8 +554,8 @@ struct LLVM_gen {
 				val = build.CreateLoad(cur_fdef->ret_struct->llvm_ty, cur_fdef->llvm_ret_struct, "retval");
 			}
 			else {
-				auto* decl = cur_fdef->rets[0];
-				val = build.CreateLoad(decl->llvm_type, decl->llvm_value, "retval");
+				auto* ret = cur_fdef->rets[0];
+				val = build.CreateLoad(ret->decl->llvm_type, ret->decl->llvm_value, "retval");
 			}
 
 			build.CreateRet(val);
@@ -593,15 +593,8 @@ struct LLVM_gen {
 		case A_VARDECL: {
 			auto* vardecl = (AST_vardecl*)ast;
 
-			auto* ptr = declare_local_var(vardecl);
-
-			if (vardecl->init) {
-				// eval rhs
-				llvm::Value* val = codegen_rval(vardecl->init);
-				// assign to new var
-				build.CreateStore(val, ptr);
-			}
-			return {};
+			auto* val = declare_local_var(vardecl);
+			return Value::LValue(val, vardecl->llvm_type);
 		}
 
 		case A_VAR: {
@@ -613,7 +606,7 @@ struct LLVM_gen {
 		}
 
 		// Is explicitly handles during assignops
-		case A_EXPR_LIST: {
+		case A_TUPLE: {
 			assert(false);
 			_UNREACHABLE;
 		}
@@ -621,7 +614,7 @@ struct LLVM_gen {
 		case A_ASSIGNOP: {
 			auto* op = (AST_binop*)ast;
 
-			if (op->lhs->kind == A_EXPR_LIST || op->rhs->kind == A_EXPR_LIST) {
+			if (op->lhs->kind == A_TUPLE || op->rhs->kind == A_TUPLE) {
 
 				// a, b += c, d  not allowed
 				assert(op->op == OP_ASSIGN);
@@ -630,8 +623,8 @@ struct LLVM_gen {
 				smallvec<llvm::Value*, 32> r;
 				
 				// eval lhs first
-				if (op->lhs->kind == A_EXPR_LIST) {
-					auto exprs = ((AST_expr_list*)op->lhs)->expressions;
+				if (op->lhs->kind == A_TUPLE) {
+					auto exprs = ((AST_list*)op->lhs)->elements;
 					for (size_t i=0; i<exprs.count; ++i)
 						l.push( codegen(exprs[i]) );
 				}
@@ -657,8 +650,8 @@ struct LLVM_gen {
 				}
 
 				// eval rhs
-				if (op->rhs->kind == A_EXPR_LIST) {
-					auto exprs = ((AST_expr_list*)op->rhs)->expressions;
+				if (op->rhs->kind == A_TUPLE) {
+					auto exprs = ((AST_list*)op->rhs)->elements;
 					for (size_t i=0; i<exprs.count; ++i)
 						r.push( codegen_rval(exprs[i]) );
 				}
@@ -1034,7 +1027,7 @@ struct LLVM_gen {
 			return {};
 		}
 
-		case A_FUNCDEF:
+		case A_FUNCDECL:
 		default:
 			return {};
 		}

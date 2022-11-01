@@ -333,6 +333,13 @@ void Lexer::lex (Token* first_tok, Token* end_tok) {
 				set_source_range_len(&tok.src, cur - start);
 
 				tok.type = get_keyword(start, (size_t)(cur - start));
+				
+				switch (tok.type) {
+					case T_LET:
+					case T_CONST:
+						SYNTAX_ERROR(tok.src, "reserved keyword!");
+					default: break;
+				}
 				continue;
 			}
 

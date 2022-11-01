@@ -11,16 +11,16 @@ using namespace llvm::orc;
 struct JIT {
 
 	Triple                         TT;
-
+	
 	std::unique_ptr<TargetMachine> TM;
 	std::unique_ptr<DataLayout> DL;
-
+	
 	legacy::PassManager        mem2reg;
 	legacy::PassManager        optimize;
 	legacy::PassManager        MCgen;
-
+	
 	std::unique_ptr<ExecutionSession> ES;
-
+	
 	std::unique_ptr<MangleAndInterner> Mangle;
 
 	std::unique_ptr<ObjectLinkingLayer> LL;

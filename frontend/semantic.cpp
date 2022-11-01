@@ -103,7 +103,7 @@ struct IdentiferStack {
 	void resolve_func_call (AST_call* call) {
 		// min_scope = 0, functions can call all functions visible to them
 		AST* ast = resolve_ident(call->src, call->ident, 0);
-		if (ast->kind != A_FUNCDEF)
+		if (ast->kind != A_FUNCDECL)
 			throw CompilerExcept({ "error", call->src, "identifer was not declared as a function" },
 			                    {{ "note", ast->src, "declared here" }});
 
@@ -137,7 +137,7 @@ struct SemanticAnalysis {
 			stack.declare_ident(t, t->ident);
 
 		{ // add a declaration for a main function (global space of the file itself represents the main function)
-			AST_funcdef* module_main = ast_alloc<AST_funcdef>(A_FUNCDEF);
+			AST_funcdef* module_main = ast_alloc<AST_funcdef>(A_FUNCDECL);
 			module_main->ident = "main";
 			module_main->ret_struct = nullptr;
 			module_main->ret_struct_ty = nullptr;
@@ -164,7 +164,7 @@ struct SemanticAnalysis {
 		smallvec<AST_funcdef*, 32>   local_funcs;
 
 		for (auto* ast : block->statements) {
-			if (ast->kind == A_FUNCDEF) {
+			if (ast->kind == A_FUNCDECL) {
 				auto* fdef = (AST_funcdef*)ast;
 
 				stack.declare_ident(fdef, fdef->ident);
@@ -175,7 +175,7 @@ struct SemanticAnalysis {
 				if (fdef->ret_struct)
 					modl.structs.emplace_back(fdef->ret_struct);
 			}
-			else if (ast->kind == A_STRUCTDEF) {
+			else if (ast->kind == A_STRUCTDECL) {
 				auto* struc = (AST_structdef*)ast;
 
 				auto* type = ast_alloc<AST_type>(A_TYPE);
@@ -480,6 +480,24 @@ struct SemanticAnalysis {
 	}
 
 ////
+	void vardecl_infer_type (AST_vardecl* vardecl, AST* init) {
+		if (init->type.ty == nullptr) {
+			// everything on the rhs of assignments except calls with void return should have a non-void type
+			assert(init->kind == A_CALL);
+
+			ERROR(init->src, "variable initialization: void is not a valid variable type");
+		}
+
+		// variable declaration without explicit type -> infer type
+		if (vardecl->type.ty == nullptr) {
+			vardecl->type.ty = init->type.ty;
+		}
+		// variable declaration with explicit type -> check if types match
+		else {
+			if (vardecl->type.ty != init->type.ty)
+				ERROR(init->src, "variable initialization: types do not match");
+		}
+	}
 	void resolve_vardecl (AST_vardecl* vardecl, bool is_arg=false) {
 
 		auto type_ident = vardecl->typeexpr;
@@ -487,35 +505,11 @@ struct SemanticAnalysis {
 			vardecl->type.ty = stack.resolve_type(type_ident);
 		}
 
-		if (vardecl->init) {
-
-			recurse(vardecl->init);
-
-			if (vardecl->init->type.ty == nullptr) {
-				// everything on the rhs of assignments except calls with void return should have a non-void type
-				assert(vardecl->init->kind == A_CALL);
-
-				ERROR(vardecl->init->src, "variable initialization: void is not a valid variable type");
-			}
-
-			// variable declaration without explicit type -> infer type
-			if (vardecl->type.ty == nullptr) {
-				vardecl->type.ty = vardecl->init->type.ty;
-			}
-			// variable declaration with explicit type -> check if types match
-			else {
-				if (vardecl->type.ty != vardecl->init->type.ty)
-					ERROR(vardecl->init->src, "variable initialization: types do not match");
-			}
-		}
-
 		// function arguments are immutable, thus RValues
 		vardecl->type.rval = is_arg;
-
-		assert(vardecl->type.ty);
 	}
 
-	void resolve_funcdecl_args (arrview<AST_vardecl*> args, bool is_arg) {
+	void resolve_funcdecl_args (arrview<AST_func_arg*> args, bool is_arg) {
 		
 		bool default_args = false;
 		
@@ -536,41 +530,49 @@ struct SemanticAnalysis {
 					ERROR(arg->src, "default arguments can only appear after all positional arguments");
 			}
 
-			resolve_vardecl(arg, is_arg);
+			resolve_vardecl(arg->decl, is_arg);
+			if (arg->init)
+				vardecl_infer_type(arg->decl, arg->init);
 		}
 	}
 	
 	void resolve_callarg (AST_callarg* callarg, AST_vardecl* declarg) {
+		assert(declarg->kind != A_VARARGS);
+
 		recurse(callarg->expr);
 		
 		callarg->type = callarg->expr->type;
+		callarg->decl = declarg;
 
-		if (declarg->kind != A_VARARGS && callarg->type.ty != declarg->type.ty)
+		if (callarg->type.ty != declarg->type.ty)
 			ERROR(callarg->src, "argument type mismatch");
-
+	}
+	void resolve_vararg_callarg (AST_callarg* callarg, AST_vardecl* declarg) {
+		recurse(callarg->expr);
+		
+		callarg->type = callarg->expr->type;
 		callarg->decl = declarg;
 	}
-	void resolve_call_args (AST* op, arrview<AST_callarg*> callargs, arrview<AST_vardecl*> declargs) {
+	void resolve_call_args (AST* op, arrview<AST_callarg*> callargs, arrview<AST_func_arg*> declargs) {
 		size_t non_vararg_count = 0;
-		if (declargs.count > 0)
-			non_vararg_count = declargs[declargs.count-1]->kind == A_VARARGS ? declargs.count-1 : declargs.count;
+		if (declargs.count > 0) {
+			bool has_vararg = declargs[declargs.count-1]->decl->kind == A_VARARGS;
+			
+			if (has_vararg && op->kind == A_RETURN)
+				ERROR(declargs[declargs.count-1]->decl->src, "variadic argument no allowed for return values");
+
+			non_vararg_count = has_vararg ? declargs.count-1 : declargs.count;
+		}
 
 		struct Arg {
-			AST_vardecl* decl; // funcdef argdecl this callarg is matched to
-			AST*         expr;
+			AST_func_arg* farg; // funcdef argdecl this callarg is matched to
+			AST*          expr;
 		};
 		smallvec<Arg, 32> args(non_vararg_count);
 
 		//// collect decl args and start them out not provided
-
-		for (size_t i = 0; i < declargs.count; ++i) {
-			if (op->kind == A_RETURN && declargs[i]->kind == A_VARARGS)
-				ERROR(declargs[i]->src, "variadic argument no allowed for return values");
-
-			if (declargs[i]->kind == A_VARARGS)
-				break;
-
-			args[i].decl = declargs[i];
+		for (size_t i = 0; i < non_vararg_count; ++i) {
+			args[i].farg = declargs[i];
 			args[i].expr = nullptr;
 		}
 
@@ -578,58 +580,44 @@ struct SemanticAnalysis {
 		size_t i = 0;
 
 		for (; i < callargs.count && callargs[i]->ident.empty(); ++i) {
+			auto* decl = declargs[i]->decl;
+			
 			if (i >= declargs.count) // no more args in func
 				ERROR(callargs[i]->src, "too many arguments");
 
-			if (declargs[i]->kind == A_VARARGS) {
-				auto* vararg_decl = declargs[i];
-
-				for (; i < callargs.count; ++i) {
-					assert(callargs[i]->ident.empty());
-
-					resolve_callarg(callargs[i], vararg_decl);
-
-					args.push().expr = callargs[i]->expr;
-				}
+			if (decl->kind == A_VARARGS)
 				break;
-			}
 
-			resolve_callarg(callargs[i], declargs[i]);
+			resolve_callarg(callargs[i], decl);
 
 			args[i].expr = callargs[i]->expr;
 		}
-
+		
+		//// vararg args (remaining positional callargs)
+		size_t vararg_i = i;
 		for (; i < callargs.count && callargs[i]->ident.empty(); ++i) {
-			if (i >= declargs.count) // no more args in func
-				ERROR(callargs[i]->src, "too many arguments");
+			resolve_vararg_callarg(callargs[i], declargs[vararg_i]->decl);
 
-			if (declargs[i]->kind == A_VARARGS) {
-				args.push();
-			}
-
-			resolve_callarg(callargs[i], declargs[i]);
-
-			args[i].expr = callargs[i]->expr;
+			args.push().expr = callargs[i]->expr;
 		}
 		
 		//// named args
 
 		auto find_named_arg = [&] (AST_callarg* callarg) {
 			for (size_t i=0; i<args.count; ++i) {
-				if (args[i].decl->ident == callarg->ident)
+				if (args[i].farg->decl->ident == callarg->ident)
 					return i;
 			}
 			ERROR(callarg->src, "unknown argument");
 		};
 		
 		for (; i < callargs.count; ++i) {
-			
 			if (callargs[i]->ident.empty())
 				ERROR(callargs[i]->src, "named arguments can only appear after all positional arguments");
 
 			size_t argi = find_named_arg(callargs[i]);
-
-			if (args[argi].decl->kind == A_VARARGS)
+			
+			if (args[argi].farg->decl->kind == A_VARARGS)
 				ERROR(callargs[i]->src, "variadic arguments cannot be assigned directly");
 
 			if (args[argi].expr)
@@ -637,7 +625,7 @@ struct SemanticAnalysis {
 				                     { "note", args[argi].expr->src, "argument was set here" }});
 				                     //{ args[argi].decl->src, "note: argument declaration" }});
 			
-			resolve_callarg(callargs[i], args[argi].decl);
+			resolve_callarg(callargs[i], args[argi].farg->decl);
 
 			args[argi].expr = callargs[i]->expr;
 		}
@@ -656,11 +644,11 @@ struct SemanticAnalysis {
 			// check that all callargs are provided
 			for (size_t i=0; i<args.count; ++i) {
 				if (args[i].expr == nullptr) {
-					if (args[i].decl->init == nullptr)
+					if (args[i].farg->init == nullptr)
 						throw CompilerExcept({ "error", call->src, "required argument not provided" },
-						                    {{ "note", args[i].decl->src, "argument declaration" }});
+						                    {{ "note", args[i].farg->decl->src, "argument declaration" }});
 					
-					args[i].expr = args[i].decl->init;
+					args[i].expr = args[i].farg->init;
 				}
 
 				resolved_args[i] = args[i].expr;
@@ -699,46 +687,52 @@ struct SemanticAnalysis {
 
 		case A_ASSIGNOP: {
 			auto* op = (AST_binop*)ast;
+
 			recurse(op->lhs);
 			recurse(op->rhs);
 
-			if (op->lhs->kind == A_EXPR_LIST || op->rhs->kind == A_EXPR_LIST) {
-				
-				if (op->op != OP_ASSIGN)
-					ERROR(op->src, "compound assigment not allowed with tuple syntax");
-
-				auto get_elems = [] (AST* ast) -> arrview<AST*> {
-					if (ast->kind == A_EXPR_LIST) {
-						return ((AST_expr_list*)ast)->expressions;
-					}
-					else {
-						assert(ast->type.ty->tclass == TY_STRUCT);
-						auto memb = ((AST_structdef*)ast->type.ty->decl)->members;
-						return { (AST**)memb.data, memb.count };
-					}
-				};
-				auto l = get_elems(op->lhs);
-				auto r = get_elems(op->rhs);
-
-				size_t count = std::min(l.count, r.count);
-				for (size_t i=0; i<count; ++i) {
-					
-					typecheck_assignment(op, l[i], r[i]);
-				}
-
-				if (l.count != r.count)
-					ERROR(op->src, "tuple assignment: cannot assign {} values to {} expressions", r.count, l.count);
+			if (op->lhs->kind == A_VARDECL) {
+				vardecl_infer_type((AST_vardecl*)op->lhs, op->rhs);
 			}
-			else {
+
+			//if (op->lhs->kind == A_TUPLE || op->rhs->kind == A_TUPLE) {
+			//	
+			//	if (op->op != OP_ASSIGN)
+			//		ERROR(op->src, "compound assigment not allowed with tuple syntax");
+			//
+			//	auto get_elems = [] (AST* ast) -> arrview<AST*> {
+			//		if (ast->kind == A_EXPR_LIST) {
+			//			return ((AST_list*)ast)->elements;
+			//		}
+			//		else {
+			//			assert(ast->type.ty->tclass == TY_STRUCT);
+			//			auto memb = ((AST_structdef*)ast->type.ty->decl)->members;
+			//			return { (AST**)memb.data, memb.count };
+			//		}
+			//	};
+			//	auto l = get_elems(op->lhs);
+			//	auto r = get_elems(op->rhs);
+			//
+			//	size_t count = std::min(l.count, r.count);
+			//	for (size_t i=0; i<count; ++i) {
+			//		
+			//		typecheck_assignment(op, l[i], r[i]);
+			//	}
+			//
+			//	if (l.count != r.count)
+			//		ERROR(op->src, "tuple assignment: cannot assign {} values to {} expressions", r.count, l.count);
+			//}
+			//else {
 				typecheck_assignment(op, op->lhs, op->rhs);
-			}
+			//}
 		} break;
 
-		case A_EXPR_LIST: {
-			auto* expr_list = (AST_expr_list*)ast;
+		case A_TUPLE:
+		case A_VARDECL_LIST: {
+			auto* list = (AST_list*)ast;
 
-			for (auto* expr: expr_list->expressions)
-				recurse(expr);
+			for (auto* e: list->elements)
+				recurse(e);
 
 			// TODO: create tuple type here?
 		} break;
@@ -856,13 +850,13 @@ struct SemanticAnalysis {
 			stack.reset_scope(old_scope);
 		} break;
 			
-		case A_STRUCTDEF: {
+		case A_STRUCTDECL: {
 			auto* struc = (AST_structdef*)ast;
 
 			// skip structdef, since members were already resolved during prescan
 		} break;
 
-		case A_FUNCDEF: {
+		case A_FUNCDECL: {
 			auto* fdef = (AST_funcdef*)ast;
 
 			funcs_stack.emplace_back(fdef);
@@ -870,9 +864,9 @@ struct SemanticAnalysis {
 
 			// function args/rets already resolved during prescan, only declare the identifiers for the code body
 			for (auto* arg : fdef->args)
-				stack.declare_ident(arg, arg->ident);
+				stack.declare_ident(arg->decl, arg->decl->ident);
 			for (auto* ret : fdef->rets)
-				stack.declare_ident(ret, ret->ident);
+				stack.declare_ident(ret->decl, ret->decl->ident);
 
 			// Don't just recurse into the body block, since that creates another scope, which would allow local vars to shadow args/rets, which is not what we want
 			
@@ -897,7 +891,7 @@ struct SemanticAnalysis {
 			if (fdef->rets.count == 0)
 				call->type = {};
 			else if (fdef->rets.count == 1)
-				call->type = Typeref::RValue( fdef->rets[0]->type.ty );
+				call->type = Typeref::RValue( fdef->rets[0]->decl->type.ty );
 			else
 				call->type = Typeref::RValue( fdef->ret_struct_ty );
 		} break;

@@ -82,17 +82,17 @@ printf("----------\n");
 
 // err : MR0.ret; // < Can I namespace the return struct in the function type somehow?
 
-err := MR0(false);
+var err = MR0(false);
 if err.err {
-	printf("error: {s}!\n", err.errmsg);
+	printf("(actual program) error: {s}!\n", err.errmsg);
 }
 
 err  = MR0(true);
 if err.err {
-	printf("error: {s}!\n", err.errmsg);
+	printf("(actual program) error: {s}!\n", err.errmsg);
 }
 
-func MR0 (trigger_error : bool) = (err := false, errmsg := "") {
+func MR0 (trigger_error : bool) = (err = false, errmsg = "") {
 	if trigger_error {
 		err = true;
 		errmsg = "Something happened!";
@@ -114,4 +114,3 @@ func MR0 (trigger_error : bool) = (err := false, errmsg := "") {
 //      func () = (x: int, y: int) { return x=5, y=6; }  // ok
 //      func () = (x: int, y: int) { x=5; return y=6; }  // ok?
 //	
-//turn IR into real SSA format

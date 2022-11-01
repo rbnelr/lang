@@ -44,9 +44,10 @@ func fib_iter () {
 fib_iter();
 */
 
-func sqrt (square : int) = (sqrt : int) { 
-	sqrt = -1;
-	for i:=0; i<100; i++ {
+func sqrt (square : int) = (sqrt : int) {
+	//sqrt = -1;
+	sqrt = square;
+	for var i = 0; i<100; i++ {
 		if i*i == square {  
 			sqrt = i;
 			break;
@@ -65,19 +66,19 @@ func pascal_tri (rows : int) {
 		if row == 0 {
 			return 1;
 		}
-		a := get_cell(i-1, row-1);
-		b := get_cell(i  , row-1);
+		var a = get_cell(i-1, row-1);
+		var b = get_cell(i  , row-1);
 		
 		return a + b;
 	}
-	for row:=0; row < rows; row++ {
+	for var row = 0; row < rows; row++ {
  
-		for i:=0; i < rows-1 - row; i++ {
+		for var i = 0; i < rows-1 - row; i++ {
 			printf("  ");
 		}
 
-		for i:=0; i<=row; i++ {
-			val := get_cell(i, row);
+		for var i = 0; i<=row; i++ {
+			var val = get_cell(i, row);
 			printf("{^3i} ", val);
 		}
 

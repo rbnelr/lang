@@ -2,226 +2,103 @@
 #include "common.hpp"
 #include "basic_types.hpp"
 
+#define _TOKENS \
+	/* end of file */ \
+	X( T_EOF          , "<EOF>"        ) \
+	/* alphanumeric+underscore not starting with digit and not matching any keyword */ \
+	X( T_IDENTIFIER   , "identifier"   ) \
+	/* literals */ \
+	X( T_LITERAL_BOOL , "literal_bool" ) /* true ; false */ \
+	X( T_LITERAL_INT  , "literal_int"  ) /* 0 ; 5 ; 12345 (unary minus '-' is not part of literal) */ \
+	X( T_LITERAL_FLT  , "literal_flt"  ) /* 0.0 ; .3 ; 7. */ \
+	X( T_LITERAL_STR  , "literal_str"  ) /* "" ; "hello World" ; "<utf8 string>"  */ \
+	/* variable declaration keywords */ \
+	X( T_LET          , "let"          ) /* reserved */ \
+	X( T_VAR          , "var"          ) \
+	X( T_CONST        , "const"        ) /* reserved */ \
+	/* function and struct declaration keywords */ \
+	X( T_FUNC         , "func"         ) \
+	X( T_STRUCT       , "struct"       ) \
+    /* control flow */ \
+	X( T_IF           , "if"           ) \
+	X( T_ELIF         , "elif"         ) \
+	X( T_ELSE         , "else"         ) \
+    \
+	X( T_WHILE        , "while"        ) \
+	X( T_FOR          , "for"          ) \
+	X( T_DO           , "do"           ) \
+    \
+	X( T_RETURN       , "return"       ) \
+	X( T_BREAK        , "break"        ) \
+	X( T_CONTINUE     , "continue"     ) \
+	X( T_GOTO         , "goto"         ) \
+    /* syntax characters */ \
+	X( T_COLON        , ":"            ) \
+	X( T_SEMICOLON    , ";"            ) \
+	X( T_COMMA        , ","            ) \
+	\
+	X( T_PAREN_OPEN   , "("            ) \
+	X( T_PAREN_CLOSE  , ")"            ) \
+	X( T_BLOCK_OPEN   , "{"            ) \
+	X( T_BLOCK_CLOSE  , "}"            ) \
+	X( T_INDEX_OPEN   , "["            ) \
+	X( T_INDEX_CLOSE  , "]"            ) \
+	/* single and double char operator */ \
+	X( T_ADD          , "+"            ) \
+	X( T_SUB          , "-"            ) \
+	X( T_MUL          , "*"            ) \
+	X( T_DIV          , "/"            ) \
+	X( T_MOD          , "%"            ) \
+	\
+	X( T_BIT_AND      , "&"            ) \
+	X( T_BIT_OR       , "|"            ) \
+	X( T_BIT_XOR      , "^"            ) \
+	\
+	X( T_AND          , "&&"           ) \
+	X( T_OR           , "||"           ) \
+	\
+	X( T_LESS         , "<"            ) \
+	X( T_LESSEQ       , "<="           ) \
+	X( T_GREATER      , ">"            ) \
+	X( T_GREATEREQ    , ">="           ) \
+	X( T_EQUALS       , "=="           ) \
+	X( T_NOT_EQUALS   , "!="           ) \
+	\
+	X( T_MEMBER       , "."            ) \
+	\
+	X( T_QUESTIONMARK , "?"            ) \
+	\
+	X( T_BIT_NOT      , "~"            ) \
+	X( T_NOT          , "!"            ) \
+	X( T_INC          , "++"           ) \
+	X( T_DEC          , "--"           ) \
+	\
+	X( T_ASSIGN       , "="            ) \
+	X( T_ADDEQ        , "+="           ) \
+	X( T_SUBEQ        , "-="           ) \
+	X( T_MULEQ        , "*="           ) \
+	X( T_DIVEQ        , "/="           ) \
+	X( T_MODEQ        , "%="           )
+
+#define X(ENUM, CHAR) ENUM,
 enum TokenType : uint8_t {
-	T_EOF   =0,
-
-	T_LITERAL_BOOL,
-	T_LITERAL_INT,
-	T_LITERAL_FLT,
-	T_LITERAL_STR,
-	
-	T_IDENTIFIER,
-	T_FUNC,
-	T_STRUCT,
-
-	T_IF,
-	T_ELIF,
-	T_ELSE,
-
-	T_WHILE,      
-	T_FOR,        
-	T_DO,         
-
-	T_RETURN,     
-	T_BREAK,      
-	T_CONTINUE,   
-	T_GOTO,       
-
-	//
-	T_COLON         ,//=':',
-	T_SEMICOLON     ,//=';',
-	T_COMMA         ,//=',',
-	
-	T_PAREN_OPEN    ,//='(',
-	T_PAREN_CLOSE   ,//=')',
-	T_BLOCK_OPEN    ,//='{',
-	T_BLOCK_CLOSE   ,//='}',
-	T_INDEX_OPEN    ,//='[',
-	T_INDEX_CLOSE   ,//=']',
-	
-	T_ADD           ,//='+',
-	T_SUB           ,//='-',
-	T_MUL           ,//='*',
-	T_DIV           ,//='/',
-	T_MOD           ,//='%',
-	
-	T_BIT_AND       ,//='&',
-	T_BIT_OR        ,//='|',
-	T_BIT_XOR       ,//='^',
-	
-	T_AND           ,//='&' + 32,
-	T_OR            ,//='|' + 32,
-	
-	T_LESS          ,//='<',
-	T_LESSEQ        ,//='<' + 32,
-	T_GREATER       ,//='>',
-	T_GREATEREQ     ,//='>' + 32,
-	T_EQUALS        ,//='=' + 32,
-	T_NOT_EQUALS    ,//='!' + 32,
-	
-	T_MEMBER        ,//='.',
-	
-	T_QUESTIONMARK  ,//='?',
-	
-	T_BIT_NOT       ,//='~',
-	T_NOT           ,//='!',
-	T_INC           ,//='+' + 64,
-	T_DEC           ,//='-' + 64,
-	
-	T_ASSIGN        ,//='=' + 32,
-	T_ADDEQ         ,//='+' + 32,
-	T_SUBEQ         ,//='-' + 32,
-	T_MULEQ         ,//='*' + 32,
-	T_DIVEQ         ,//='/' + 32,
-	T_MODEQ         ,//='%' + 32,
+	_TOKENS
 };
+#undef X
 
+#define X(ENUM, CHAR) STRINGIFY(ENUM),
 inline constexpr const char* TokenType_str[] = {
-	"T_EOF",         
-	
-	"T_LITERAL_BOOL",
-	"T_LITERAL_INT", 
-	"T_LITERAL_FLT", 
-	"T_LITERAL_STR", 
-	
-	"T_IDENTIFIER",  
-
-	"T_FUNC",        
-	"T_STRUCT",      
-	
-	"T_IF",          
-	"T_ELIF",        
-	"T_ELSE",        
-
-	"T_WHILE",       
-	"T_FOR",         
-	"T_DO",          
-
-	"T_RETURN",      
-	"T_BREAK",       
-	"T_CONTINUE",    
-	"T_GOTO",        
-
-	"T_COLON",       
-	"T_SEMICOLON",   
-	"T_COMMA",       
-
-	"T_PAREN_OPEN",  
-	"T_PAREN_CLOSE", 
-	"T_BLOCK_OPEN",  
-	"T_BLOCK_CLOSE", 
-	"T_INDEX_OPEN",  
-	"T_INDEX_CLOSE", 
-
-	"T_ADD",         
-	"T_SUB",         
-	"T_MUL",         
-	"T_DIV",         
-	"T_MOD",         
-
-	"T_BIT_AND",     
-	"T_BIT_OR",      
-	"T_BIT_XOR",     
-
-	"T_AND",         
-	"T_OR",          
-
-	"T_LESS",        
-	"T_LESSEQ",      
-	"T_GREATER",     
-	"T_GREATEREQ",   
-	"T_EQUALS",      
-	"T_NOT_EQUALS",  
-
-	"T_MEMBER",      
-
-	"T_QUESTIONMARK",
-
-	"T_BIT_NOT",     
-	"T_NOT",         
-	"T_INC",         
-	"T_DEC",         
-
-	"T_ASSIGN",      
-	"T_ADDEQ",       
-	"T_SUBEQ",       
-	"T_MULEQ",       
-	"T_DIVEQ",       
-	"T_MODEQ",       
+	_TOKENS
 };
+#undef X
+
+#define X(ENUM, CHAR) CHAR,
 inline constexpr const char* TokenType_char[] = {
-	"<EOF>"       ,
-              
-	"literal_bool",
-	"literal_int" ,
-	"literal_flt" ,
-	"literal_str" ,
-              
-	"identifier"  ,
-              
-	"func"        ,
-	"struct"      ,
-              
-	"if"          ,
-	"elif"        ,
-	"else"        ,
-              
-	"while"       ,
-	"for"         ,
-	"do"          ,
-              
-	"return"      ,
-	"break"       ,
-	"continue"    ,
-	"goto"        ,
-              
-	":"           ,
-	";"           ,
-	","           ,
-              
-	"("           ,
-	")"           ,
-	"{"           ,
-	"}"           ,
-	"["           ,
-	"]"           ,
-              
-	"+"           ,
-	"-"           ,
-	"*"           ,
-	"/"           ,
-	"%"           ,
-              
-	"&"           ,
-	"|"           ,
-	"^"           ,
-              
-	"&&"          ,
-	"||"          ,
-              
-	"<"           ,
-	"<="          ,
-	">"           ,
-	">="          ,
-	"=="          ,
-	"!="          ,
-              
-	"."           ,
-              
-	"?"           ,
-              
-	"~"           ,
-	"!"           ,
-	"++"          , // x++ is more readable, but profiling.hpp  wants the actual token chars
-	"--"          ,
-              
-	"="           ,
-	"+="          ,
-	"-="          ,
-	"*="          ,
-	"/="          ,
-	"%="          ,
+	_TOKENS
 };
+#undef X
+
+#undef _TOKENS
 
 
 // use small ints in SourceRange since it's only for debug info/printing
@@ -239,10 +116,10 @@ struct SourceRange {
 	// lineno of start character     (1-based to match common text editors)
 	uint32_t    start_lineno;
 
-	// char index of start character (0-based)
+	// char index of start character in line (column) (0-based)
 	uint16_t    start_charno;
 
-	// lengh of string starting from start (saturated on overflow)
+	// lengh of range in chars (saturated on overflow)
 	uint16_t    length;
 
 	//// offset of source token relative to start (for binary operators etc.) to show up like ~~~~^~~~~

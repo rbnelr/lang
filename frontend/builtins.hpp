@@ -153,6 +153,12 @@ inline double timer_end (int64_t start) {
 
 ////
 
+// Ugly hack to simplify making ASTs for 'builtin' functions
+// Later might see if I can't do this simply via an actual standard library source file
+// that just happens to be turned into (LLVM) bitcode that can be quickly linked
+// though unsure how to make a source file that defines functions that are actually things I 'link' to, ie. functions implemented in the JIT code
+// Don't really want to rely on name-based linking which LLVM would allow
+
 struct BuiltinArg {
 	strview   name;
 	AST_type* basic_type = nullptr; // null -> varargs
@@ -162,34 +168,42 @@ struct BuiltinFuncBuf {
 
 	AST_funcdef fdef = {};
 
-	AST_vardecl* arg_ptrs[MAX_ARGS] = {};
-	AST_vardecl* ret_ptrs[MAX_ARGS] = {};
+	AST_func_arg* arg_ptrs[MAX_ARGS] = {};
+	AST_func_arg* ret_ptrs[MAX_ARGS] = {};
 
-	AST_vardecl arg_decls[MAX_ARGS] = {};
-	AST_vardecl ret_decls[MAX_ARGS] = {};
+	struct Arg {
+		AST_func_arg arg;
+		AST_vardecl  decl;
+	};
+
+	Arg arg_decls[MAX_ARGS] = {};
+	Arg ret_decls[MAX_ARGS] = {};
 	
 	// Source ranges stay zero, since no source text to point to
 
 	BuiltinFuncBuf (strview name, void* func_ptr, std::initializer_list<BuiltinArg> args, std::initializer_list<BuiltinArg> rets) {
 		auto* func = &fdef;
 
-		func->kind = A_FUNCDEF;
+		func->kind = A_FUNCDECL;
 		func->src = SourceRange{}; // no source text to point to
 		func->ident = name;
 
-		auto get_args = [] (std::initializer_list<BuiltinArg>& args, AST_vardecl* out, AST_vardecl** out_ptrs) -> arrview<AST_vardecl*> {
+		auto get_args = [] (std::initializer_list<BuiltinArg>& args, Arg* out, AST_func_arg** out_ptrs) -> arrview<AST_func_arg*> {
 			size_t i = 0;
 
 			for (auto& arg : args) {
 				assert(i < BuiltinFuncBuf::MAX_ARGS);
-				auto* decl = &out[i];
-				out_ptrs[i++] = decl;
+				out[i].arg.decl = &out[i].decl;
+				out_ptrs[i] = &out[i].arg;
 
-				decl->kind = arg.basic_type ? A_VARDECL : A_VARARGS;
-				decl->ident = arg.name;
-			
+				out[i].arg.kind = A_FUNCARG;
+				
+				out[i].decl.kind = arg.basic_type ? A_VARDECL : A_VARARGS;
+				out[i].decl.ident = arg.name;
 				if (arg.basic_type)
-					decl->type  = Typeref::RValue( arg.basic_type );
+					out[i].decl.type  = Typeref::RValue( arg.basic_type );
+
+				i++;
 			}
 
 			return { out_ptrs, i };

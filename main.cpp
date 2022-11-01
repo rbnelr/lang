@@ -15,19 +15,19 @@
 
 void set_options (int argc, const char** argv) {
 #if 1
-	options.filename  = "test2.la";
+	options.filename  = "test6.la";
 
 	options.optimized = 1;
 
 #ifndef NDEBUG
-	options.print_ast         = 0;
+	options.print_ast         = 1;
 	options.print_ir          = 1;
 	options.print_disasm      = 1;
 #endif
-	
+
 	options.disasm_symbols    = 1;
 	options.disasm_code_bytes = 1;
-	
+
 #else
 	if (argc <= 1) {
 		fprintf(stderr, "usage: <compiler> [-log ast] [-log ir] [-log code] <source filepath>\n");

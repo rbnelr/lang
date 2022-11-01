@@ -48,9 +48,9 @@ size_t keyword_hash (const char* str, size_t len) {
 		25, 25, 25, 25, 25, 25, 25, 25, 25, 25,
 		25, 25, 25, 25, 25, 25, 25, 25, 25, 25,
 		25, 25, 25, 25, 25, 25, 25, 25, 25, 25,
-		25, 25, 25, 25, 25, 25, 25, 25, 10,  0,
-		 0,  0,  0, 15, 25,  5, 25, 25,  0, 25,
-		15, 25, 25, 25,  0,  0,  5,  5, 25,  0,
+		25, 25, 25, 25, 25, 25, 25, 25, 15,  5,
+		5,  0,  5, 20, 25,  0, 25, 25,  0, 25,
+		5, 25, 25, 25,  0,  5,  0, 15, 10,  0,
 		25, 25, 25, 25, 25, 25, 25, 25, 25, 25,
 		25, 25, 25, 25, 25, 25, 25, 25, 25, 25,
 		25, 25, 25, 25, 25, 25, 25, 25, 25, 25,
@@ -81,58 +81,59 @@ size_t keyword_hash (const char* str, size_t len) {
 }
 
 TokenType get_keyword (const char* str, size_t len) {
-	//static const char * wordlist[] =
-	//  {
-	//    "", "",
-	//    "do",
-	//    "for",
-	//    "else",
-	//    "false",
-	//    "struct",
-	//    "if",
-	//    "",
-	//    "elif",
-	//    "while",
-	//    "return",
-	//    "", "",
-	//    "true",
-	//    "break",
-	//    "", "", "",
-	//    "func",
-	//    "", "", "",
-	//    "continue",
-	//    "goto"
-	//  };
+	//static const char * wordlist[] = {
+	//		"", "",
+	//		"if",
+	//		"let",
+	//		"elif",
+	//		"while",
+	//		"return",
+	//		"do",
+	//		"for",
+	//		"else",
+	//		"false",
+	//		"struct",
+	//		"",
+	//		"var",
+	//		"func",
+	//		"const",
+	//		"", "",
+	//		"continue",
+	//		"true",
+	//		"break",
+	//		"", "", "",
+	//		"goto"
+	//	};
 
 	static constexpr _Keyword wordlist[] = {
 		{"" },
 		{"" },
+		{ "if"        , T_IF             },
+		{ "let"       , T_LET            },
+		{ "elif"      , T_ELIF           },
+		{ "while"     , T_WHILE          },
+		{ "return"    , T_RETURN         },
 		{ "do"        , T_DO             },
 		{ "for"       , T_FOR            },
 		{ "else"      , T_ELSE           },
 		{ "false"     , T_LITERAL_BOOL   },
 		{ "struct"    , T_STRUCT         },
-		{ "if"        , T_IF             },
 		{"" },
-		{ "elif"      , T_ELIF           },
-		{ "while"     , T_WHILE          },
-		{ "return"    , T_RETURN         },
+		{ "var"       , T_VAR            },
+		{ "func"      , T_FUNC           },
+		{ "const"     , T_CONST          },
 		{"" },
 		{"" },
+		{ "continue"  , T_CONTINUE       },
 		{ "true"      , T_LITERAL_BOOL   },
 		{ "break"     , T_BREAK          },
 		{"" },
 		{"" },
 		{"" },
-		{ "func"      , T_FUNC           },
-		{"" },
-		{"" },
-		{"" },
-		{ "continue"  , T_CONTINUE       },
 		{ "goto"      , T_GOTO           },
 	};
 	
-	constexpr size_t TOTAL_KEYWORDS  = 14;
+	constexpr size_t TOTAL_KEYWORDS  = 17;
 	constexpr size_t MIN_WORD_LENGTH = 2;
 	constexpr size_t MAX_WORD_LENGTH = 8;
 	constexpr size_t MIN_HASH_VALUE  = 2;

@@ -9,17 +9,17 @@
 	// blah
 */
 
-h := "foo";
-h2 := "bar";
+var h = "foo";
+var h2 = "bar";
 
 printf("start {s} {s}\n", h, h2);
 printf("\n");
 
-capt2 := "cap2";
-capt1 := "cap1";
+var capt2 = "cap2";
+var capt1 = "cap1";
 
 func indent (depth : int) {
-	for i:=0; i<depth; i++ {
+	for var i=0; i<depth; i++ {
 		printf("  ");
 	}
 
@@ -56,7 +56,7 @@ printf("\n");
 func A (depth : int) {
 	indent(depth); printf("A ^{\n");
 
-	mymsg := "Hello from A";
+	var mymsg = "Hello from A";
 	B("test", depth+1);
 	B(mymsg,  depth+1);
 
@@ -80,13 +80,13 @@ func myprinti (i : int) {
 }
 
 printf("-----------\n");
-for i:=0; i<10; i++ {
+for var i=0; i<10; i++ {
 	myprinti(i);
 	
 	func get_msg () = (msg : str) {
 		msg = "---";
 	} 
-	mymsg := get_msg();
+	var mymsg = get_msg();
 	
 	{
 		myprint(mymsg);

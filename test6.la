@@ -59,7 +59,23 @@
 
 var ss = "魔族"; // TODO: Does utf-8 work in string literals?
 
-var a, b = f();
+var a = 5;
+
+{
+	var a0 = 5;
+	//var a1 = 5,;
+	//var a2 = 5,7;
+}
+{
+	var a0,b0 = 5;
+	var a1,b1 = 5,;
+	var a2,b2 = 5,7;
+}
+{
+	var a0, = 5;
+	var a1, = 5,;
+	var a2, = 5,7;
+}
 
 //c := 5;
 //a, b, c = b, a; // tuple assignment: cannot assign 2 values to 3 expressions.
@@ -89,7 +105,7 @@ printf("{i}|{i}\n", a,b);
 //	message : str;
 //}
 //func do_thing () = (ret : Ret) {
-func do_thing () = (success : bool, message := "") {
+func do_thing () = (success : bool, message = "") {
 	var t = timer();
 
 	success = t % 2 != 0;
@@ -111,9 +127,7 @@ printf("Test: {s}: \"{s}\"\n",
 	res.success ? "success!" : "error",
 	res.message);
 
-//succ : bool;
-//msg  : str;
-succ, msg := do_thing();
+var succ, msg = do_thing();
 
 
 printf("Try 2: {s}: \"{s}\"\n",

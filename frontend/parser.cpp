@@ -45,7 +45,7 @@ void dbg_print (AST* node, int depth) {
 			indent(depth); printf(")\n");
 		} break;
 
-		case A_VAR: { auto* var = (AST_var*)node;
+		case A_VARREF: { auto* var = (AST_var*)node;
 			std::string str(var->ident);
 			printf(" %s\n", str.c_str());
 		} break;
@@ -275,7 +275,7 @@ struct Parser {
 	AST_var* single_var () {
 		assert(tok[0].type == T_IDENTIFIER);
 
-		auto* var = ast_alloc<AST_var>(A_VAR, tok[0]);
+		auto* var = ast_alloc<AST_var>(A_VARREF, tok[0]);
 		var->ident = tok[0].src.text();
 		tok.eat();
 
@@ -425,62 +425,25 @@ struct Parser {
 	// or <expression>, <expression> [,]   -> returns AST_expr_list* as AST*
 	// ie. comma seperated list of expressions, with optional trailing comma followed by endtok
 	AST* expression_or_expr_list (arrview<Token> list_start = {}) {
-		
 		auto src = tok[0].src;
 		
 		AST* expr = expression();
 
-		if (tok[0].type == T_EQUALS || tok[0].type == T_SEMICOLON)
+		if (tok[0].type == T_ASSIGN || tok[0].type == T_SEMICOLON)
 			return expr; // single expression
 
 		smallvec<AST*, 32> list;
 		list.push(expr);
 
-		while (tok[0].type != T_EQUALS && tok[0].type != T_SEMICOLON) {
+		while (try_eat(T_COMMA) && !(tok[0].type == T_ASSIGN || tok[0].type == T_SEMICOLON)) {
 			list.push( expression() );
-
-			if (!try_eat(T_COMMA))
-				break;
 		}
 
-		make_copy<AST*>(list);
+		auto* expr_list = ast_alloc<AST_list>(A_TUPLE);
+		expr_list->elements = make_copy<AST*>(list);
 
-		comma_seperated_list<AST*>(T_PAREN_CLOSE, [this] () { return call_arg(); });
-		//while (tok[0].type == T_IDENTIFIER && tok[1].type == T_COMMA) {
-		//	list.push(tok[0]);
-		//	tok.eat();
-		//	tok.eat();
-		//
-		//	//if (!try_eat(T_COMMA))
-		//	//	break;
-		//}
-		
-		//if (tok[0].type == T_COMMA || list_start.count > 0) {
-		//	smallvec<AST*, 16> exprs;
-		//
-		//	for (auto& tok : list_start) {
-		//		auto* var = ast_alloc<AST_var>(A_VAR, tok);
-		//		var->ident = tok.src.text();
-		//		exprs.push(var);
-		//	}
-		//
-		//	exprs.push(expr);
-		//	
-		//	// allow for trailing comma
-		//	// loops until  a, b <non-comma>  or  a, b, <non-expression>
-		//	while (try_eat(T_COMMA) && is_expression(tok[0].type)) {
-		//		exprs.push( expression() );
-		//	}
-		//
-		//	auto* expr_list = ast_alloc<AST_list>(A_EXPR_LIST);
-		//	expr_list->elements = make_copy<AST*>(exprs);
-		//	expr_list->src = SourceRange::range(src, tok[-1].src);
-		//
-		//	return expr_list;
-		//}
-		//else {
-			return expr;
-		//}
+		expr_list->src = SourceRange::range(src, tok[-1].src);
+		return expr_list;
 	}
 
 	// lhs = rhs   or  lhs += rhs  etc.
@@ -500,39 +463,15 @@ struct Parser {
 		return op;
 	}
 
-	//    var <varname>                -> variable declaration with inferred type (must be followed by  = <expression>  to infer the type from)
-	// or var <varname> : <typename>   -> variable declaration with explicit type
-	AST* var_decl () {
-		//smallvec<AST*, 16> vars;
-		//
-		//for (auto& tok : list) {
-		//	auto* decl = ast_alloc<AST_vardecl>(A_VARDECL);
-		//	decl->ident = tok.src.text();
-		//
-		//	vars.push(decl);
-		//}
-		
+	//    <varname>                -> variable declaration with inferred type
+	// or <varname> : <typename>   -> variable declaration with explicit type
+	AST_vardecl* var_decl () {
 		auto src = tok[0].src;
-
-		if (tok[0].type == T_VAR) // T_VAR optional (func arg lists do not need var)
-			tok.eat();
-		
-
 
 		auto* decl = ast_alloc<AST_vardecl>(A_VARDECL);
 		decl->ident = tok[0].src.text();
 		
 		expect(T_IDENTIFIER, "expected variable identifier");
-		
-		smallvec<AST*, 32> list;
-		
-		while (tok[0].type == T_IDENTIFIER) {
-			list.push( tok[0] );
-			tok.eat();
-
-			if (!try_eat(T_COMMA))
-				break;
-		}
 		
 		// type specifier
 		if (tok[0].type == T_COLON) {
@@ -543,17 +482,35 @@ struct Parser {
 			decl->typeexpr = tok[0].src;
 			expect(T_IDENTIFIER, "expected type identifier");
 		}
-		else {
-			// no type identifier, type will have to be inferred from initialization
-			
-			// TODO: re-add error for  [var a, b;] syntax while supporting [var a, b = ...;]
-			//if (tok[0].type != T_ASSIGN)
-			//	SYNTAX_ERROR_AFTER(tok, "\neither specify type during variable declaration with \"var <name> : <type>;\""
-			//	                        "\nor let type be inferred with \"var <name> = <expr>;\"");
-		}
 
-		decl->src = SourceRange::range_with_arrow(src, ident_src, tok[-1].src); // 'a' or 'a : type' is the src range (with the arrow on the a)
+		decl->src = SourceRange::range_with_arrow(src, src, tok[-1].src); // 'a' or 'a : type' is the src range
 		return decl;
+	}
+
+	AST* var_decl_list () {
+		auto src = tok[0].src;
+
+		if (tok[0].type == T_VAR) // T_VAR optional (func arg lists do not need var)
+			tok.eat();
+		
+		auto* first = var_decl();
+
+		if (tok[0].type == T_ASSIGN || tok[0].type == T_SEMICOLON)
+			return first; // single var decl
+		
+		smallvec<AST*, 32> list;
+		list.push(first);
+		
+		while (try_eat(T_COMMA) && !(tok[0].type == T_ASSIGN || tok[0].type == T_SEMICOLON)) {
+			list.push(var_decl());
+		}
+		
+		// var decl list
+		auto* decll = ast_alloc<AST_list>(A_VARDECL_LIST);
+		decll->elements = make_copy<AST*>(list);
+		
+		decll->src = SourceRange::range(src, tok[-1].src);
+		return decll;
 	}
 
 	// return <return_args>;
@@ -684,11 +641,9 @@ struct Parser {
 	AST_func_arg* funcdecl_arg () {
 		auto* arg = ast_alloc<AST_func_arg>(A_FUNCARG);
 		
-		auto ident_tok = tok[0].src;
-		auto colon_tok = tok[1].src;
+		auto src = tok[0].src;
 
-		arg->decl = (AST_vardecl*)var_decl();
-		assert(arg->decl->kind == A_VARDECL);
+		arg->decl = var_decl();
 		
 		if (try_eat(T_ASSIGN)) {
 			// TOOD: implement at const-foldable expression for default args at the very least
@@ -705,8 +660,7 @@ struct Parser {
 			assert(arg->init->type.ty && arg->init->type.rval);
 		}
 
-		arg->src = SourceRange::range_with_arrow(ident_tok, colon_tok, tok[-1].src);
-
+		arg->src = SourceRange::range(src, tok[-1].src);
 		return arg;
 	}
 
@@ -776,7 +730,7 @@ struct Parser {
 
 		// variable declaration
 		if (tok[0].type == T_VAR)
-			expr = var_decl();
+			expr = var_decl_list();
 		else 
 			expr = expression_or_expr_list();
 

@@ -147,14 +147,15 @@ inline unsigned bt_assoc (TokenType tok) {
 	X( A_TYPE              ) \
 	\
 	X( A_BLOCK             ) \
-	X( A_TUPLE             ) \
-	X( A_VARDECL_LIST      ) \
 	\
-	/* values */			 \
+	\
 	X( A_LITERAL           ) \
 	\
+	X( A_VARDECL_LIST      ) \
 	X( A_VARDECL           ) \
-	X( A_VAR               ) \
+	X( A_VARREF            ) \
+	\
+	X( A_TUPLE             ) \
 	\
 	X( A_STRUCTDECL        ) \
 	\

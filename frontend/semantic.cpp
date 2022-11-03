@@ -431,7 +431,7 @@ struct SemanticAnalysis {
 		
 		if (!lhs->type.ty || lhs->type.ty->tclass != TY_STRUCT)
 			ERROR(lhs->src, "member operator '.' expects struct on the left-hand side");
-		if (rhs->kind != A_VAR)
+		if (rhs->kind != A_VARREF)
 			ERROR(rhs->src, "member operator '.' expects member identifier on the right-hand side");
 			
 		auto find_member = [] (AST_structdef* struc, AST_var* memb) -> AST_vardecl* {
@@ -480,9 +480,29 @@ struct SemanticAnalysis {
 	}
 
 ////
+	void resolve_vardecl (AST_vardecl* vardecl, bool in_assignment, bool is_arg=false) {
+
+		auto type_ident = vardecl->typeexpr;
+		if (type_ident.start) {
+			vardecl->type.ty = stack.resolve_type(type_ident);
+		}
+
+		// function arguments are immutable, thus RValues
+		vardecl->type.rval = is_arg;
+		
+		if (in_assignment) {
+			// type will be inferred by assignment
+		}
+		else {
+			// type cannot be inferred by assignment
+			if (!vardecl->type.ty)
+				ERROR(vardecl->src, "cannot infer type outside of assinment! specify like: var a : T");
+		}
+	}
 	void vardecl_infer_type (AST_vardecl* vardecl, AST* init) {
 		if (init->type.ty == nullptr) {
-			// everything on the rhs of assignments except calls with void return should have a non-void type
+			// we should have set up/inferred the types of everything that can be on the rhs of assignments
+			// _except_ calls with void return
 			assert(init->kind == A_CALL);
 
 			ERROR(init->src, "variable initialization: void is not a valid variable type");
@@ -498,16 +518,6 @@ struct SemanticAnalysis {
 				ERROR(init->src, "variable initialization: types do not match");
 		}
 	}
-	void resolve_vardecl (AST_vardecl* vardecl, bool is_arg=false) {
-
-		auto type_ident = vardecl->typeexpr;
-		if (type_ident.start) {
-			vardecl->type.ty = stack.resolve_type(type_ident);
-		}
-
-		// function arguments are immutable, thus RValues
-		vardecl->type.rval = is_arg;
-	}
 
 	void resolve_funcdecl_args (arrview<AST_func_arg*> args, bool is_arg) {
 		
@@ -522,7 +532,8 @@ struct SemanticAnalysis {
 				break;
 			}
 
-			if (arg->init) {
+			bool is_default_arg = arg->init != nullptr;
+			if (is_default_arg) {
 				default_args = true;
 			}
 			else {
@@ -530,8 +541,8 @@ struct SemanticAnalysis {
 					ERROR(arg->src, "default arguments can only appear after all positional arguments");
 			}
 
-			resolve_vardecl(arg->decl, is_arg);
-			if (arg->init)
+			resolve_vardecl(arg->decl, is_default_arg, is_arg);
+			if (is_default_arg)
 				vardecl_infer_type(arg->decl, arg->init);
 		}
 	}
@@ -663,7 +674,8 @@ struct SemanticAnalysis {
 			ERROR(ast->src, "condition expression must be a bool");
 	}
 
-	void recurse (AST* ast) {
+	// in_assinment only needed (and only correct) for vardecl in assignment, not actually passed down correctly in recursion
+	void recurse (AST* ast, bool in_assinment=false) {
 		switch (ast->kind) {
 
 		case A_LITERAL: {
@@ -675,10 +687,10 @@ struct SemanticAnalysis {
 
 			stack.declare_ident(vardecl, vardecl->ident);
 			
-			resolve_vardecl(vardecl);
+			resolve_vardecl(vardecl, in_assinment);
 		} break;
 
-		case A_VAR: {
+		case A_VARREF: {
 			auto* var = (AST_var*)ast;
 			stack.resolve_var(var);
 
@@ -688,8 +700,8 @@ struct SemanticAnalysis {
 		case A_ASSIGNOP: {
 			auto* op = (AST_binop*)ast;
 
-			recurse(op->lhs);
-			recurse(op->rhs);
+			recurse(op->lhs, true); // in_assinment=true
+			recurse(op->rhs, true);
 
 			if (op->lhs->kind == A_VARDECL) {
 				vardecl_infer_type((AST_vardecl*)op->lhs, op->rhs);
@@ -732,7 +744,7 @@ struct SemanticAnalysis {
 			auto* list = (AST_list*)ast;
 
 			for (auto* e: list->elements)
-				recurse(e);
+				recurse(e, in_assinment);
 
 			// TODO: create tuple type here?
 		} break;

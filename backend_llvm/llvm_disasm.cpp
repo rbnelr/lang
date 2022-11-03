@@ -119,6 +119,9 @@ struct DisasmPrinter {
 			int      id;
 		};
 		std::vector<Label> labels;
+		
+		disasm.reserve(4096);
+		labels.reserve(128);
 
 		// extract destination address from "rip + <offs>" "call <offs>" or "jmp <offs>"
 		auto print_comment = [&] (char* str, uint8_t* rip_base) -> std::string {
@@ -208,7 +211,7 @@ struct DisasmPrinter {
 			if (instr_bytes == 0)
 				break;
 
-			auto str = untabbify(strbuf);
+			auto str = tabs2spaces_for_terminal(strbuf);
 			auto comment = print_comment(strbuf, instr + instr_bytes);
 
 			disasm.push_back({ instr, instr_bytes, std::move(str), std::move(comment) });
@@ -266,7 +269,7 @@ struct DisasmPrinter {
 	// turn  "\tmov\trax, 8"  into  "mov     rax, 8"
 	// because printing this on the console with printf width specifiers does not work as expected
 	// and I didn't wanna find out if I can get it to work somehow
-	std::string untabbify (const char* str) {
+	std::string tabs2spaces_for_terminal (const char* str) {
 		std::string out;
 		out.reserve(32);
 			

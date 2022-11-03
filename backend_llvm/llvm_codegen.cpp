@@ -597,7 +597,7 @@ struct LLVM_gen {
 			return Value::LValue(val, vardecl->llvm_type);
 		}
 
-		case A_VAR: {
+		case A_VARREF: {
 			auto* var = (AST_var*)ast;
 			auto* vardecl = (AST_vardecl*)var->decl;
 			assert(vardecl);
@@ -758,7 +758,7 @@ struct LLVM_gen {
 			}
 
 			if (op->op == OP_MEMBER) {
-				assert(op->rhs->kind == A_VAR);
+				assert(op->rhs->kind == A_VARREF);
 
 				//auto* struc = (AST_structdef*)op->lhs->type.ty->decl;
 				auto* memb = (AST_var*)op->rhs;

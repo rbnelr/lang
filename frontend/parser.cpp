@@ -345,7 +345,7 @@ struct Parser {
 			auto src = tok[0].src;
 
 			auto* unary_op = ast_alloc<AST_unop>(A_UNOP);
-			unary_op->op = tok2unop(tok[0].type);
+			unary_op->op = tok2unop_prefix(tok[0].type);
 			tok.eat();
 			
 			unary_op->operand = expression(prec);
@@ -367,7 +367,7 @@ struct Parser {
 			auto src = tok[0].src;
 
 			auto* post_op = ast_alloc<AST_unop>(A_UNOP);
-			post_op->op = tok2unop(tok[0].type);
+			post_op->op = tok2unop_postfix(tok[0].type);
 			tok.eat();
 
 			post_op->operand = lhs;

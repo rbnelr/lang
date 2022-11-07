@@ -1,0 +1,33 @@
+
+func test (i : int) = (ret : int) {
+	var j = i;
+	j = j++;
+	return j;
+}
+
+func test2 (i : int) = (ret : int) {
+	var y = i;
+	return y++ * 5 + y;
+}
+func test3 (i : int) = (ret : int) {
+	var y = i;
+	return y*5 % ++y;
+}
+func test4 (i : int) = (ret : int) {
+	var y = i;
+	return y++ - y--;
+}
+
+printf("{i}\n", test2(2));
+printf("{i}\n", test3(2));
+printf("{i}\n", test4(2));
+
+func prin (s : str) = (i : int) {
+	printf("{s}, ", s);
+}
+func abc (a : int, b : int, c : int) {
+	
+}
+
+abc(prin("A"), prin("B"), prin("C"));
+printf("\n");

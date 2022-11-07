@@ -17,7 +17,7 @@ inline constexpr bool is_unary_op         (TokenType tok) {
 	return (tok >= T_ADD && tok <= T_SUB) || (tok >= T_BIT_NOT && tok <= T_DEC);
 }
 inline constexpr bool is_unary_prefix_op  (TokenType tok) {
-	return (tok >= T_ADD && tok <= T_SUB) || (tok >= T_BIT_NOT && tok <= T_NOT);
+	return (tok >= T_ADD && tok <= T_SUB) || (tok >= T_BIT_NOT && tok <= T_NOT) || (tok >= T_INC && tok <= T_DEC);
 }
 inline constexpr bool is_unary_postfix_op (TokenType tok) {
 	return tok >= T_INC && tok <= T_DEC;
@@ -232,8 +232,12 @@ enum OpType : uint8_t {
 	OP_NEGATE,
 	OP_BIT_NOT,
 	OP_LOGICAL_NOT,
-	OP_INC,
-	OP_DEC,
+
+	OP_POST_INC,
+	OP_PRE_INC,
+
+	OP_POST_DEC,
+	OP_PRE_DEC,
 };
 inline const char* OpType_str[] = {
 	"=",
@@ -264,18 +268,36 @@ inline const char* OpType_str[] = {
 	"-",
 	"~",
 	"!",
-	"x++",
-	"x--",
-};
 
+	"x++",
+	"++x",
+
+	"x--",
+	"--x",
+};
 
 inline constexpr OpType tok2binop (TokenType tok) {
 	return (OpType)( (int)tok + ((int)OP_ADD - (int)T_ADD) );
 }
-inline constexpr OpType tok2unop (TokenType tok) {
+inline constexpr OpType tok2unop_prefix (TokenType tok) {
 	switch (tok) {
 		case T_ADD: return OP_POSITIVE;
 		case T_SUB: return OP_NEGATE;
+
+		case T_INC: return OP_PRE_INC;
+		case T_DEC: return OP_PRE_DEC;
+
+		default:    return (OpType)( (int)tok + ((int)OP_BIT_NOT - (int)T_BIT_NOT) );
+	}
+}
+inline constexpr OpType tok2unop_postfix (TokenType tok) {
+	switch (tok) {
+		case T_ADD: return OP_POSITIVE;
+		case T_SUB: return OP_NEGATE;
+
+		case T_INC: return OP_POST_INC;
+		case T_DEC: return OP_POST_DEC;
+
 		default:    return (OpType)( (int)tok + ((int)OP_BIT_NOT - (int)T_BIT_NOT) );
 	}
 }

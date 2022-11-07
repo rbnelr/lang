@@ -289,8 +289,10 @@ struct LLVM_gen {
 				case OP_NEGATE:      return build.CreateNeg(operand, "_neg");
 				case OP_BIT_NOT:     return build.CreateNot(operand, "_not");
 				//case OP_LOGICAL_NOT:
-				case OP_INC:         return build.CreateAdd(operand, llvm::ConstantInt::get(operand->getType(), 1), "_inc");
-				case OP_DEC:         return build.CreateSub(operand, llvm::ConstantInt::get(operand->getType(), 1), "_dec");
+				case OP_POST_INC:    
+				case OP_PRE_INC:     return build.CreateAdd(operand, llvm::ConstantInt::get(operand->getType(), 1), "_inc");
+				case OP_POST_DEC:    
+				case OP_PRE_DEC:     return build.CreateSub(operand, llvm::ConstantInt::get(operand->getType(), 1), "_dec");
 				INVALID_DEFAULT;
 			}
 		}
@@ -699,11 +701,17 @@ struct LLVM_gen {
 			llvm::Value* old_val = load_value(operand);
 			llvm::Value* result  = codegen_unary(op->op, old_val, op->operand);
 				
-			if (op->op == OP_INC || op->op == OP_DEC) {
+			if (op->op >= OP_POST_INC && op->op <= OP_PRE_DEC) {
 				// assign inc/decremented to var
 				store_value(operand, result);
-				// return old value
-				result = old_val;
+
+				if (op->op == OP_POST_INC || op->op == OP_POST_DEC) {
+					// post inc/dec return old value
+					result = old_val;
+				}
+				else {
+					// pre inc/dec return new value
+				}
 			}
 
 			return Value::RValue(result);

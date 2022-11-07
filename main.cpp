@@ -15,7 +15,7 @@
 
 void set_options (int argc, const char** argv) {
 #if 1
-	options.filename  = "test6.la";
+	options.filename  = "test_test.la";
 
 	options.optimized = 1;
 

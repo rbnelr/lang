@@ -246,7 +246,7 @@ struct SemanticAnalysis {
 			return Typeref::RValue(pTY_BOOL);
 		}
 
-		if (op->op == OP_INC || op->op == OP_DEC) {
+		if (op->op >= OP_POST_INC && op->op <= OP_PRE_DEC) {
 			// TODO: allow this for custom types?
 			if (operand->type.rval)
 				ERROR(operand->src, "cannot inc/decrement RValue");
@@ -258,8 +258,8 @@ struct SemanticAnalysis {
 				case OP_POSITIVE: // no-op
 				case OP_NEGATE: 
 				case OP_BIT_NOT:
-				case OP_INC:    
-				case OP_DEC:    
+				case OP_POST_INC: case OP_PRE_INC:
+				case OP_POST_DEC: case OP_PRE_DEC:
 					return Typeref::RValue(ty);
 
 				INVALID_DEFAULT;
@@ -270,10 +270,10 @@ struct SemanticAnalysis {
 				case OP_BIT_NOT:
 					return Typeref::RValue(ty);
 
-				case OP_POSITIVE: ERROR(op->src, "positive operator is not valid for bool");
-				case OP_NEGATE:   ERROR(op->src, "negate is not valid for bool"           );
-				case OP_INC:      ERROR(op->src, "increment is not valid for bool"        );
-				case OP_DEC:      ERROR(op->src, "decrement is not valid for bool"        );
+				case OP_POSITIVE:                  ERROR(op->src, "positive operator is not valid for bool");
+				case OP_NEGATE:                    ERROR(op->src, "negate is not valid for bool"           );
+				case OP_POST_INC: case OP_PRE_INC: ERROR(op->src, "increment is not valid for bool"        );
+				case OP_POST_DEC: case OP_PRE_DEC: ERROR(op->src, "decrement is not valid for bool"        );
 
 				INVALID_DEFAULT;
 			}
@@ -288,8 +288,8 @@ struct SemanticAnalysis {
 
 				// NOTE: Maybe this is a weird decision, but incrementing a float rarely makes sense unlike ints
 				// Furthermore unlike for ints there is no inc/dec instruction in the cpu either, so maybe don't define this operator for floats
-				case OP_INC: ERROR(op->src, "increment is not valid for floats (are you sure you want a float?)");
-				case OP_DEC: ERROR(op->src, "decrement is not valid for floats (are you sure you want a float?)");
+				case OP_POST_INC: case OP_PRE_INC: ERROR(op->src, "increment is not valid for floats (are you sure you want a float?)");
+				case OP_POST_DEC: case OP_PRE_DEC: ERROR(op->src, "decrement is not valid for floats (are you sure you want a float?)");
 
 				INVALID_DEFAULT;
 			}

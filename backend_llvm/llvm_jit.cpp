@@ -90,6 +90,9 @@ struct JIT {
 
 			Error applyProtections () {
 				for (int i = 0; i < 3; ++i) {
+					if (segments[i].size == 0) continue;
+					assert(segments[i].ptr);
+
 					auto prot = ALLOC_TYPE_PROT[i];
 
 					mmap_pages_protect(segments[i].ptr, segments[i].size, prot);
@@ -103,6 +106,7 @@ struct JIT {
 
 		};
 
+		// TODO: what the heck is this code doing?
 		Expected<std::unique_ptr<Allocation>> allocate (
 			const jitlink::JITLinkDylib* JD,
 			const SegmentsRequestMap& Request) override {
@@ -117,6 +121,8 @@ struct JIT {
 
 				total_size = alignTo(total_size, mmap_page_size.page_size);
 				total_size += Seg.getContentSize() + Seg.getZeroFillSize();
+
+				assert(Seg.getContentSize() + Seg.getZeroFillSize() > 0);
 			}
 
 			Alloc alloc = {};
@@ -368,10 +374,12 @@ struct JIT {
 		setup_jit();
 
 		// Opt level (for TM->addPassesToEmitMC() ???)
-		TM->setOptLevel(llvm::CodeGenOpt::Default);
-
-		setup_mem2reg();
-		setup_optimize();
+		TM->setOptLevel(options.optimized ? llvm::CodeGenOpt::Default : llvm::CodeGenOpt::None);
+		
+		if (options.optimized) {
+			setup_mem2reg();
+			setup_optimize();
+		}
 		//setup_MCgen();
 
 		register_builtins();
@@ -527,11 +535,13 @@ struct JIT {
 		ZoneScoped;
 
 		modl->setDataLayout(*DL);
-
+		
+		//if (options.optimized)
 		run_mem2reg(modl);
 
-		if (options.optimized)
+		if (options.optimized) {
 			run_optimize(modl);
+		}
 
 		run_MCgen(modl);
 	}

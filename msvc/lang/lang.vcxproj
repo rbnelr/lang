@@ -119,7 +119,7 @@
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions);_CRT_SECURE_NO_WARNINGS</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpplatest</LanguageStandard>
-      <AdditionalIncludeDirectories>$(SolutionDir)..\..\;$(SolutionDir)..\..\..\common\tracy;$(SolutionDir)..\..\..\libLLVM\vs_rel\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)..\..\;$(SolutionDir)..\..\util\tracy\public\tracy;$(SolutionDir)..\..\..\libLLVM\vs_rel\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <BufferSecurityCheck>false</BufferSecurityCheck>
       <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
@@ -195,7 +195,6 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="..\..\..\common\tracy\TracyClient.cpp" />
     <ClCompile Include="..\..\backend_llvm\llvm_codegen.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Use</PrecompiledHeader>
       <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">llvm_pch.hpp</PrecompiledHeaderFile>
@@ -312,7 +311,6 @@
     <ClCompile Include="..\..\win32_mmap.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\..\..\common\tracy\Tracy.hpp" />
     <ClInclude Include="..\..\backend_llvm\llvm_backend.hpp" />
     <ClInclude Include="..\..\backend_llvm\llvm_disasm.hpp" />
     <ClInclude Include="..\..\backend_llvm\llvm_pch.hpp" />
@@ -332,6 +330,8 @@
     <ClInclude Include="..\..\util\allocators.hpp" />
     <ClInclude Include="..\..\util\console_colors.hpp" />
     <ClInclude Include="..\..\util\file_io.hpp" />
+    <ClInclude Include="..\..\util\tracy\public\tracy\Tracy.hpp" />
+    <ClInclude Include="..\..\util\tracy\public\tracy\TracyOpenGL.hpp" />
     <ClInclude Include="..\..\util\util.hpp" />
     <ClInclude Include="..\..\util\smhasher\MurmurHash1.h" />
     <ClInclude Include="..\..\util\smhasher\MurmurHash2.h" />
